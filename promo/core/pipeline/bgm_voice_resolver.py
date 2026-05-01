@@ -10,6 +10,7 @@ decomposition). Behavior byte-identical to the pre-extraction site.
 
 import logging
 import os
+import re
 
 from promo.core.backend import PromoBackend
 from promo.core.errors import NoSuitableBGMError
@@ -18,15 +19,34 @@ from promo.core.render.remotion_renderer import REMOTION_DIR
 logger = logging.getLogger(__name__)
 
 
-def _variant_output_path(base_output_path: str, variant_index: int, n_variants: int) -> str:
+_TRAILING_DUR_RE = re.compile(r"_\d+s$")
+
+
+def _variant_output_path(
+    base_output_path: str,
+    variant_index: int,
+    n_variants: int,
+    variant_target_duration_sec: float | None = None,
+) -> str:
     """Derive a per-variant output path when rendering multiple outputs.
 
-    Encodes duration in filename when target_duration_sec differs from default.
+    When ``variant_target_duration_sec`` is supplied, any trailing
+    ``_<N>s`` segment baked into ``base_output_path`` (the run-level
+    ``--target-duration-sec`` label) is stripped and replaced with the
+    variant's own duration so a random-selector long variant does not
+    ship as ``..._30s_v1.mp4``.
     """
-    if n_variants <= 1:
+    if n_variants <= 1 and variant_target_duration_sec is None:
         return base_output_path
     root, ext = os.path.splitext(base_output_path)
-    return f"{root}_v{variant_index}{ext or '.mp4'}"
+    ext = ext or ".mp4"
+    if variant_target_duration_sec is not None:
+        root = _TRAILING_DUR_RE.sub("", root)
+        dur_label = f"{int(round(variant_target_duration_sec))}s"
+        if n_variants <= 1:
+            return f"{root}_{dur_label}{ext}"
+        return f"{root}_v{variant_index}_{dur_label}{ext}"
+    return f"{root}_v{variant_index}{ext}"
 
 
 def _discover_bgm_files(
