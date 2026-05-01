@@ -88,12 +88,13 @@ def _step_generate_script(
     hotel_description: str,
     notable_details: str,
     wpm_search_dirs: list[str],
-    primary_backend: str = "elevenlabs",
+    resolved_voice_keys: list[str],
     variant_profiles: list[PromoFormatProfile] | None = None,
     variant_personas: "list[NarratorPersona] | None" = None,
-) -> tuple[list[dict], int]:
-    """Run Gemini #1 + resolve effective_wpm + apply compute_pause_budget
-    on each accepted script. Returns ``(scripts, effective_wpm)``.
+) -> list[dict]:
+    """Run Gemini #1 + resolve per-variant effective_wpm + apply
+    compute_pause_budget on each accepted script. Returns ``scripts``
+    with ``script["effective_wpm"]`` populated per variant.
 
     Sprint 10 C4: extraction of Step 3 from ``full_pipeline``. Scripts
     come back with ``pause_after_ms`` populated per segment but no clip
@@ -103,13 +104,19 @@ def _step_generate_script(
     Sprint 16 — when ``variant_profiles`` / ``variant_personas`` are
     threaded from the selector seams, each variant uses its own
     profile and persona; the pause budget is then computed against
-    each variant's own ``target_duration_sec``. Legacy callers that
-    omit both fall back to a single profile derived from the scalar
-    ``target_duration_sec``.
+    each variant's own ``target_duration_sec``.
+
+    Each variant's WPM is resolved against its own voice's backend
+    (round-robin mirrors ``variant_loop``'s ``(i-1) % len(keys)`` rule)
+    so a mixed-backend rotation does not feed a single run-level WPM
+    into pause_budget — the prior pre-S0.5 single-WPM path tripped
+    "narration already fills target" for ElevenLabs variants when slot 0
+    was Gemini.
 
     Raises ``RuntimeError`` on variant-pack under-delivery or if
     ``generate_script_variants`` itself gives up.
     """
+    from promo.core.narrate.tts_engine import VOICE_CATALOG
     from promo.core.script.script_generator import generate_script_variants
 
     logger.info("=" * 60)
@@ -148,35 +155,31 @@ def _step_generate_script(
             f"but received {len(scripts)}"
         )
 
-    # Sprint 09b C7: calibrated-WPM per-POI per-duration (see
-    # pause_budget.load_calibrated_wpm). Cold-start falls back to the
-    # per-backend bootstrap constant (Sprint TTS-Migration Phase 4).
-    # Sprint 16 — calibration lookup stays keyed on the run's nominal
-    # target duration (operator-visible filename convention); per-variant
-    # pause budgets use the variant's own profile target below.
     sidecar_slug = _safe_poi_dir(poi_name)
-    bootstrap_wpm = bootstrap_wpm_for_backend(primary_backend)
-    calibrated_wpm = load_calibrated_wpm(
-        sidecar_slug, target_duration_sec, wpm_search_dirs,
-        backend=primary_backend,
-    )
-    if calibrated_wpm is not None:
-        logger.info(
-            "WPM calibration: %d WPM (same-POI same-duration prior run; "
-            "search dirs=%s; backend=%s bootstrap=%d)",
-            calibrated_wpm, wpm_search_dirs, primary_backend, bootstrap_wpm,
-        )
-        effective_wpm = calibrated_wpm
-    else:
-        logger.info(
-            "WPM cold-start: using %s bootstrap %d WPM "
-            "(no prior tts_metrics_%s_%ds.json in %s)",
-            primary_backend, bootstrap_wpm, sidecar_slug,
-            int(round(target_duration_sec)), wpm_search_dirs,
-        )
-        effective_wpm = bootstrap_wpm
 
     for script in scripts:
+        variant_index = script["variant_index"]
+        variant_voice_key = resolved_voice_keys[(variant_index - 1) % len(resolved_voice_keys)]
+        variant_backend = VOICE_CATALOG[variant_voice_key]["backend"]
+        bootstrap_wpm = bootstrap_wpm_for_backend(variant_backend)
+        calibrated_wpm = load_calibrated_wpm(
+            sidecar_slug, target_duration_sec, wpm_search_dirs,
+            backend=variant_backend,
+        )
+        if calibrated_wpm is not None:
+            effective_wpm = calibrated_wpm
+            logger.info(
+                "WPM calibration v%d (%s/%s): %d WPM (bootstrap=%d)",
+                variant_index, variant_voice_key, variant_backend,
+                effective_wpm, bootstrap_wpm,
+            )
+        else:
+            effective_wpm = bootstrap_wpm
+            logger.info(
+                "WPM cold-start v%d (%s/%s): bootstrap %d WPM",
+                variant_index, variant_voice_key, variant_backend, effective_wpm,
+            )
+        script["effective_wpm"] = effective_wpm
         # Sprint 16 — pause budget honours each variant's own duration.
         script_target = float(script.get("target_duration_sec", target_duration_sec))
         compute_pause_budget(
@@ -186,14 +189,14 @@ def _step_generate_script(
         )
         logger.info(
             "Variant %d: %d segments, %d words (%s/%ss)",
-            script["variant_index"], len(script["segments"]),
+            variant_index, len(script["segments"]),
             script["total_words"], script.get("format_mode", "?"),
             script.get("target_duration_sec", "?"),
         )
         for seg in script["segments"]:
             logger.info("  Seg %d: \"%s\"", seg["segment"], seg["text"][:80])  # type: ignore[typeddict-item]
 
-    return scripts, effective_wpm  # type: ignore[return-value]
+    return scripts
 
 
 def _step_tts_narration(

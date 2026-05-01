@@ -765,15 +765,23 @@ class TestCompilePromoRoutingBackend:
 
         assert hasattr(pipeline_steps, "bootstrap_wpm_for_backend")
 
-    def test_compile_promo_step_generate_script_accepts_primary_backend(self):
+    def test_compile_promo_step_generate_script_accepts_resolved_voice_keys(self):
+        # S0.5 supersedes the Phase 4 single-backend invariant: WPM
+        # bootstrap is now resolved per-variant from the voice rotation,
+        # so _step_generate_script consumes the full ``resolved_voice_keys``
+        # list instead of a single ``primary_backend`` string.
         import inspect
 
         from promo.cli.compile_promo import _step_generate_script
 
         sig = inspect.signature(_step_generate_script)
-        assert "primary_backend" in sig.parameters, (
-            "_step_generate_script must accept primary_backend kwarg for "
-            "Phase 4 per-backend WPM dispatch"
+        assert "resolved_voice_keys" in sig.parameters, (
+            "_step_generate_script must accept resolved_voice_keys for "
+            "S0.5 per-variant WPM dispatch"
+        )
+        assert "primary_backend" not in sig.parameters, (
+            "primary_backend kwarg removed by S0.5; per-variant rotation "
+            "replaces the single run-level backend"
         )
 
 
