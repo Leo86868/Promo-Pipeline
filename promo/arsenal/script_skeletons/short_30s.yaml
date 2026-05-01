@@ -1,0 +1,52 @@
+# Short-format promo script skeleton (TikTok / Reels, 25-30s).
+# Loaded by `arsenal_loader.load_format_template("short")` into a
+# frozen `PromoFormatProfile`. Adding a new format = drop a new YAML
+# in this directory and pick a fresh top-level dispatch key (e.g.
+# `medium_45s.yaml`); selectors that iterate
+# `arsenal_loader.load_format_templates()` pick it up automatically.
+
+mode: short
+target_duration_sec: 30
+duration_label: "25-30 second"
+segment_count: 4
+total_words_min: 50
+total_words_max: 80
+per_segment_min: 8
+per_segment_max: 25
+min_clip_pool_size: 8
+recommended_clip_pool_size: 10
+min_effective_wpm: 110
+max_effective_wpm: 150
+max_narration_ratio: 0.90
+
+# Per-mode RULES content — fills `$sentence_rule` /
+# `$extra_rules_block` in `gemini1_script_v1.md`. SHORT keeps the
+# original 5-12 word cap; no extra rules.
+sentence_rule: "Short sentences. 5-12 words. Fragments OK. This is spoken, not written."
+extra_rules: []
+
+segment_plans:
+  - label: HOOK
+    approx_words: 18
+    min_clips: 2
+    max_clips: 3
+    guidance: "Stop the scroll. Price, superlative, or surprising fact in the first sentence."
+    preferred_categories: [exterior, aerial, scenic]
+  - label: FEEL
+    approx_words: 18
+    min_clips: 2
+    max_clips: 3
+    guidance: 'Put the viewer inside the hotel. Use "you". Focus on feeling, not visual description.'
+    preferred_categories: [room, pool, lobby]
+  - label: HIGHLIGHTS
+    approx_words: 16
+    min_clips: 2
+    max_clips: 3
+    guidance: "Rapid-fire specifics. Short fragments. Stack features and moments quickly."
+    preferred_categories: [pool, food, spa, activity, restaurant]
+  - label: CLOSE
+    approx_words: 10
+    min_clips: 1
+    max_clips: 2
+    guidance: "Land the hotel name naturally with one short closing thought."
+    preferred_categories: [exterior, scenic]

@@ -1,0 +1,50 @@
+{
+  "poi_key": "lpi",
+  "poi_name": "Little Palm Island Resort",
+  "location": "Little Torch Key, Florida",
+  "target_duration_sec": 65.0,
+  "format_mode": "long",
+  "variant_index": 1,
+  "segments": [
+    {
+      "segment": 1,
+      "text": "It looks like the perfect family escape. But you can't bring your kids. Because no one under eighteen is ever allowed on this island. Absolutely no exceptions.",
+      "pause_after_ms": 6614,
+      "word_count": 27,
+      "start_sec": 0.035,
+      "end_sec": 9.474
+    },
+    {
+      "segment": 2,
+      "text": "A seaplane touches down on the water. You walk past a simple welcome mat. And the rest of the world just disappears. Your shoulders finally, truly drop.",
+      "pause_after_ms": 0,
+      "word_count": 27,
+      "start_sec": 16.308,
+      "end_sec": 26.316
+    },
+    {
+      "segment": 3,
+      "text": "Your bungalow has no television. Just glass doors that open straight to the sea. And a deep copper tub outside, hidden completely among the palms. You find the quiet pool.",
+      "pause_after_ms": 0,
+      "word_count": 30,
+      "start_sec": 26.954,
+      "end_sec": 38.657
+    },
+    {
+      "segment": 4,
+      "text": "Mornings start on your private terrace, the ocean your only view. Dinner is even better. A single table for two, right on the sand as the tide comes in.",
+      "pause_after_ms": 7000,
+      "word_count": 29,
+      "start_sec": 38.948,
+      "end_sec": 47.922
+    },
+    {
+      "segment": 5,
+      "text": "This is Little Palm Island Resort. A place built around the simple, perfect idea of completely disappearing for a while.",
+      "pause_after_ms": 0,
+      "word_count": 20,
+      "start_sec": 55.143,
+      "end_sec": 62.155
+    }
+  ]
+}

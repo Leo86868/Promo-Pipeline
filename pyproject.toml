@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgc-pipeline"
+version = "0.1.0"
+description = "Standalone narrated promo-video pipeline (MiMo + Gemini + ElevenLabs/Gemini TTS + Remotion)."
+requires-python = ">=3.11"
+dependencies = [
+  "google-generativeai",
+  "requests",
+  "python-dotenv",
+  "PyYAML",
+  "numpy",
+  "torch>=2.8",
+  "torchaudio>=2.8",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "mypy",
+]
+
+[tool.setuptools]
+
+[tool.setuptools.packages.find]
+include = ["promo*"]
+
+[tool.setuptools.package-data]
+# Arsenal sub-packages each ship their own data files. The 4 keys below
+# MUST stay in lockstep with the directory layout under `promo/arsenal/` —
+# `setuptools.find_packages` only recurses into directories that have an
+# `__init__.py`, and the wheel only ships data files matched by these globs.
+"promo.arsenal.personas" = ["*.yaml"]
+"promo.arsenal.system_prompts" = ["*.md"]
+"promo.arsenal.voices" = ["*.yaml"]
+"promo.arsenal.script_skeletons" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+markers = [
+  "live: requires external services (OpenRouter, Gemini, ElevenLabs); set PYTEST_LIVE=1 to run",
+]
+
+# Mypy is a non-strict guardrail. Re-pin MYPY_BASELINE_ERRORS after a
+# `rm -rf .mypy_cache && python3 -m mypy promo/core/` cold-cache run.
+# MYPY_BASELINE_ERRORS=22 as of v0 cut (40 source files checked).
+[tool.mypy]
+python_version = "3.11"
+warn_redundant_casts = true
+warn_unused_ignores = true
+check_untyped_defs = false
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = ["promo/tests/.*"]

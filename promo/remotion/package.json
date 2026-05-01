@@ -1,0 +1,40 @@
+{
+  "name": "promo-remotion",
+  "version": "1.0.0",
+  "description": "Remotion renderer for the standalone promo pipeline",
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion bundle",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc",
+    "render": "remotion render"
+  },
+  "repository": {},
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@remotion/animation-utils": "4.0.448",
+    "@remotion/cli": "4.0.448",
+    "@remotion/fonts": "4.0.448",
+    "@remotion/layout-utils": "4.0.448",
+    "@remotion/lottie": "^4.0.448",
+    "@remotion/media-utils": "4.0.448",
+    "@remotion/transitions": "4.0.448",
+    "@remotion/zod-types": "4.0.448",
+    "maplibre-gl": "^5.23.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.448",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@remotion/captions": "4.0.448",
+    "@remotion/eslint-config-flat": "4.0.448",
+    "@remotion/install-whisper-cpp": "4.0.448",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "private": true
+}

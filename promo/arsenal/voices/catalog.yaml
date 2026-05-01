@@ -1,0 +1,48 @@
+# Voice catalog. Add a new voice = add a new top-level key.
+# Required fields: id, name, gender, age, accent, description, backend.
+# Optional: style_prompt (Gemini backend only — directorial instruction
+# prepended at TTS time).
+#
+# Order matters: ``compile_promo._resolve_voice_keys`` reads dict order
+# for variant rotation when ``--voice`` is unset. Gemini entries are
+# declared FIRST so the default rotation picks Gemini. The Gemini entry
+# (Kore + directorial prompt) was locked by Sprint TTS-Migration Phase 1
+# voice A/B — decision memo at
+# ``workflow/projects/promo-foundation/decisions/2026-04-21-gemini-voice-lock.md``.
+
+kore:
+  id: Kore
+  name: "Kore (Gemini 3.1 Flash TTS)"
+  gender: male
+  age: middle-aged
+  accent: American
+  description: "Warm, confident Gemini voice. Directorial prompt tunes pacing to persona target (~148 WPM)."
+  backend: gemini
+  style_prompt: "Read at a confident, engaging pace, warm but never sluggish:"
+
+jarnathan:
+  id: c6SfcYrb2t09NHXiT80T
+  name: Jarnathan
+  gender: male
+  age: middle-aged
+  accent: American
+  description: "Warm male narrator, cinematic. Middle-aged American timbre."
+  backend: elevenlabs
+
+hope:
+  id: tnSpp4vdxKPjI9w0GnoV
+  name: Hope
+  gender: female
+  age: young
+  accent: American
+  description: "Young female narrator, bright and clear. American timbre."
+  backend: elevenlabs
+
+heather:
+  id: MnUw1cSnpiLoLhpd3Hqp
+  name: "Heather Rey"
+  gender: female
+  age: middle-aged
+  accent: American
+  description: "Middle-aged female narrator, grounded and measured. American timbre."
+  backend: elevenlabs

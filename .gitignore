@@ -1,0 +1,36 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.DS_Store
+/build/
+.env
+.env.local
+.env.*.local
+.pytest_cache/
+.mypy_cache/
+promo/remotion/node_modules/
+promo/remotion/out/
+promo/remotion/props.json
+promo/remotion/props_*.json
+
+# Raw input material: clips supplied by the operator per POI.
+# Never commit real material to the repo. Only the top-level scaffold
+# (README.md + .gitkeep) is tracked so the convention survives a fresh clone.
+/material/*
+!/material/README.md
+!/material/.gitkeep
+
+# Rendered promo outputs from local runs.
+/output/
+
+# Per-session Claude Code runtime state (sprint-gate flags, local agent memory).
+.claude/
+
+# Generated view of architecture.md — regenerated via
+# `python3 -m promo.cli.render_architecture`. The .md is the source of
+# truth; the HTML is a local-viewing convenience and must stay out of git.
+/architecture.html
+
+# Fresh-venv install scratch (when fresh-venv smoke runs in-tree).
+/.venv/

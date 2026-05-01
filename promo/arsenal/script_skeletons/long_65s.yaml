@@ -1,0 +1,58 @@
+# Long-format promo script skeleton (65s).
+# Loaded by `arsenal_loader.load_format_template("long")` into a frozen
+# `PromoFormatProfile`. See `short_30s.yaml` for field semantics.
+
+mode: long
+target_duration_sec: 65
+duration_label: "65 second"
+segment_count: 5
+total_words_min: 130
+total_words_max: 140
+per_segment_min: 12
+per_segment_max: 32
+min_clip_pool_size: 14
+recommended_clip_pool_size: 18
+min_effective_wpm: 90
+max_effective_wpm: 130
+max_narration_ratio: 0.92
+
+# Per-mode RULES content — fills `$sentence_rule` /
+# `$extra_rules_block` in `gemini1_script_v1.md`. LONG widens the
+# sentence cap to 15-18 words for vivid specifics, and reinforces a
+# 130-word floor as an extra RULES bullet (Sprint 08.5 — Gemini
+# under-delivers without an explicit floor).
+sentence_rule: "Spoken cadence. Mostly 5-15 words per sentence, occasionally up to 18 when a sentence carries a vivid specific. Fragments welcome."
+extra_rules:
+  - "Minimum 130 words total — write fuller thoughts, more specific details, don't undershoot. Aim for the 135-word midpoint."
+
+segment_plans:
+  - label: HOOK
+    approx_words: 26
+    min_clips: 3
+    max_clips: 4
+    guidance: "Open hard with price, superlative, or a sharp contradiction that earns the next 10 seconds."
+    preferred_categories: [exterior, aerial, scenic]
+  - label: ARRIVAL
+    approx_words: 28
+    min_clips: 3
+    max_clips: 4
+    guidance: "Set the environment and first emotional hit. Let the place settle before stacking details."
+    preferred_categories: [exterior, lobby, aerial, scenic]
+  - label: "LIVE IT"
+    approx_words: 30
+    min_clips: 3
+    max_clips: 4
+    guidance: 'Put the viewer in the stay. Use "you". Leave room for the visuals to breathe between moments.'
+    preferred_categories: [room, pool, spa, activity]
+  - label: HIGHLIGHTS
+    approx_words: 28
+    min_clips: 3
+    max_clips: 4
+    guidance: "Specific amenities, rituals, scenery, food, and standout moments. Stay selective, not dense."
+    preferred_categories: [pool, food, spa, activity, restaurant, scenic]
+  - label: CLOSE
+    approx_words: 20
+    min_clips: 2
+    max_clips: 3
+    guidance: "Give the hotel name and one final line that lingers without sounding like an ad."
+    preferred_categories: [exterior, aerial, scenic]
