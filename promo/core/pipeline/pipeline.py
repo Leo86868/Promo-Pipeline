@@ -124,16 +124,14 @@ def full_pipeline(
             )
             embedding_cache_dir = None
 
-        # Sprint TTS-Migration Phase 4: pre-resolve voice rotation so
-        # Step 3's WPM bootstrap picks the right per-backend constant.
-        # The full rotation list is kept for Step 6's variant loop.
+        # Pre-resolve voice rotation so Step 3 can resolve per-variant
+        # WPM against each variant's own voice's backend (S0.5 fix).
+        # The full rotation list is also reused for Step 6's variant loop.
         try:
             resolved_voice_keys = _resolve_voice_keys(voice_key)
         except ValueError as exc:
             logger.error(str(exc))
             return False
-        from promo.core.narrate.tts_engine import VOICE_CATALOG
-        primary_backend = VOICE_CATALOG[resolved_voice_keys[0]]["backend"]
 
         # Sprint 16 — selector seams pick per-variant format + persona.
         # Default `single` pins to target_duration_sec; `random` opt-in
@@ -158,7 +156,7 @@ def full_pipeline(
             if parent and parent != try_dir:
                 wpm_search_dirs.append(parent)
         try:
-            scripts, effective_wpm = _step_generate_script(
+            scripts = _step_generate_script(
                 poi_name=poi_name,
                 location=location,
                 clips_metadata=clips_metadata,
@@ -168,7 +166,7 @@ def full_pipeline(
                 hotel_description=hotel_description,
                 notable_details=notable_details,
                 wpm_search_dirs=wpm_search_dirs,
-                primary_backend=primary_backend,
+                resolved_voice_keys=resolved_voice_keys,
                 variant_profiles=variant_profiles,
                 variant_personas=variant_personas,
             )
@@ -233,7 +231,6 @@ def full_pipeline(
             tmp_dir=tmp_dir,
             tts_speed=tts_speed,
             target_duration_sec=target_duration_sec,
-            effective_wpm=effective_wpm,
             script_candidates=script_candidates,
             embedding_cache_dir=embedding_cache_dir,
             tts_metrics=tts_metrics,

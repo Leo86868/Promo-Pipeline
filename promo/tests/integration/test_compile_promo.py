@@ -48,6 +48,36 @@ class TestCompilePromoHelpers:
         assert _variant_output_path("/tmp/promo.mp4", 1, 1) == "/tmp/promo.mp4"
         assert _variant_output_path("/tmp/promo.mp4", 2, 3) == "/tmp/promo_v2.mp4"
 
+    def test_variant_output_path_encodes_per_variant_duration(self):
+        """S0.5 narrowed #1: when ``variant_target_duration_sec`` is
+        threaded in, the trailing run-level ``_<N>s`` segment from the
+        base path is replaced with the variant's own duration so a
+        random-selector long variant does not ship as ``..._30s_v1.mp4``."""
+        from promo.cli.compile_promo import _variant_output_path
+
+        # Mixed-duration random run: base path encodes run-level 30s.
+        # Variant 1 (long, 65s) gets its own duration; variants 2/3 (short, 30s)
+        # also keep duration in the suffix for clarity.
+        base = "/tmp/promo_ocean_key_resort__spa_30s.mp4"
+        assert _variant_output_path(base, 1, 3, 65.0) == \
+            "/tmp/promo_ocean_key_resort__spa_v1_65s.mp4"
+        assert _variant_output_path(base, 2, 3, 30.0) == \
+            "/tmp/promo_ocean_key_resort__spa_v2_30s.mp4"
+        assert _variant_output_path(base, 3, 3, 30.0) == \
+            "/tmp/promo_ocean_key_resort__spa_v3_30s.mp4"
+
+    def test_variant_output_path_strips_only_trailing_dur_segment(self):
+        """The ``_<N>s`` strip is anchored to filename end — slug content
+        like ``..._30s_special.mp4`` keeps its body intact."""
+        from promo.cli.compile_promo import _variant_output_path
+
+        # No trailing _<N>s in root → variant duration appended cleanly.
+        assert _variant_output_path("/tmp/promo.mp4", 2, 3, 65.0) == \
+            "/tmp/promo_v2_65s.mp4"
+        # Single-variant random with a runtime override gets its dur tagged.
+        assert _variant_output_path("/tmp/promo_30s.mp4", 1, 1, 65.0) == \
+            "/tmp/promo_65s.mp4"
+
     def test_full_pipeline_multi_variant_smoke(self):
         """Smoke test: full_pipeline should reuse one clip analysis pass and render per variant."""
         from promo.cli.compile_promo import full_pipeline
@@ -146,8 +176,10 @@ class TestCompilePromoHelpers:
         assert mock_stage_media.call_count == 2
         assert mock_render.call_count == 2
         rendered_paths = [call.args[1] for call in mock_render.call_args_list]
-        assert rendered_paths[0].endswith("_v1.mp4")
-        assert rendered_paths[1].endswith("_v2.mp4")
+        # S0.5 narrowed #1: filename encodes per-variant duration.
+        # Both variants are ``long`` mode (target=65s) per scripts above.
+        assert rendered_paths[0].endswith("_v1_65s.mp4")
+        assert rendered_paths[1].endswith("_v2_65s.mp4")
 
     def test_full_pipeline_fails_when_variant_pack_under_delivers(self):
         """Pipeline should fail clearly when requested variants are not fully delivered."""

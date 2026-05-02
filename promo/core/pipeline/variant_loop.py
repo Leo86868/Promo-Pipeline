@@ -64,7 +64,6 @@ def _run_variant_loop(
     tmp_dir: str,
     tts_speed: float,
     target_duration_sec: float,
-    effective_wpm: int,
     script_candidates: int,
     embedding_cache_dir: str | None,
     tts_metrics: list[dict],
@@ -113,7 +112,10 @@ def _run_variant_loop(
 
     for script in scripts:
         variant_index = script["variant_index"]
-        variant_output_path = _variant_output_path(output_path, variant_index, len(scripts))
+        variant_target_duration = float(script.get("target_duration_sec", target_duration_sec))
+        variant_output_path = _variant_output_path(
+            output_path, variant_index, len(scripts), variant_target_duration,
+        )
         variant_tmp_dir = os.path.join(tmp_dir, f"variant_{variant_index}")
         os.makedirs(variant_tmp_dir, exist_ok=True)
 
@@ -122,7 +124,7 @@ def _run_variant_loop(
         variant_voice_key = resolved_voice_keys[(variant_index - 1) % len(resolved_voice_keys)]
         variant_profile = variant_profiles[variant_index - 1]  # Sprint 16
         variant_persona = variant_personas[variant_index - 1]  # Sprint 16
-        variant_target_duration = float(script.get("target_duration_sec", target_duration_sec))
+        variant_effective_wpm = int(script["effective_wpm"])
         logger.info("=" * 60)
         logger.info(
             "Step 4-8: Rendering variant %d/%d (voice: %s, BGM: %s)...",
@@ -154,7 +156,7 @@ def _run_variant_loop(
                 variant_tmp_dir=variant_tmp_dir,
                 tts_speed=tts_speed,
                 target_duration_sec=variant_target_duration,
-                effective_wpm=effective_wpm,
+                effective_wpm=variant_effective_wpm,
                 n_variants_total=len(scripts),
                 script_candidates=script_candidates,
                 embedding_cache_dir=embedding_cache_dir,
