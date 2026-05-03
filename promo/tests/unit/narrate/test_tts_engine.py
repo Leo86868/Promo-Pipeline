@@ -224,7 +224,7 @@ class TestSprint07GenerateNarrationEndToEnd:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  return_value=self._fake_response("Hello world"),
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -257,7 +257,7 @@ class TestSprint07GenerateNarrationEndToEnd:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  return_value=bad_response,
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -293,7 +293,7 @@ class TestSprint07GenerateNarrationEndToEnd:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=fake_call,
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -344,7 +344,7 @@ class TestSprint08NarrationAssembly:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=lambda text, voice_id, **kw: self._fake_response(text),
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -377,7 +377,7 @@ class TestSprint08NarrationAssembly:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=lambda text, voice_id, **kw: self._fake_response(text),
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -402,7 +402,7 @@ class TestSprint08NarrationAssembly:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=lambda text, voice_id, **kw: self._fake_response(text),
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
@@ -452,7 +452,7 @@ class TestSprint085TTSSpeedPlumbing:
         ]
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
-             patch("promo.core.narrate.tts_engine.requests.post", side_effect=fake_post), \
+             patch("promo.core.narrate.tts_elevenlabs.requests.post", side_effect=fake_post), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
              patch("promo.core.narrate.tts_engine._ffmpeg_concat_mp3s"), \
              patch("promo.core.narrate.tts_engine._ffprobe_duration", return_value=1.5):
@@ -525,7 +525,7 @@ class TestSprint085BatchMergeE2E:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=fake_call,
              ), \
              patch(
@@ -587,7 +587,7 @@ class TestSprint085BatchMergeE2E:
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
              patch(
-                 "promo.core.narrate.tts_engine._call_elevenlabs_with_timestamps",
+                 "promo.core.narrate.tts_elevenlabs._call_elevenlabs_with_timestamps",
                  side_effect=fake_call,
              ), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
