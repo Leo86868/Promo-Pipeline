@@ -38,7 +38,6 @@ Usage:
     # result = {"audio_path": "...", "word_timestamps": [...], "segment_timestamps": [...], ...}
 """
 
-import json
 import logging
 import os
 import tempfile
@@ -334,93 +333,32 @@ def generate_narration(
 
 
 # ---------------------------------------------------------------------------
-#  CLI
+#  CLI shim — preserves AC-16 invocation
 # ---------------------------------------------------------------------------
-
-def main():
-    import argparse
-    from dotenv import load_dotenv
-    load_dotenv()
-
-    from promo.core.logging_config import configure_logging
-    configure_logging()
-
-    parser = argparse.ArgumentParser(
-        description="Dual-backend TTS engine (ElevenLabs + Gemini 3.1 Flash) "
-        "for hotel narration"
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    sp_gen = sub.add_parser("generate", help="Generate narration from script JSON")
-    sp_gen.add_argument("--script-json", required=True, help="Path to script JSON")
-    sp_gen.add_argument(
-        "--voice", default="jarnathan",
-        help="Voice key from VOICE_CATALOG (e.g. kore for Gemini, jarnathan/hope/heather "
-        "for ElevenLabs) or a raw ElevenLabs voice_id",
-    )
-    sp_gen.add_argument("--output-dir", default=None, help="Output directory")
-
-    sp_list = sub.add_parser("list", help="List available voices")
-    del sp_list  # no further args
-
-    args = parser.parse_args()
-
-    if args.command == "list":
-        print("\nVoice Catalog (ElevenLabs + Gemini 3.1 Flash):")
-        print("=" * 60)
-        for key, voice in VOICE_CATALOG.items():
-            print(f"  {key}: {voice['name']} ({voice['gender']}, {voice['age']}, {voice['accent']})")
-            print(f"    {voice['description']}")
-            print(f"    voice_id: {voice['id']}")
-            print()
-        return
-
-    if args.command == "generate":
-        with open(args.script_json) as f:
-            script = json.load(f)
-
-        segments = script.get("segments", [])
-        voice_key = args.voice
-        voice_id = None
-        if voice_key not in VOICE_CATALOG:
-            # Treat as a raw voice_id.
-            voice_id = voice_key
-            voice_key = "custom"
-
-        result = generate_narration(
-            segments=segments,
-            voice_id=voice_id,
-            voice_key=voice_key if voice_id is None else "jarnathan",
-            output_dir=args.output_dir,
-        )
-
-        print("\n" + "=" * 60)
-        print("NARRATION GENERATED")
-        print(f"Audio: {result['audio_path']}")
-        print(f"Duration: {result['duration']:.1f}s")
-        print(f"Words: {len(result['word_timestamps'])}")
-        print(f"Segments: {len(result['segment_timestamps'])}")
-        print("=" * 60)
-
-        print("\nSegment timestamps:")
-        for st in result["segment_timestamps"]:
-            print(f"  Seg {st['segment']}: {st['start']:.2f}s - {st['end']:.2f}s ({st['duration']:.1f}s)")
-
-        print("\nWord timestamps (first 20):")
-        for wt in result["word_timestamps"][:20]:
-            print(f"  [{wt['start']:.2f}-{wt['end']:.2f}] {wt['word']}")
-        if len(result["word_timestamps"]) > 20:
-            print(f"  ... ({len(result['word_timestamps']) - 20} more)")
-
-        ts_path = os.path.join(os.path.dirname(result["audio_path"]), "timestamps.json")
-        with open(ts_path, "w") as f:
-            json.dump({
-                "word_timestamps": result["word_timestamps"],
-                "segment_timestamps": result["segment_timestamps"],
-                "duration": result["duration"],
-            }, f, indent=2)
-        print(f"\nTimestamps saved: {ts_path}")
-
+# Real CLI bodies live at ``promo.cli.list_voices`` / ``promo.cli.generate_narration``.
+# This shim keeps ``python3 -m promo.core.narrate.tts_engine list`` working byte-
+# identically (arsenal-externalization-contract AC-16 verify gate).
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    _USAGE = (
+        "usage: python3 -m promo.core.narrate.tts_engine {list|generate} [args...]\n"
+        "  list     — list available voices (no args)\n"
+        "  generate — generate narration from a script JSON (--script-json …)\n"
+    )
+
+    if len(sys.argv) < 2 or sys.argv[1] in {"-h", "--help"}:
+        sys.stderr.write(_USAGE)
+        sys.exit(0 if len(sys.argv) >= 2 and sys.argv[1] in {"-h", "--help"} else 2)
+
+    _sub = sys.argv[1]
+    if _sub == "list":
+        from promo.cli.list_voices import main as _list_main
+        _list_main()
+    elif _sub == "generate":
+        from promo.cli.generate_narration import main as _generate_main
+        _generate_main(sys.argv[2:])
+    else:
+        sys.stderr.write(f"unknown subcommand: {_sub!r}\n{_USAGE}")
+        sys.exit(2)
