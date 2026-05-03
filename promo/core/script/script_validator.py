@@ -27,7 +27,6 @@ Usage:
 
 import logging
 import re
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -465,46 +464,6 @@ def validate_script_only(
         "Pass-1 (script-only) validation passed: %d words, %d segments",
         total_words, profile.segment_count,
     )
-
-
-# ---------------------------------------------------------------------------
-#  Gate 3: Deduplication
-# ---------------------------------------------------------------------------
-
-def _jaccard_similarity(text_a: str, text_b: str) -> float:
-    """Compute Jaccard similarity between two texts (word-level)."""
-    words_a = set(text_a.lower().split())
-    words_b = set(text_b.lower().split())
-    if not words_a or not words_b:
-        return 0.0
-    intersection = words_a & words_b
-    union = words_a | words_b
-    return len(intersection) / len(union)
-
-
-def check_dedup(
-    script: dict, previous_scripts: list[str], threshold: float = 0.3
-) -> Optional[str]:
-    """Check if script is too similar to any previous script.
-
-    Args:
-        script: The script dict with segments.
-        previous_scripts: List of full script texts from prior generations.
-        threshold: Max Jaccard similarity allowed (default 0.3).
-
-    Returns:
-        None if passes, or an error string describing the duplicate.
-    """
-    full_text = " ".join(s["text"] for s in script.get("segments", []))
-
-    for i, prev in enumerate(previous_scripts):
-        sim = _jaccard_similarity(full_text, prev)
-        if sim > threshold:
-            return (
-                f"too similar to script #{i+1} (Jaccard={sim:.2f}, threshold={threshold})"
-            )
-
-    return None
 
 
 # ---------------------------------------------------------------------------
