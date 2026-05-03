@@ -10,7 +10,6 @@ sensible defaults.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -21,7 +20,6 @@ class ConfigError(RuntimeError):
 
 
 _DOTENV_LOADED = False
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _ensure_loaded() -> None:
@@ -107,19 +105,6 @@ def openrouter_http_referer() -> str:
     and `clip_embedder.py` as part of the operator-identity scrub.
     """
     return os.getenv("OPENROUTER_HTTP_REFERER", "https://github.com/anonymous/pgc-pipeline")
-
-
-def aigc_scrape_local_dir() -> str:
-    """Root directory for scraped raw-image pools: `<dir>/<slug>/scraped/raw/`.
-
-    Defaults to the checkout-local `material/` under the pgc-pipeline repo
-    root, matching the existing per-POI layout convention. Explicit
-    `AIGC_SCRAPE_LOCAL_DIR` overrides are respected as-is.
-    """
-    raw = os.getenv("AIGC_SCRAPE_LOCAL_DIR")
-    if raw is not None and raw.strip():
-        return raw
-    return str(_REPO_ROOT / "material")
 
 
 # ------------------------------------------------------------------ #
