@@ -76,86 +76,6 @@ def _require_float(name: str, default: Optional[float] = None) -> float:
 
 
 # ------------------------------------------------------------------ #
-#  KIE API
-# ------------------------------------------------------------------ #
-
-def kie_api_key() -> str:
-    return _require("KIE_API_KEY")
-
-
-def kie_base_url() -> str:
-    return os.getenv("KIE_BASE_URL", "https://api.kie.ai/api/v1")
-
-
-def kie_video_model() -> str:
-    return os.getenv("KIE_VIDEO_MODEL", "bytedance/seedance-1.5-pro")
-
-
-# ------------------------------------------------------------------ #
-#  SeeDream
-# ------------------------------------------------------------------ #
-
-def seedream_aspect_ratio() -> str:
-    return os.getenv("SEEDREAM_ASPECT_RATIO", "9:16")
-
-
-def seedream_quality() -> str:
-    return os.getenv("SEEDREAM_QUALITY", "basic")
-
-
-def seedream_poll_interval() -> int:
-    return _require_int("SEEDREAM_POLL_INTERVAL", default=15)
-
-
-def seedream_max_wait() -> int:
-    return _require_int("SEEDREAM_MAX_WAIT", default=600)
-
-
-# ------------------------------------------------------------------ #
-#  Video (Seedance)
-# ------------------------------------------------------------------ #
-
-def video_model() -> str:
-    return os.getenv("VIDEO_MODEL", kie_video_model())
-
-
-def video_aspect_ratio() -> str:
-    return os.getenv("VIDEO_ASPECT_RATIO", "9:16")
-
-
-def video_resolution() -> str:
-    return os.getenv("VIDEO_RESOLUTION", "720p")
-
-
-def video_duration() -> str:
-    return os.getenv("VIDEO_DURATION", "8")
-
-
-def video_poll_interval() -> int:
-    return _require_int("VIDEO_POLL_INTERVAL", default=15)
-
-
-def video_max_wait() -> int:
-    return _require_int("VIDEO_MAX_WAIT", default=600)
-
-
-# ------------------------------------------------------------------ #
-#  Supabase (storage backend)
-# ------------------------------------------------------------------ #
-
-def supabase_url() -> str:
-    return _require("SUPABASE_URL")
-
-
-def supabase_key() -> str:
-    return _require("SUPABASE_KEY")
-
-
-def supabase_bucket() -> str:
-    return os.getenv("PROMO_LAB_SUPABASE_BUCKET", "pipeline-media")
-
-
-# ------------------------------------------------------------------ #
 #  Pipeline env-var resolvers
 # ------------------------------------------------------------------ #
 #  Consumed by clip_assigner, clip_embedder, clip_analyzer,
@@ -175,37 +95,6 @@ def elevenlabs_api_key() -> str:
     return _require("ELEVENLABS_API_KEY")
 
 
-# ------------------------------------------------------------------ #
-#  Carry-over resolvers (no v0 callers — kept for forward compatibility)
-# ------------------------------------------------------------------ #
-#
-# The resolvers below are not consumed by any v0 production module.
-# They survived the extraction because keeping them costs nothing,
-# is type-safe, and lets a future caller adopt them by setting the env
-# var alone. Required values raise ``ConfigError``; optional values
-# return sensible defaults.
-
-def bb_daemon_url() -> str:
-    """bb-browser daemon HTTP URL. Overridden per-run by the orchestrator
-    via `bb_source.set_daemon_url(url)` after `bb_pool.acquire()`."""
-    return os.getenv("BB_DAEMON_URL", "http://127.0.0.1:19824")
-
-
-def bb_browser_port() -> int:
-    """CDP port the bb-browser daemon's Chrome listens on (informational;
-    the daemon HTTP port is derived from `BB_DAEMON_URL`)."""
-    return _require_int("BB_BROWSER_PORT", default=9222)
-
-
-def mimo_model() -> str:
-    """MIMO-Omni model id on OpenRouter (SERP reasoning)."""
-    return os.getenv("MIMO_MODEL", "xiaomi/mimo-v2-omni")
-
-
-def openrouter_base_url() -> str:
-    return os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-
-
 def openrouter_http_referer() -> str:
     """HTTP-Referer header sent with OpenRouter requests.
 
@@ -218,48 +107,6 @@ def openrouter_http_referer() -> str:
     and `clip_embedder.py` as part of the operator-identity scrub.
     """
     return os.getenv("OPENROUTER_HTTP_REFERER", "https://github.com/anonymous/pgc-pipeline")
-
-
-def gemini_scraping_model() -> str:
-    """Gemini model id used by the scraping metadata resolvers.
-
-    Distinct from `GEMINI_MODEL` consumed by compile_promo (which
-    defaults to `gemini-2.5-pro`). Scraping favors the faster 2.0-flash
-    for low-latency location / domain lookups.
-    """
-    return os.getenv("GEMINI_SCRAPING_MODEL", "gemini-2.0-flash")
-
-
-def kp_all_tab_quota() -> int:
-    """Max images to pull from the 'All' KP tab per POI."""
-    return _require_int("KP_ALL_TAB_QUOTA", default=30)
-
-
-def kp_other_tab_quota() -> int:
-    """Max images to pull from non-'All' KP tabs (Rooms, Exterior, ...)."""
-    return _require_int("KP_OTHER_TAB_QUOTA", default=10)
-
-
-def kp_total_cap() -> int:
-    """Hard cap on total KP images per POI across all tabs."""
-    return _require_int("KP_TOTAL_CAP", default=200)
-
-
-def google_images_max() -> int:
-    return _require_int("GOOGLE_IMAGES_MAX", default=50)
-
-
-def official_site_max() -> int:
-    return _require_int("OFFICIAL_SITE_MAX", default=50)
-
-
-def scrape_max_image_bytes() -> int:
-    """Oversized-image byte cap; files above this are dropped post-download.
-
-    Default: 6 MB. Prevents runaway download of mis-tagged hero PDFs or
-    video posters that the source-side image extractor mis-classifies.
-    """
-    return _require_int("SCRAPE_MAX_IMAGE_BYTES", default=6_291_456)
 
 
 def aigc_scrape_local_dir() -> str:
