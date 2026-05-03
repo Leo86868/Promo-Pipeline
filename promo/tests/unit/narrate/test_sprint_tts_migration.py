@@ -553,6 +553,7 @@ class TestN1NoGeminiPauseTags:
     def test_no_pause_tags_in_production_modules(self):
         prod_paths = [
             REPO_ROOT / "promo" / "core" / "narrate" / "tts_engine.py",
+            REPO_ROOT / "promo" / "core" / "narrate" / "tts_elevenlabs.py",
             REPO_ROOT / "promo" / "core" / "narrate" / "forced_aligner.py",
             REPO_ROOT / "promo" / "core" / "script" / "pause_budget.py",
             REPO_ROOT / "promo" / "cli" / "compile_promo.py",
