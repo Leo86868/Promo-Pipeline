@@ -231,6 +231,16 @@ class TestForcedAlignerSubprocessGuard:
         failures = self._check_module_subprocess_calls(path)
         assert failures == [], "\n".join(failures)
 
+    def test_tts_assembly_subprocess_calls_are_guarded(self):
+        path = REPO_ROOT / "promo" / "core" / "narrate" / "tts_assembly.py"
+        failures = self._check_module_subprocess_calls(path)
+        assert failures == [], "\n".join(failures)
+
+    def test_tts_gemini_subprocess_calls_are_guarded(self):
+        path = REPO_ROOT / "promo" / "core" / "narrate" / "tts_gemini.py"
+        failures = self._check_module_subprocess_calls(path)
+        assert failures == [], "\n".join(failures)
+
     def test_forced_aligner_subprocess_calls_are_guarded(self):
         path = REPO_ROOT / "promo" / "core" / "narrate" / "forced_aligner.py"
         failures = self._check_module_subprocess_calls(path)
@@ -385,7 +395,7 @@ class TestGeminiModelFallback:
             # fallback path — return 24kHz PCM silence (bytes)
             return b"\x00\x00" * 24000  # 1s of silence
 
-        with mock.patch.object(tts_engine, "_gemini_tts_rest", _fake_rest):
+        with mock.patch("promo.core.narrate.tts_gemini._gemini_tts_rest", _fake_rest):
             pcm, model_used = tts_engine._gemini_tts_with_fallback(
                 "hello world", voice="Kore",
             )
@@ -407,7 +417,7 @@ class TestGeminiModelFallback:
             response.status_code = 500
             raise requests.HTTPError(response=response)
 
-        with mock.patch.object(tts_engine, "_gemini_tts_rest", _fake_rest):
+        with mock.patch("promo.core.narrate.tts_gemini._gemini_tts_rest", _fake_rest):
             with pytest.raises(requests.HTTPError):
                 tts_engine._gemini_tts_with_fallback("hello world", voice="Kore")
 
@@ -554,6 +564,7 @@ class TestN1NoGeminiPauseTags:
         prod_paths = [
             REPO_ROOT / "promo" / "core" / "narrate" / "tts_engine.py",
             REPO_ROOT / "promo" / "core" / "narrate" / "tts_elevenlabs.py",
+            REPO_ROOT / "promo" / "core" / "narrate" / "tts_gemini.py",
             REPO_ROOT / "promo" / "core" / "narrate" / "forced_aligner.py",
             REPO_ROOT / "promo" / "core" / "script" / "pause_budget.py",
             REPO_ROOT / "promo" / "cli" / "compile_promo.py",

@@ -452,7 +452,7 @@ class TestSprint085TTSSpeedPlumbing:
         ]
         with tempfile.TemporaryDirectory() as tmpdir, \
              patch.dict(os.environ, {"ELEVENLABS_API_KEY": "test-key"}), \
-             patch("promo.core.narrate.tts_engine.requests.post", side_effect=fake_post), \
+             patch("promo.core.narrate.tts_elevenlabs.requests.post", side_effect=fake_post), \
              patch("promo.core.narrate.tts_engine._generate_silence_mp3"), \
              patch("promo.core.narrate.tts_engine._ffmpeg_concat_mp3s"), \
              patch("promo.core.narrate.tts_engine._ffprobe_duration", return_value=1.5):

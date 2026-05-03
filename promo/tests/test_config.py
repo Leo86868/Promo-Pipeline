@@ -71,6 +71,7 @@ class TestSprint13ConfigResolvers:
             "script/script_generator.py",
             "narrate/tts_engine.py",
             "narrate/tts_elevenlabs.py",
+            "narrate/tts_gemini.py",
         ):
             with open(os.path.join(core_dir, name), encoding="utf-8") as f:
                 src = f.read()
