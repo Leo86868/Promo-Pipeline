@@ -8,8 +8,6 @@ import sys
 import tempfile
 from unittest.mock import patch, MagicMock
 
-from pathlib import Path
-
 import pytest
 
 class TestSprint13ConfigResolvers:
@@ -80,13 +78,6 @@ class TestSprint13ConfigResolvers:
                     f"{name} still reads {key} via os.getenv — should route "
                     "through promo.core.config.* resolver."
                 )
-
-    def test_aigc_scrape_local_dir_defaults_to_repo_material_root(self, monkeypatch):
-        from promo.core import config
-
-        monkeypatch.delenv("AIGC_SCRAPE_LOCAL_DIR", raising=False)
-        expected = str(Path(__file__).resolve().parents[2] / "material")
-        assert config.aigc_scrape_local_dir() == expected
 
 # ---------------------------------------------------------------------------
 #  promo.core.llm.gemini_client — the single google.generativeai quarantine

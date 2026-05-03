@@ -26,12 +26,10 @@ Usage:
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 import uuid
 from typing import Any
-from pathlib import Path
 
 from promo.core.assign.clip_assigner import HARD_CONSTRAINT_TOL_SEC
 from promo.core.schema import (
