@@ -22,7 +22,6 @@ import logging
 import os
 import re
 import shutil
-from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
