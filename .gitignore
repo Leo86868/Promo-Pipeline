@@ -13,6 +13,7 @@ promo/remotion/node_modules/
 promo/remotion/out/
 promo/remotion/props.json
 promo/remotion/props_*.json
+promo/remotion/public/clip_*.mp4
 
 # Raw input material: clips supplied by the operator per POI.
 # Never commit real material to the repo. Only the top-level scaffold
