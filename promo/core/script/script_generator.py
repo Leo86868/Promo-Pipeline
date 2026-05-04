@@ -26,7 +26,6 @@ import re
 from promo.core.llm.gemini_client import resolve_gemini_model
 from promo.core.format_profiles import (
     PromoFormatProfile,
-    get_clip_pool_messages,
     get_promo_format_profile,
 )
 from promo.core.schema import ClipMetadata, NarratorPersona, Script
@@ -70,41 +69,17 @@ from promo.core.script.script_gemini_caller import (  # noqa: E402
     generate_one,
     generate_one as _generate_one,
 )
+from promo.core.script.script_validation_gates import (  # noqa: E402
+    enforce_clip_pool_contract,
+    enforce_clip_pool_contract as _enforce_clip_pool_contract,
+    enforce_pacing_gate,
+    enforce_pacing_gate as _enforce_pacing_gate,
+)
 
 
 # ---------------------------------------------------------------------------
-#  Core generation
+#  Variant orchestration
 # ---------------------------------------------------------------------------
-
-def _enforce_clip_pool_contract(
-    available_unique_clips: int,
-    profile: PromoFormatProfile,
-    *,
-    context_label: str,
-) -> None:
-    errors, warnings = get_clip_pool_messages(available_unique_clips, profile)
-    for warning in warnings:
-        logger.warning("%s: %s", context_label, warning)
-    if errors:
-        raise RuntimeError(f"{context_label}: {errors[0]}")
-
-
-def _enforce_pacing_gate(
-    script: dict,
-    persona: NarratorPersona,
-    profile: PromoFormatProfile,
-) -> None:
-    from promo.core.script.script_validator import ValidationError, validate_pacing
-
-    warnings = validate_pacing(
-        script,
-        target_duration=profile.target_duration_sec,
-        wpm=persona.wpm,
-        profile=profile,
-    )
-    if profile.mode == "long" and warnings:
-        raise ValidationError("pacing validation failed: " + "; ".join(warnings))
-
 
 def generate_script_variants(
     poi_name: str,
