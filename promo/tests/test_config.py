@@ -67,6 +67,7 @@ class TestSprint13ConfigResolvers:
         for name in (
             "analyze/clip_analyzer.py",
             "assign/clip_assigner.py",
+            "assign/clip_assignment_gemini.py",
             "assign/clip_assignment_sidecar.py",
             "assign/clip_assignment_validator.py",
             "assign/clip_embedder.py",

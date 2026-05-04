@@ -149,20 +149,40 @@ class TestSegmentPlanClipRangeContract:
         assert "1-4 phrases (and thus 1-4 clips)" not in prompt
 
     def test_no_silent_attribute_error_fallback_on_clip_range_access(self):
-        """Guardrail (advisor step 4): ``clip_assigner.py`` must NOT
+        """Guardrail (advisor step 4): the assignment surface must NOT
         catch ``AttributeError`` around ``clip_range`` access. The
         silent-fallback pattern is what hid the SegmentPlan contract
         drift from Sprint 10a through Sprint 10b close.
+
+        Sprint S2b: scans all four sibling modules of the post-split
+        clip_assigner surface so the guardrail tracks the file split
+        rather than passing on a shrinking facade. ``inspect.getsource(<module>)``
+        only returns the named module's own physical file — it does not
+        follow re-exports — so the original single-module read became a
+        spurious pass after the split.
         """
         import inspect
-        from promo.core.assign import clip_assigner
+        from promo.core.assign import (
+            clip_assigner,
+            clip_assignment_gemini,
+            clip_assignment_sidecar,
+            clip_assignment_validator,
+        )
 
-        src = inspect.getsource(clip_assigner)
+        sources = "\n".join(
+            inspect.getsource(m)
+            for m in (
+                clip_assigner,
+                clip_assignment_gemini,
+                clip_assignment_sidecar,
+                clip_assignment_validator,
+            )
+        )
         # Two call sites previously caught (IndexError, AttributeError);
         # after the fix, neither catches AttributeError.
-        assert "except (IndexError, AttributeError)" not in src
-        assert "except (AttributeError, IndexError)" not in src
-        assert "except AttributeError" not in src
+        assert "except (IndexError, AttributeError)" not in sources
+        assert "except (AttributeError, IndexError)" not in sources
+        assert "except AttributeError" not in sources
 
     def test_no_silent_index_error_fallback_on_clip_range_access(self):
         """Guardrail (Sprint 10b audit-fix): the IndexError silent-
