@@ -24,7 +24,7 @@ For load-bearing invariants (the two-space model, the verbatim sidecar table, er
 |---|---|
 | `pipeline/` | **Provides:** `full_pipeline` (run-level orchestrator) + `_run_variant_loop` (per-variant orchestrator) + `sidecar_writer._emit_run_sidecars`. **In:** all stage inputs threaded as kwargs to `full_pipeline`. **Out:** `bool` (run-level success). **Side:** writes 3 per-run sidecars at run-end (`tts_metrics_*`, `match_quality_*`, `clip_assignments_*`) — these are NOT stage outputs. **Raises:** propagates whatever stages raise. |
 | `selection/` | **Provides:** `FormatSelector` + `PersonaSelector` Protocols + `Single*` / `Random*` impls + `make_seeded_random` factory. **In:** `(n_variants, *, poi_name, clip_metadata)` per `select()` call. **Out:** `list[PromoFormatProfile]` or `list[NarratorPersona]` of length `n_variants`. **Side:** none (pure). **Raises:** `ConfigError` if a `RandomPersonaSelector` path is missing. **Consumers:** `pipeline/_build_variant_selections`. |
-| `llm/` | **Provides:** `gemini_client.{configure_gemini, reset_for_tests, resolve_gemini_model, GeminiModel}` + `retry.retry_with_backoff` + `json_response.parse_json_response`. **Side:** the only `import google.generativeai` site in the repo (Pluggability Charter Rule 1). **Raises:** `ValueError` (`json_response` on non-dict shape; `configure_gemini` on empty key). **Consumers (verified by grep):** Gemini SDK — `script/script_generator`, `assign/clip_assignment_gemini`. Retry — `analyze/clip_analyzer`, `script/script_gemini_caller`, `assign/clip_assignment_gemini`, `assign/clip_embedder`. JSON parser — `script/script_gemini_caller` only (Gemini #2 has its own list-parser). |
+| `llm/` | **Provides:** `gemini_client.{configure_gemini, reset_for_tests, resolve_gemini_model, GeminiModel}` (Gemini SDK access — the only allowed `import google.generativeai` site in the repo) + `retry.retry_with_backoff` (the **retry helper** — wraps any function and retries it with exponential backoff if it fails) + `json_response.parse_json_response` (parses JSON from AI text responses, expects a top-level dict). **Side:** Pluggability Charter Rule 1 — no other module is allowed to `import google.generativeai`. **Raises:** `ValueError` (`json_response` on non-dict shape; `configure_gemini` on empty key). **Consumers (verified by grep):** Gemini SDK — `script/script_generator`, `assign/clip_assignment_gemini`. Retry helper — `analyze/clip_analyzer`, `script/script_gemini_caller`, `assign/clip_assignment_gemini`, `assign/clip_embedder`. JSON-response parser — `script/script_gemini_caller` only (Gemini #2 has its own list-parser). |
 
 ### Root modules (cross-cutting)
 
@@ -32,7 +32,7 @@ For load-bearing invariants (the two-space model, the verbatim sidecar table, er
 |---|---|
 | `__init__.py` | **Provides:** `sanitize_poi_name(name)` (underscore form — sidecar filenames) + `material_poi_slug(name)` (hyphen form — `material/<slug>/` directories). **In:** display name `str`. **Out:** sanitized slug `str` (or `"unnamed"` fallback). **Side:** none (pure). **Raises:** nothing. |
 | `arsenal_loader.py` | **Provides:** `load_system_prompt`, `load_voice_catalog`, `load_persona`, `load_format_template`, `load_format_templates`, `reset_for_tests`. **In:** library / key name. **Out:** parsed Python value (`str` for system prompts, `dict` for voice catalog, `NarratorPersona`, `PromoFormatProfile`, `dict[str, PromoFormatProfile]`). **Side:** disk read — LRU-cached so module-import I/O happens once per process. **Raises:** lets `FileNotFoundError` / `KeyError` propagate. **Consumers (verified by grep — only `import yaml` site):** `analyze/clip_analyzer`, `script/script_prompt_builder`, `narrate/tts_engine`, `assign/clip_assignment_gemini`, `format_profiles`, `selection/persona_selectors`. |
-| `backend.py` | **Provides:** `PromoBackend` Protocol (`runtime_checkable`) + `LocalBackend` impl. **Protocol surface:** `fetch_clips(poi_name, tmp_dir) → dict[clip_id, path]`, `fetch_bgm(poi_name, tmp_dir) → str | None`, `save_output(poi_name, video_path) → str`, plus optional `clips_dir()` / `output_dir()` hooks for sibling-path derivation (`.mimo_cache/`, `.embedding_cache/`). **Side:** `LocalBackend` reads from `clips_dir`, copies into `tmp_dir`, copies output to `output_dir`. **Raises:** standard OS errors (uncaught). **Consumers:** `pipeline/full_pipeline`, `cli/compile_promo`. |
+| `backend.py` | **In plain English:** an I/O abstraction layer. The pipeline says "give me clips for this hotel", "give me BGM", "save this finished MP4" — and `backend.py` decides where those files actually come from / go to. Today's only implementation is `LocalBackend` (local-disk read/write); a future `S3Backend` or `SupabaseBackend` could swap in without touching pipeline code. **Provides:** `PromoBackend` Protocol (`runtime_checkable` — any class with the matching methods qualifies as a backend) + `LocalBackend` impl. **3 ops:** `fetch_clips(poi_name, tmp_dir) → dict[clip_id, path]` (give me clips for this hotel into a scratch folder); `fetch_bgm(poi_name, tmp_dir) → str | None` (give me the BGM track, or `None` if there isn't one); `save_output(poi_name, video_path) → str` (save this finished MP4 where it belongs). Plus optional `clips_dir()` / `output_dir()` hooks for sibling-path derivation (`.mimo_cache/`, `.embedding_cache/`). **Side:** `LocalBackend` reads from `clips_dir`, copies into `tmp_dir`, copies output to `output_dir` — plain file copies. **Raises:** standard OS errors (uncaught). **Consumers:** `pipeline/full_pipeline`, `cli/compile_promo`. |
 | `config.py` | **Provides:** typed env-var resolvers (`gemini_api_key()`, `elevenlabs_api_key()`, `openrouter_api_key()`, `default_duration_sec()`, `render_concurrency()`, others) + `ConfigError`. **In:** none (reads `os.environ` + `.env` once at import via `_DOTENV_LOADED` flag). **Out:** typed value. **Side:** `load_dotenv()` runs at most once. **Raises:** `ConfigError` on missing-required or type-coerce failure. **Note:** required values use `_require` / `_require_int` / `_require_float`; optional values (`OPENROUTER_HTTP_REFERER`, `PROMO_CLIP_MODEL`, `PROMO_FORMAT_SELECTOR`) use bare `os.getenv` with hardcoded defaults inside the same module. **Consumers:** every stage that needs env vars; no other module is allowed to touch `os.environ` except the documented `llm/gemini_client.GEMINI_MODEL` carve-out. |
 | `errors.py` | **Provides:** 5 named exception types — each carries a recovery contract: `ClipAssignmentError` (raised by `assign/`, **caught by `assign_clips_with_f3_retry` for ONE retry**, propagates on second → variant abort); `FreezeWouldOccurError` (raised by `render/`, **no retry → variant abort**); `ForcedAlignmentError` (raised by `narrate/forced_aligner` on Gemini path, **no retry → variant abort**); `MimoAnalysisError` (raised by `analyze/` after retry budget exhausted, **aborts the run**); `NoSuitableBGMError` (raised by `pipeline/bgm_voice_resolver`, **aborts before any variant runs**). **Consumers:** every stage raises one or more; `pipeline/` and `cli/` decide abort vs recover. |
 | `format_profiles.py` | **Provides:** `get_promo_format_profile(target_duration_sec) → PromoFormatProfile` + `get_clip_pool_messages(n_clips, profile) → (errors, warnings)` + `FORMAT_TEMPLATES` / `SHORT_PROFILE` / `LONG_PROFILE` / `SegmentPlan` / `PromoFormatProfile` re-exports from `schema.py`. **In:** target duration in seconds; clip-pool count. **Out:** profile / message lists. **Side:** at module-import, populates `FORMAT_TEMPLATES = arsenal_loader.load_format_templates()` — importing this module triggers an arsenal disk read. **Raises:** `KeyError` if no `short` / `long` template ships in arsenal. **Consumers:** `script/`, `assign/`, `pipeline/`, `selection/`. |
@@ -58,15 +58,25 @@ flowchart LR
     P -. writes 3 sidecars at run-end .-> SC[(clip_assignments_*<br/>tts_metrics_*<br/>match_quality_*)]
 
     SEL[selection/] -. picks profile + persona per variant .-> P
-    LLM[llm/<br/>Gemini quarantine + retry + json] -. used by .-> A
-    LLM -. used by .-> S
-    LLM -. used by .-> AS
+    LLM[llm/<br/>Gemini quarantine + retry + json] -. retry helper .-> A
+    LLM -. Gemini + retry + JSON parser .-> S
+    LLM -. Gemini + retry .-> AS
     AR[(arsenal/)] --> AL[arsenal_loader]
-    AL -. read by .-> A
-    AL -. read by .-> S
-    AL -. read by .-> N
-    AL -. read by .-> AS
+    AL -. MiMo prompt .-> A
+    AL -. Gemini #1 prompts + skeletons + personas .-> S
+    AL -. voice catalog .-> N
+    AL -. Gemini #2 prompt .-> AS
 ```
+
+**Per-stage breakdown — what arsenal/ and llm/ each stage actually pulls in:**
+
+| Stage | What it reads from `arsenal/` | What it uses from `llm/` |
+|---|---|---|
+| `analyze/` | `system_prompts/mimo_clip_analysis_v1.md` (the MiMo prompt) | retry helper only — `analyze/` calls MiMo via OpenRouter, not Gemini, so it doesn't need the Gemini SDK or the JSON parser. |
+| `script/` | `system_prompts/gemini1_script_v1.md` + `gemini1_f3_retry_v1.md` (Gemini #1 prompts), `script_skeletons/*.yaml` (format templates), `personas/*.yaml` (narrator personas) | Gemini SDK + retry helper + JSON-response parser (all three) — `script/` is the only stage that uses the full `llm/` surface. |
+| `narrate/` | `voices/catalog.yaml` (voice catalog — picks the right voice per backend) | nothing — `narrate/` talks to ElevenLabs / Gemini TTS via plain HTTP and manages its own retries. |
+| `assign/` | `system_prompts/gemini2_assign_v1.md` (the Gemini #2 prompt) | Gemini SDK + retry helper for the Gemini #2 path; retry helper alone for `clip_embedder` (OpenRouter embeddings). Gemini #2 has its own list-parser, so it doesn't use the JSON-response parser from `llm/`. |
+| `render/` | nothing — `render/` doesn't read arsenal | nothing — `render/` doesn't call any AI; it shells out to `npx remotion render`. |
 
 **Stage hand-offs (I/O contract — these are the actual public function signatures):**
 
