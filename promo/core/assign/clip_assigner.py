@@ -37,23 +37,38 @@ derived from the error; a second failure aborts the variant without a
 third call. :func:`assign_clips_with_f3_retry` encapsulates that loop
 behind two injected callables so the retry logic is unit-testable without
 running the real Gemini #1 or TTS stacks.
+
+Module layout (Sprint S2b — clip_assigner.py split from 891 → ~210 LOC)
+-----------------------------------------------------------------------
+
+This module is the public facade for the assignment surface. The four
+sibling modules under ``promo/core/assign/`` own the implementation:
+
+- :mod:`promo.core.assign.clip_assignment_validator` — hard-constraint
+  enforcer + display-span helpers + ``HARD_CONSTRAINT_TOL_SEC``.
+- :mod:`promo.core.assign.clip_assignment_gemini` — Gemini #2 prompt
+  builder + JSON parser + sampling/retry plumbing.
+- :mod:`promo.core.assign.clip_assignment_sidecar` —
+  ``clip_assignments_*.json`` reader (paired with ``compile_promo``'s
+  writer).
+
+:func:`assign_clips`, :func:`assign_clips_with_f3_retry`,
+:func:`build_tighten_hint`, and the ``ClipAssignmentError`` re-export
+physically live here because they form the orchestration surface that
+tests and ``pipeline/steps.py`` patch. Moving them across files would
+break the in-module bare-name resolution that makes
+``monkeypatch.setattr(clip_assigner, "_call_gemini2", ...)`` and
+``monkeypatch.setattr(clip_assigner, "assign_clips", ...)`` take effect
+without per-call indirection.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
-from pathlib import Path
-from string import Template
-from typing import Any, Callable, Iterable
+from typing import Callable, Iterable
 
-from promo.core import arsenal_loader
-from promo.core.llm.retry import retry_with_backoff
-from promo.core.llm.gemini_client import resolve_gemini_model
 from promo.core.errors import ClipAssignmentError
-from promo.core.format_profiles import PromoFormatProfile, get_promo_format_profile
+from promo.core.format_profiles import get_promo_format_profile
 from promo.core.schema import (
     ClipAssignment,
     ClipMetadata,
@@ -61,7 +76,6 @@ from promo.core.schema import (
     Script,
     WordTimestamp,
 )
-from promo.core.script.script_generator import _format_clip_inventory
 
 # ---------------------------------------------------------------------------
 #  Back-compat re-exports — extracted symbols (Sprint S2b)
@@ -70,7 +84,9 @@ from promo.core.script.script_generator import _format_clip_inventory
 # ``clip_assigner`` (e.g. ``from promo.core.assign.clip_assigner import
 # load_latest_clip_assignments``). After S2b these symbols live in
 # sibling modules; ``clip_assigner`` remains the single import path the
-# test + caller surface targets.
+# test + caller surface targets so ``assign_clips`` resolves
+# ``_call_gemini2`` + ``_enforce_hard_constraint_and_enrich`` through
+# this module's globals — preserving the monkeypatch.setattr surface.
 from promo.core.assign.clip_assignment_validator import (  # noqa: E402
     HARD_CONSTRAINT_TOL_SEC,
     _enforce_hard_constraint_and_enrich,
