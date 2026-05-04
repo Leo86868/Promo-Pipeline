@@ -30,7 +30,7 @@ from promo.core.schema import (
     Script,
     WordTimestamp,
 )
-from promo.core.script.script_generator import _format_clip_inventory
+from promo.core.script.script_prompt_builder import format_clip_inventory
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ def _build_gemini2_prompt(
     timing_block = _format_phrase_timing_block(
         script, word_timestamps, pause_after_ms_per_segment, profile,
     )
-    inventory = _format_clip_inventory(clips_metadata, duration_precision=2)
+    inventory = format_clip_inventory(clips_metadata, duration_precision=2)
 
     # Precomputed for prompt clarity — eliminates Gemini arithmetic slips
     # on the last-phrase edge case. Sprint 10.5 C1.2: the last phrase's
