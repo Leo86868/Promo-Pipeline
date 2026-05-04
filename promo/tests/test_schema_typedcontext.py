@@ -110,6 +110,7 @@ def test_ac14_signature_grep_residual_at_zero():
     targets = [
         "promo/core/assign/clip_assigner.py",
         "promo/core/assign/clip_assignment_sidecar.py",
+        "promo/core/assign/clip_assignment_validator.py",
         "promo/core/script/script_generator.py",
         "promo/core/narrate/tts_engine.py",
         "promo/core/render/remotion_renderer.py",
