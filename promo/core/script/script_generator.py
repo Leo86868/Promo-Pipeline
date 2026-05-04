@@ -17,6 +17,35 @@ Usage:
         n_variants=1,
     )
     script = variants[0]
+
+Module layout (Sprint S2c — script_generator.py split from 779 → ~480 LOC)
+--------------------------------------------------------------------------
+
+This module is the public facade for the script-generation surface. The
+three sibling modules under ``promo/core/script/`` own the implementation:
+
+- :mod:`promo.core.script.script_prompt_builder` — pure transformation:
+  ``HOOK_TECHNIQUES``, ``_DEFAULT_PERSONA_PATH``, ``build_variant_plans``,
+  ``format_clip_inventory`` (also called from
+  ``promo.core.assign.clip_assignment_gemini``), ``format_examples``,
+  ``build_prompt``.
+- :mod:`promo.core.script.script_gemini_caller` — single Gemini #1 call
+  wrapper (``generate_one``) with retry/backoff + JSON parse.
+- :mod:`promo.core.script.script_validation_gates` — pre/post-generation
+  raise-or-pass gates (``enforce_clip_pool_contract``,
+  ``enforce_pacing_gate``).
+
+:func:`generate_script_variants`, :func:`regenerate_single_variant_with_hint`,
+the ``NarratorPersona`` re-export, and the legacy underscore-prefixed
+aliases for every extracted helper physically live here because they
+form the orchestration + monkeypatch surface that tests and
+``pipeline/steps.py`` target. Moving the orchestrators across files
+would break the in-module bare-name resolution that makes
+``unittest.mock.patch("promo.core.script.script_generator._generate_one",
+...)`` and ``..._build_prompt``/``..._enforce_pacing_gate``/
+``...resolve_gemini_model`` take effect without per-call indirection.
+The script-validator boundary (``script_validator.py``) stays distinct
+and is not part of this split.
 """
 
 import json
@@ -272,6 +301,10 @@ def generate_script_variants(
         )
     return accepted
 
+
+# ---------------------------------------------------------------------------
+#  F3 regen — single-variant retry with tighten hint
+# ---------------------------------------------------------------------------
 
 def regenerate_single_variant_with_hint(
     *,
