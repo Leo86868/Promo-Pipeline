@@ -41,13 +41,13 @@ npm run dev
 You need a valid `props.json` in this directory first. Generate one with either:
 
 ```bash
-python3 -m promo.scripts.compile_promo --poi "Hotel Name" --local-clips ./my_clips
+python3 -m promo.cli.compile_promo --poi "Hotel Name" --local-clips ./my_clips
 ```
 
 or
 
 ```bash
-python3 -m promo.scripts.smoke_local_render --local-clips ./my_clips --dry-run
+python3 -m promo.cli.smoke_local_render --local-clips ./my_clips --dry-run
 ```
 
 Render directly from an existing props file:
@@ -59,5 +59,5 @@ npx remotion render HotelPromo out/manual-render.mp4 --props props.json
 ## See also
 
 - [`../README.md`](../README.md) for the pipeline overview
-- [`../core/remotion_renderer.py`](../core/remotion_renderer.py) for the Python bridge
-- [`../scripts/compile_promo.py`](../scripts/compile_promo.py) for the full CLI
+- [`../core/render/remotion_renderer.py`](../core/render/remotion_renderer.py) for the Python bridge
+- [`../cli/compile_promo.py`](../cli/compile_promo.py) for the full CLI
