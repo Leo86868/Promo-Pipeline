@@ -22,11 +22,8 @@ Usage:
 import json
 import logging
 import re
-from typing import Optional
 
-from promo.core.llm.gemini_client import GeminiModel, resolve_gemini_model
-from promo.core.llm.retry import retry_with_backoff
-from promo.core.llm.json_response import parse_json_response
+from promo.core.llm.gemini_client import resolve_gemini_model
 from promo.core.format_profiles import (
     PromoFormatProfile,
     get_clip_pool_messages,
@@ -39,14 +36,15 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-#  Back-compat re-exports — script_prompt_builder (Sprint S2c, commit 1/4)
+#  Back-compat re-exports — extracted helpers (Sprint S2c)
 # ---------------------------------------------------------------------------
 # Tests + cross-module callers import these names directly from
 # ``script_generator`` (e.g. ``from promo.core.script.script_generator
 # import _build_prompt``) and patch them via
 # ``unittest.mock.patch("promo.core.script.script_generator._generate_one",
-# ...)``. The implementations live in :mod:`script_prompt_builder`; the
-# legacy underscore-prefixed names are re-bound here so:
+# ...)``. The implementations live in sibling modules under
+# ``promo.core.script.``; the legacy underscore-prefixed names are
+# re-bound here so:
 #   1. existing test patches keep targeting the facade's globals;
 #   2. the entry-point orchestrators (``generate_script_variants`` +
 #      ``regenerate_single_variant_with_hint``, both still in this file)
@@ -68,37 +66,15 @@ from promo.core.script.script_prompt_builder import (  # noqa: E402
     format_examples,
     format_examples as _format_examples,
 )
+from promo.core.script.script_gemini_caller import (  # noqa: E402
+    generate_one,
+    generate_one as _generate_one,
+)
 
 
 # ---------------------------------------------------------------------------
 #  Core generation
 # ---------------------------------------------------------------------------
-
-def _generate_one(
-    prompt: str, model: GeminiModel
-) -> Optional[dict]:
-    """Generate a single script candidate. Returns parsed dict or None."""
-    def _call():
-        response = model.generate_content(
-            prompt,
-            generation_config={
-                "temperature": 0.85,
-                "top_p": 0.9,
-                # Sprint 08.5: bumped 1500→10000 per operator directive. Token
-                # cost is not a constraint on this repo (memory:
-                # feedback_gemini_token_budget). Headroom covers 130-140 word
-                # scripts + the fuller clips[] arrays without truncation risk.
-                "max_output_tokens": 10000,
-            },
-        )
-        return parse_json_response(response.text)
-
-    try:
-        return retry_with_backoff(_call, max_retries=2, base_delay=2.0)
-    except Exception as exc:
-        logger.warning("Script generation failed: %s", exc)
-        return None
-
 
 def _enforce_clip_pool_contract(
     available_unique_clips: int,
