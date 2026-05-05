@@ -28,7 +28,11 @@ clips/                        → MiMo V2 Omni            → scene descriptions
                                                                                                                                                          (remotion_renderer)
 ```
 
-The full module graph, two-space invariant (assigner ceiling vs renderer ceiling), sidecar producer/consumer table, and extension points all live in `architecture.md`.
+**Where to read next:**
+
+- **Run it** → this README has everything you need.
+- **Understand it** → start with [`promo/core/architecture.md`](promo/core/architecture.md) — folder-level navigator that threads the 8 subfolders + 8 root modules in plain English.
+- **Change internals** → [`architecture.md`](architecture.md) — engineer-facing project bible (two-space invariant, sidecar producer/consumer table, LLM quarantine charter, module graph, extension points).
 
 ## Install
 
