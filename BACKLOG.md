@@ -39,9 +39,7 @@ Cross-references to the auto-memory system are noted where relevant. Memory file
 
 ## Other — uncategorized / pending triage
 
-- **`clip_assigner.py:301` bare `assert`** — *Unclassified* — `assert flat_entries[emission_pos] is entry, ...` could be stripped under `python -O`. Safer as an explicit `RuntimeError`.
+- **`clip_assignment_validator.py:301` bare `assert`** — *Unclassified* — `assert flat_entries[emission_pos] is entry, ...` could be stripped under `python -O`. Safer as an explicit `RuntimeError`. (Line reference updated post-S2b: the assert moved with `_enforce_hard_constraint_and_enrich` from `clip_assigner.py` into the extracted validator module.)
 - **`selection/__init__.py:3` references "Shape B layout"** — *Unclassified* — convention isn't defined locally. Either link to the definition or drop the term.
-- **`backend.py:53` possible unused import** — *Unclassified — needs verification* — `from promo.core import sanitize_poi_name as _sanitize_name` imported but its use is not visible in the top 80 lines. Verify before removing.
-- **`format_profiles.py` triggers I/O at module-import** — *Unclassified — minor* — `FORMAT_TEMPLATES = arsenal_loader.load_format_templates()` runs on first `import`. Documented in `arsenal/README.md` but worth surfacing in the surrounding `format_profiles.py` docstring too.
-- **`promo/remotion/README.md` already exists** — *Unclassified — Phase 2 of S3* — task lists this as a doc to add; it is already present. Phase 2 should review for completeness/freshness rather than recreate.
+- **`format_profiles.py` triggers I/O at module-import** — *Unclassified — minor* — `FORMAT_TEMPLATES = arsenal_loader.load_format_templates()` runs on first `import`. Surfaced now in the umbrella `promo/core/architecture.md` row for `format_profiles.py`; could also be added to the file's own docstring.
 - **Repeated facade re-export pattern** — *Unclassified — overlaps with S5* — `clip_assigner.py`, `tts_engine.py`, `script_generator.py` all use the same shape, all because of the test patch surface. Once S5 lands, reconsider whether all three can collapse.
