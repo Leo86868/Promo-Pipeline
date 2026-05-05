@@ -1,4 +1,4 @@
-# Promo Lab Architecture
+# PGC Pipeline Architecture
 
 > **Engineer-facing project bible.** New readers: see [`README.md`](README.md) → [`promo/core/architecture.md`](promo/core/architecture.md) first. This doc assumes you already know what `narration_end`, `final_display_end`, sidecars, F3 retry, the soft-hint contract, and the two-space model are — those are introduced in the umbrella's Vocabulary section.
 
