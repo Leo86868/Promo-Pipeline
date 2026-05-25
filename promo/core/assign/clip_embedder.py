@@ -45,19 +45,26 @@ from typing import Optional
 from typing import cast
 
 from promo.core.llm.retry import retry_with_backoff
+from promo.core.model_adapters.openrouter import post_embeddings
+from promo.core.model_adapters.registry import (
+    OPENROUTER_EMBEDDING_API_URL,
+    OPENROUTER_EMBEDDING_DIM,
+    OPENROUTER_EMBEDDING_MODEL,
+    OPENROUTER_EMBEDDING_MODEL_API_ID,
+)
 from promo.core.schema import ClipMetadata
 
 logger = logging.getLogger(__name__)
 
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = OPENROUTER_EMBEDDING_MODEL
 # Model ID sent to OpenRouter's embeddings endpoint. OpenAI-provider models
 # are namespaced as ``openai/<model>``. The sidecar filename uses the bare
 # ``EMBEDDING_MODEL`` (no slash, cleaner path). The vectors are identical —
 # OpenRouter proxies through to OpenAI at the same pricing.
-EMBEDDING_MODEL_API_ID = "openai/text-embedding-3-small"
-EMBEDDING_DIM = 1536
-EMBEDDING_API_URL = "https://openrouter.ai/api/v1/embeddings"
+EMBEDDING_MODEL_API_ID = OPENROUTER_EMBEDDING_MODEL_API_ID
+EMBEDDING_DIM = OPENROUTER_EMBEDDING_DIM
+EMBEDDING_API_URL = OPENROUTER_EMBEDDING_API_URL
 CACHE_DIR_NAME = ".embedding_cache"
 
 # Bump manually when ``compose_embedding_text`` changes. The MiMo-prompt SHA1
@@ -160,23 +167,12 @@ def _post_embeddings(inputs: list[str], api_key: str) -> list[list[float]]:
     ``clip_analyzer._call_openrouter`` — they're free-form provenance
     strings OpenRouter uses for attribution but doesn't validate.
     """
-    import requests
-
-    from promo.core.config import openrouter_http_referer
-
-    response = requests.post(
-        EMBEDDING_API_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": openrouter_http_referer(),
-            "X-OpenRouter-Title": "pgc-pipeline",
-        },
-        json={"model": EMBEDDING_MODEL_API_ID, "input": inputs},
+    data = post_embeddings(
+        inputs,
+        api_key=api_key,
+        model=EMBEDDING_MODEL_API_ID,
         timeout=60,
     )
-    response.raise_for_status()
-    data = response.json()
     items = data.get("data", [])
     if len(items) != len(inputs):
         raise RuntimeError(

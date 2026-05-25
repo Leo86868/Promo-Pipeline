@@ -14,6 +14,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from promo.core.model_adapters.registry import MIMO_CLIP_MODEL
+
 
 class ConfigError(RuntimeError):
     """Raised when a required configuration value is missing or invalid."""
@@ -135,7 +137,7 @@ def clip_model() -> str:
     `clip_analyzer` dependency inversion. Kept in sync manually; the
     canonical value lives here.
     """
-    return os.getenv("PROMO_CLIP_MODEL", "xiaomi/mimo-v2-omni")
+    return os.getenv("PROMO_CLIP_MODEL", MIMO_CLIP_MODEL)
 
 
 def default_duration_sec() -> float:

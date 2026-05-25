@@ -5,7 +5,7 @@ arsenal data. Every consumer (``clip_analyzer``, ``script_generator``,
 ``clip_assigner``, ``tts_engine``, ``format_profiles``,
 ``arsenal/personas/_loader.py``) imports through here.
 
-Five public entry points cover the four arsenal sub-libraries:
+Six public entry points cover the arsenal sub-libraries:
 
   - ``load_system_prompt(name)`` → ``arsenal/system_prompts/<name>_v1.md``
     (4 known names: ``mimo_clip_analysis``, ``gemini1_script``,
@@ -16,6 +16,7 @@ Five public entry points cover the four arsenal sub-libraries:
   - ``load_format_templates()`` → every ``arsenal/script_skeletons/*.yaml``
     keyed by ``mode``.
   - ``load_format_template(key)`` → one profile by ``mode`` key.
+  - ``load_script_hooks()`` → ``arsenal/script_hooks.yaml``.
 
 Type imports come from :mod:`promo.core.schema` to break the circular
 import that would otherwise form between ``arsenal_loader`` and the
@@ -265,6 +266,27 @@ def load_format_template(key: str) -> PromoFormatProfile:
     return profiles[key]
 
 
+@lru_cache(maxsize=1)
+def load_script_hooks() -> list[str]:
+    """Return ordered hook-technique seeds for script variant diversity."""
+    path = _arsenal_path("script_hooks.yaml")
+    if not path.exists():
+        raise FileNotFoundError(f"missing arsenal script hooks: {path}")
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: top-level must be a mapping; got {type(raw).__name__}")
+    hooks = raw.get("hook_techniques")
+    if not isinstance(hooks, list) or not hooks:
+        raise ValueError(f"{path}: hook_techniques must be a non-empty list")
+    for idx, hook in enumerate(hooks):
+        if not isinstance(hook, str) or not hook.strip():
+            raise ValueError(
+                f"{path}: hook_techniques[{idx}] must be a non-empty string"
+            )
+    return [hook.strip() for hook in hooks]
+
+
 def reset_for_tests() -> None:
     """Clear every loader cache so a test that rotates an arsenal file
     sees the rotated content on the next read.
@@ -284,6 +306,7 @@ def reset_for_tests() -> None:
     load_system_prompt.cache_clear()
     load_voice_catalog.cache_clear()
     load_format_templates.cache_clear()
+    load_script_hooks.cache_clear()
 
     # Re-prime the import-time consumers. Imports are local so this
     # module stays free of optional-consumer dependencies — a test that

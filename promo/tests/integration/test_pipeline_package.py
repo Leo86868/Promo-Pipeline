@@ -89,9 +89,9 @@ class TestSprint4SubpackageShape:
         assert PIPELINE_DIR.is_dir()
         py_files = {
             p.name for p in PIPELINE_DIR.iterdir()
-            if p.is_file() and p.name != "py.typed"
+            if p.is_file() and p.suffix == ".py"
         }
-        unexpected = (py_files - EXPECTED_MODULES) - {"py.typed"}
+        unexpected = py_files - EXPECTED_MODULES
         missing = EXPECTED_MODULES - py_files
         assert not unexpected, (
             f"Unexpected files: {sorted(unexpected)}; N4(b) caps file count."

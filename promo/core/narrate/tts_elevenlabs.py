@@ -24,6 +24,12 @@ from typing import Optional
 
 import requests
 
+from promo.core.model_adapters.registry import (
+    ELEVENLABS_API_BASE as _ELEVENLABS_API_BASE,
+    ELEVENLABS_MODEL_ID,
+    ELEVENLABS_OUTPUT_FORMAT,
+)
+from promo.core.model_adapters.tts import call_elevenlabs_with_timestamps
 from promo.core.schema import WordTimestamp
 
 logger = logging.getLogger(__name__)
@@ -43,20 +49,14 @@ VOICE_SETTINGS: dict = {
     "speed": 0.95,
 }
 
-MODEL_ID = "eleven_multilingual_v2"
-OUTPUT_FORMAT = "mp3_44100_128"  # Starter-tier cap
-ELEVENLABS_API_BASE = "https://api.elevenlabs.io"
+MODEL_ID = ELEVENLABS_MODEL_ID
+OUTPUT_FORMAT = ELEVENLABS_OUTPUT_FORMAT  # Starter-tier cap
+ELEVENLABS_API_BASE = _ELEVENLABS_API_BASE
 
 
 # ---------------------------------------------------------------------------
 #  HTTP client
 # ---------------------------------------------------------------------------
-
-def _get_api_key() -> str:
-    from promo.core.config import elevenlabs_api_key
-
-    return elevenlabs_api_key()
-
 
 def _call_elevenlabs_with_timestamps(
     text: str,
@@ -75,45 +75,22 @@ def _call_elevenlabs_with_timestamps(
     ``speed`` overrides ``VOICE_SETTINGS.speed`` when provided. Accepted
     ElevenLabs range is 0.7–1.2; default (None) keeps ``VOICE_SETTINGS.speed``.
     """
-    api_key = _get_api_key()
-    url = f"{ELEVENLABS_API_BASE}/v1/text-to-speech/{voice_id}/with-timestamps"
     voice_settings = dict(VOICE_SETTINGS)
     if speed is not None:
         voice_settings["speed"] = float(speed)
-    payload = {
-        "text": text,
-        "model_id": model_id,
-        "voice_settings": voice_settings,
-    }
-    params = {"output_format": output_format}
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
     logger.info(
         "Calling ElevenLabs with_timestamps (voice=%s, model=%s, format=%s)...",
         voice_id[:12], model_id, output_format,
     )
-    try:
-        response = requests.post(
-            url, params=params, json=payload, headers=headers, timeout=timeout,
-        )
-    except requests.RequestException as exc:
-        raise RuntimeError(f"ElevenLabs request failed: {exc}") from exc
-
-    if response.status_code >= 400:
-        body = response.text[:800]
-        raise RuntimeError(
-            f"ElevenLabs API error {response.status_code}: {body}"
-        )
-
-    try:
-        return response.json()
-    except ValueError as exc:
-        raise RuntimeError(
-            f"ElevenLabs returned non-JSON response: {response.text[:300]!r}"
-        ) from exc
+    return call_elevenlabs_with_timestamps(
+        text=text,
+        voice_id=voice_id,
+        voice_settings=voice_settings,
+        model_id=model_id,
+        output_format=output_format,
+        timeout=timeout,
+        requests_post=requests.post,
+    )
 
 
 # ---------------------------------------------------------------------------

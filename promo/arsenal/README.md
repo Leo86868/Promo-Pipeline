@@ -1,6 +1,6 @@
 # Arsenal — operator-facing libraries
 
-The 4 sub-directories under `promo/arsenal/` are the libraries the operator extends over time. Logic stays in Python; data leaves Python. Every consumer (`clip_analyzer`, `script_generator`, `clip_assigner`, `tts_engine`, `format_profiles`) reads through `promo/core/arsenal_loader.py` — never directly.
+The 4 sub-directories plus `script_hooks.yaml` under `promo/arsenal/` are the libraries the operator extends over time. Logic stays in Python; data leaves Python. Every consumer (`clip_analyzer`, `script_generator`, `clip_assigner`, `tts_engine`, `format_profiles`) reads through `promo/core/arsenal_loader.py` — never directly.
 
 ## What goes here
 
@@ -10,6 +10,7 @@ The 4 sub-directories under `promo/arsenal/` are the libraries the operator exte
 | `voices/catalog.yaml` | Voice catalog: `kore` (Gemini), `jarnathan`/`hope`/`heather` (ElevenLabs). | `arsenal_loader.load_voice_catalog()` |
 | `personas/*.yaml` | Narrator personas — voice / tone / perspective only. | `arsenal_loader.load_persona(name_or_path)` |
 | `script_skeletons/*.yaml` | Promo format templates (currently `short_30s`, `long_65s`). Each YAML constructs one `PromoFormatProfile`. | `arsenal_loader.load_format_template(key)` / `load_format_templates()` |
+| `script_hooks.yaml` | Ordered hook-technique seeds for multi-variant script diversity. | `arsenal_loader.load_script_hooks()` |
 
 ## How to add a voice
 
@@ -30,6 +31,12 @@ The 4 sub-directories under `promo/arsenal/` are the libraries the operator exte
    - `sentence_rule` (str) — fills `$sentence_rule` in `gemini1_script_v1.md`. The per-mode RULES bullet for sentence length / cadence.
    - `extra_rules` (list[str]) — joined with `"\n- "` and dropped into `$extra_rules_block`. Empty list = empty block.
 3. `arsenal_loader.load_format_templates()` picks up the new YAML on next module-import. No Python edit. Re-validate `promo/tests/test_selection.py` random-distribution tests if your new mode key would shift the seeded sample.
+
+## How to edit hook techniques
+
+1. Open `script_hooks.yaml`.
+2. Edit the `hook_techniques` list. Order matters — variants rotate through the list by index.
+3. Keep values short because the hook label is inserted directly into the Gemini #1 variant note.
 
 ## How to bump a prompt version
 

@@ -40,6 +40,11 @@ from typing import Optional
 from promo.core import arsenal_loader
 from promo.core.llm.retry import retry_with_backoff
 from promo.core.errors import MimoAnalysisError
+from promo.core.model_adapters.openrouter import post_chat_completion
+from promo.core.model_adapters.registry import (
+    MIMO_CLIP_MODEL,
+    OPENROUTER_BASE_URL as _OPENROUTER_BASE_URL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +134,8 @@ def _save_cached_analysis(cache_dir: str, cache_key: str, analysis: dict) -> Non
     except OSError as exc:
         logger.warning("Cache write failed for %s: %s", final, exc)
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "xiaomi/mimo-v2-omni"
+OPENROUTER_BASE_URL = _OPENROUTER_BASE_URL
+DEFAULT_MODEL = MIMO_CLIP_MODEL
 DEFAULT_FPS = 4
 MAX_VIDEO_SIZE_MB = 10
 MAX_CONCURRENT = 3
@@ -144,16 +149,6 @@ MAX_CONCURRENT = 3
 # arsenal loader strips trailing whitespace so the
 # ``_cache_version_suffix`` hash ("3c0efc35" baseline) is preserved.
 _ANALYSIS_PROMPT = arsenal_loader.load_system_prompt("mimo_clip_analysis")
-
-
-# ---------------------------------------------------------------------------
-#  OpenRouter API
-# ---------------------------------------------------------------------------
-
-def _get_api_key() -> str:
-    from promo.core.config import openrouter_api_key
-
-    return openrouter_api_key()
 
 
 def _compress_video(video_path: str, target_mb: float = 8) -> str:
@@ -193,12 +188,8 @@ def _compress_video(video_path: str, target_mb: float = 8) -> str:
 
 def _call_openrouter(video_path: str, model: str = None) -> dict:
     """Send a video clip to MiMo V2 Omni via OpenRouter."""
-    import requests
-
     from promo.core.config import clip_model as _clip_model
-    from promo.core.config import openrouter_http_referer
 
-    api_key = _get_api_key()
     model = model or _clip_model()
 
     # Compress if needed
@@ -214,27 +205,16 @@ def _call_openrouter(video_path: str, model: str = None) -> dict:
         with open(send_path, "rb") as f:
             video_b64 = base64.b64encode(f.read()).decode("utf-8")
 
-        response = requests.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": openrouter_http_referer(),
-                "X-OpenRouter-Title": "pgc-pipeline",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": [
+        return post_chat_completion(
+            model=model,
+            messages=[{"role": "user", "content": [
                     {"type": "text", "text": _ANALYSIS_PROMPT},
                     {"type": "video_url",
                      "video_url": {"url": f"data:video/mp4;base64,{video_b64}"},
                      "fps": DEFAULT_FPS, "media_resolution": "default"},
                 ]}],
-            },
             timeout=120,
         )
-        response.raise_for_status()
-        return response.json()
     finally:
         if compressed and os.path.exists(compressed):
             os.unlink(compressed)

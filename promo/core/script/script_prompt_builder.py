@@ -6,7 +6,7 @@ string. No Gemini calls, no file reads beyond the arsenal MD templates
 that ``arsenal_loader`` already memoizes.
 
 Module contents:
-  - :data:`HOOK_TECHNIQUES` — 6 hook seed strings rotated across variants.
+  - :data:`HOOK_TECHNIQUES` — hook seed strings rotated across variants.
   - :data:`_DEFAULT_PERSONA_PATH` — bundled persona fallback (kept under
     the legacy underscore name; re-exported by the facade for tests that
     import it directly).
@@ -34,18 +34,7 @@ from promo.core.schema import ClipMetadata, NarratorPersona
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-#  Hook technique seeds for variant diversity
-# ---------------------------------------------------------------------------
-
-HOOK_TECHNIQUES = [
-    "contradiction",
-    "sensory",
-    "specific_number",
-    "second_person",
-    "time_anchor",
-    "superlative",
-]
+HOOK_TECHNIQUES = arsenal_loader.load_script_hooks()
 
 
 def build_variant_plans(

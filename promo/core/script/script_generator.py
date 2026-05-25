@@ -52,7 +52,7 @@ import json
 import logging
 import re
 
-from promo.core.llm.gemini_client import resolve_gemini_model
+from promo.core.model_adapters.gemini import resolve_gemini_model
 from promo.core.format_profiles import (
     PromoFormatProfile,
     get_promo_format_profile,

@@ -29,7 +29,6 @@ timing. Declarative pauses stay the responsibility of
 ``_generate_silence_mp3`` stitched between batches.
 """
 
-import base64
 import logging
 import os
 import wave
@@ -43,6 +42,12 @@ from promo.core.narrate.tts_assembly import (
     _run_ffmpeg,
 )
 from promo.core.narrate.tts_text_normalize import normalize_digits_to_words
+from promo.core.model_adapters.registry import (
+    GEMINI_TTS_API_BASE,
+    GEMINI_TTS_FALLBACK_MODEL,
+    GEMINI_TTS_PRIMARY_MODEL,
+)
+from promo.core.model_adapters.tts import generate_gemini_tts_pcm
 from promo.core.schema import WordTimestamp
 
 logger = logging.getLogger(__name__)
@@ -52,9 +57,9 @@ logger = logging.getLogger(__name__)
 #  Constants
 # ---------------------------------------------------------------------------
 
-GEMINI_PRIMARY_MODEL = "gemini-3.1-flash-tts-preview"
-GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-preview-tts"
-GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_PRIMARY_MODEL = GEMINI_TTS_PRIMARY_MODEL
+GEMINI_FALLBACK_MODEL = GEMINI_TTS_FALLBACK_MODEL
+GEMINI_API_BASE = GEMINI_TTS_API_BASE
 _GEMINI_PCM_SAMPLE_RATE = 24000
 _GEMINI_MP3_SAMPLE_RATE = 44100
 
@@ -63,12 +68,6 @@ _GEMINI_MP3_SAMPLE_RATE = 44100
 #  HTTP client + fallback
 # ---------------------------------------------------------------------------
 
-def _get_gemini_api_key() -> str:
-    from promo.core.config import gemini_api_key
-
-    return gemini_api_key()
-
-
 def _gemini_tts_rest(text: str, model: str, voice: str) -> bytes:
     """POST to Gemini ``:generateContent`` with AUDIO response modality.
 
@@ -76,33 +75,7 @@ def _gemini_tts_rest(text: str, model: str, voice: str) -> bytes:
     ``requests.HTTPError`` on non-2xx; the caller
     (``_gemini_tts_with_fallback``) discriminates on status code.
     """
-    url = f"{GEMINI_API_BASE}/models/{model}:generateContent"
-    headers = {
-        "x-goog-api-key": _get_gemini_api_key(),
-        "Content-Type": "application/json",
-    }
-    body = {
-        "contents": [{"parts": [{"text": text}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {
-                "voiceConfig": {
-                    "prebuiltVoiceConfig": {"voiceName": voice}
-                }
-            },
-        },
-    }
-    response = requests.post(url, headers=headers, json=body, timeout=180)
-    response.raise_for_status()
-    payload = response.json()
-    parts = payload["candidates"][0]["content"]["parts"]
-    for part in parts:
-        if "inlineData" in part:
-            return base64.b64decode(part["inlineData"]["data"])
-    raise RuntimeError(
-        f"Gemini TTS response missing inlineData audio (keys: "
-        f"{list(payload.get('candidates', [{}])[0].get('content', {}).keys())})"
-    )
+    return generate_gemini_tts_pcm(text=text, model=model, voice=voice)
 
 
 def _gemini_tts_with_fallback(text: str, voice: str) -> tuple[bytes, str]:

@@ -1,0 +1,9 @@
+# Script hook seeds used to diversify multi-variant Gemini #1 openings.
+# Order matters: build_variant_plans rotates through this list by variant index.
+hook_techniques:
+  - contradiction
+  - sensory
+  - specific_number
+  - second_person
+  - time_anchor
+  - superlative

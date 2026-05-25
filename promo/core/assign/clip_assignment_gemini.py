@@ -22,7 +22,10 @@ from typing import Any
 
 from promo.core import arsenal_loader
 from promo.core.llm.retry import retry_with_backoff
-from promo.core.llm.gemini_client import resolve_gemini_model
+from promo.core.model_adapters.gemini import (
+    generate_content_text,
+    resolve_gemini_model,
+)
 from promo.core.format_profiles import PromoFormatProfile
 from promo.core.schema import (
     ClipAssignment,
@@ -253,7 +256,8 @@ def _call_gemini2(prompt: str) -> list[ClipAssignment]:
     model = resolve_gemini_model(log_context="Gemini #2")
 
     def _call() -> Any:
-        response = model.generate_content(
+        text = generate_content_text(
+            model,
             prompt,
             generation_config={  # type: ignore[arg-type]
                 "temperature": 0.35,
@@ -267,6 +271,6 @@ def _call_gemini2(prompt: str) -> list[ClipAssignment]:
                 "max_output_tokens": 32000,
             },
         )
-        return _parse_gemini2_json(response.text)
+        return _parse_gemini2_json(text)
 
     return retry_with_backoff(_call, max_retries=2, base_delay=2.0)

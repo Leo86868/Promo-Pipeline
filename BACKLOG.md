@@ -14,7 +14,6 @@ Cross-references to the auto-memory system are noted where relevant. Memory file
 
 ## S4 — Arsenal-bound (extend operator-facing data libraries)
 
-- **`HOOK_TECHNIQUES` externalization** — *Likely* — `promo/core/script/script_prompt_builder.py:HOOK_TECHNIQUES` is a 6-string list hard-coded in Python. Belongs alongside `arsenal/personas/` and `arsenal/script_skeletons/` so the operator can rotate hooks without a Python edit.
 
 *See `project_pgc_arsenal_completeness_backlog` memory for pre-existing items to fold into this section at S4 kick-off.*
 

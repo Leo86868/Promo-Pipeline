@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from promo.core.llm.gemini_client import GeminiModel
+from promo.core.model_adapters.gemini import GeminiModel, generate_content_text
 from promo.core.llm.retry import retry_with_backoff
 from promo.core.llm.json_response import parse_json_response
 
@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 def generate_one(prompt: str, model: GeminiModel) -> Optional[dict]:
     """Generate a single script candidate. Returns parsed dict or None."""
     def _call():
-        response = model.generate_content(
+        text = generate_content_text(
+            model,
             prompt,
             generation_config={
                 "temperature": 0.85,
@@ -40,7 +41,7 @@ def generate_one(prompt: str, model: GeminiModel) -> Optional[dict]:
                 "max_output_tokens": 10000,
             },
         )
-        return parse_json_response(response.text)
+        return parse_json_response(text)
 
     try:
         return retry_with_backoff(_call, max_retries=2, base_delay=2.0)

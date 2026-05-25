@@ -4,6 +4,7 @@ Externalization audit-fix.
 Pins:
   - F3-retry feedback block byte-identity vs the pre-extraction
     inline literal (the caller's ``+ "\\n"`` restoration).
+  - hook techniques are loaded from arsenal data.
   - ``reset_for_tests`` clears every cache and re-primes
     ``tts_engine.VOICE_CATALOG`` and ``format_profiles.FORMAT_TEMPLATES``.
   - ``load_format_template(key)`` (singular) is exercised — the contract
@@ -85,6 +86,15 @@ class TestResetForTests:
 
         arsenal_loader.reset_for_tests()
         info = arsenal_loader.load_system_prompt.cache_info()
+        assert info.currsize == 0
+
+    def test_reset_clears_script_hooks_cache(self):
+        arsenal_loader.load_script_hooks()
+        info = arsenal_loader.load_script_hooks.cache_info()
+        assert info.currsize == 1
+
+        arsenal_loader.reset_for_tests()
+        info = arsenal_loader.load_script_hooks.cache_info()
         assert info.currsize == 0
 
     def test_reset_clears_voice_catalog_cache_to_observe_disk_changes(
@@ -222,3 +232,38 @@ class TestLoadFormatTemplateSingular:
         plural = arsenal_loader.load_format_templates()
         for key in plural:
             assert arsenal_loader.load_format_template(key) is plural[key]
+
+
+class TestLoadScriptHooks:
+    def test_load_script_hooks_returns_ordered_hook_techniques(self):
+        assert arsenal_loader.load_script_hooks() == [
+            "contradiction",
+            "sensory",
+            "specific_number",
+            "second_person",
+            "time_anchor",
+            "superlative",
+        ]
+
+    def test_script_prompt_builder_re_exports_loaded_hook_techniques(self):
+        from promo.core.script import script_prompt_builder
+
+        assert script_prompt_builder.HOOK_TECHNIQUES == arsenal_loader.load_script_hooks()
+
+    def test_malformed_script_hooks_raise_value_error(self, tmp_path, monkeypatch):
+        bad_hooks = tmp_path / "script_hooks.yaml"
+        bad_hooks.write_text("hook_techniques: []\n")
+        monkeypatch.setattr(
+            arsenal_loader,
+            "_arsenal_path",
+            lambda *parts: bad_hooks if parts == ("script_hooks.yaml",)
+            else arsenal_loader._ARSENAL_ROOT.joinpath(*parts),
+        )
+
+        arsenal_loader.reset_for_tests()
+        try:
+            with pytest.raises(ValueError, match="hook_techniques"):
+                arsenal_loader.load_script_hooks()
+        finally:
+            monkeypatch.undo()
+            arsenal_loader.reset_for_tests()
