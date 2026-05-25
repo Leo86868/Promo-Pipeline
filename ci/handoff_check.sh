@@ -27,11 +27,16 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Pre-smoke clip-stub generation: smoke_local_render asserts 4 clip mp4s
-# named clip_0001.mp4..clip_0004.mp4 exist alongside sample-video.mp4.
-# Each is a hard-copy of sample-video.mp4 (`cp -n` is idempotent).
+SMOKE_CLIPS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/promo-smoke-clips.XXXXXX")"
+cleanup() {
+  rm -rf "$SMOKE_CLIPS_DIR"
+}
+trap cleanup EXIT
+
+# Pre-smoke clip-stub generation: smoke_local_render requires 4 readable mp4s
+# with 4-digit clip IDs. Use a temp pool so the check leaves the repo clean.
 for i in 0001 0002 0003 0004; do
-  cp -n promo/remotion/public/sample-video.mp4 "promo/remotion/public/clip_${i}.mp4"
+  cp promo/remotion/public/sample-video.mp4 "${SMOKE_CLIPS_DIR}/${i}.mp4"
 done
 
 echo "==> [1/2] pytest -m 'not live'"
@@ -40,7 +45,7 @@ python3 -m pytest -m "not live" -q
 echo
 echo "==> [2/2] smoke_local_render --dry-run"
 python3 -m promo.cli.smoke_local_render \
-  --local-clips promo/remotion/public \
+  --local-clips "$SMOKE_CLIPS_DIR" \
   --dry-run
 
 if [[ $FULL -eq 1 ]]; then
