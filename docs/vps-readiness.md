@@ -31,7 +31,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.lock
-pip install -e .
+pip install -e ".[dev]"
 ( cd promo/remotion && npm ci )
 
 git status --short

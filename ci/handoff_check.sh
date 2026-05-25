@@ -27,6 +27,11 @@ esac
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+if ! python3 -c "import pytest" >/dev/null 2>&1; then
+  echo "pytest is not installed; run: pip install -e '.[dev]'" >&2
+  exit 4
+fi
+
 SMOKE_CLIPS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/promo-smoke-clips.XXXXXX")"
 cleanup() {
   rm -rf "$SMOKE_CLIPS_DIR"
