@@ -24,6 +24,30 @@ class TestP3DecoupledBinding:
             "remotion_renderer imports compiler.py — must be self-contained"
         )
 
+
+def test_render_promo_uses_configured_timeout(monkeypatch, tmp_path):
+    from promo.core.render import remotion_renderer as rr
+
+    output_path = tmp_path / "out.mp4"
+    captured = {}
+
+    def fake_run(*args, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        output_path.write_bytes(b"x" * 200_000)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("PROMO_RENDER_CONCURRENCY", "1")
+    monkeypatch.setenv("PROMO_RENDER_TIMEOUT_SEC", "901")
+    monkeypatch.setattr(rr, "validate_props", lambda props: [])
+    monkeypatch.setattr(rr.subprocess, "run", fake_run)
+
+    assert rr.render_promo(
+        {"meta": {"poiName": "Timeout Test"}, "clips": [], "captions": {}},
+        str(output_path),
+    )
+    assert captured["timeout"] == 901
+
+
 class TestSprint07PauseWindows:
     """AC12, AC13: audio.pauseWindows shape + filtering."""
 

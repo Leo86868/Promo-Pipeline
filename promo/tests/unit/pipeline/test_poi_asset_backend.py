@@ -149,6 +149,45 @@ def test_poi_asset_supabase_backend_rejects_hash_mismatch(tmp_path):
         backend.fetch_clips("Hotel Maya", str(tmp_path))
 
 
+def test_poi_asset_supabase_backend_retries_transient_download_error(
+    monkeypatch,
+    tmp_path,
+):
+    from promo.core import poi_asset_backend
+    from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
+
+    data = b"clip-one"
+    row = _row(clip_id="0001", asset_id="asset_a1", data=data)
+
+    class FlakyBucket:
+        def __init__(self):
+            self.calls = 0
+
+        def download(self, path):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("temporary timeout")
+            return data
+
+    class FlakyStorage:
+        def __init__(self):
+            self.bucket = FlakyBucket()
+
+        def from_(self, bucket):
+            return self.bucket
+
+    client = _FakeSupabase([row], {"poi_123/clips/asset_a1.mp4": data})
+    client.storage = FlakyStorage()
+    monkeypatch.setattr(poi_asset_backend.time, "sleep", lambda seconds: None)
+
+    backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
+
+    assert backend.fetch_clips("Hotel Maya", str(tmp_path)) == {
+        "0001": str(tmp_path / "clip_0001_asset_a1.mp4"),
+    }
+    assert client.storage.bucket.calls == 2
+
+
 def test_poi_asset_supabase_backend_rejects_mixed_canonical_keys(tmp_path):
     from promo.core.poi_asset_backend import PoiAssetBackendError, PoiAssetSupabaseBackend
 
@@ -210,7 +249,45 @@ def test_compile_promo_build_backend_accepts_supabase_lookup(monkeypatch, tmp_pa
         "poi_id": "poi_123",
         "canonical_key": None,
         "output_dir": str(tmp_path),
+        "use_music_library": False,
+        "music_id": None,
+        "music_min_duration_sec": args.target_duration_sec,
     }
+
+
+def test_compile_promo_build_backend_passes_supabase_music_flags(monkeypatch, tmp_path):
+    from promo.cli import compile_promo
+
+    parser = compile_promo._build_parser()
+    args = parser.parse_args([
+        "--poi",
+        "Hotel Maya",
+        "--supabase-poi-id",
+        "poi_123",
+        "--supabase-music-id",
+        "11111111-1111-1111-1111-111111111111",
+        "--target-duration-sec",
+        "65",
+        "--output-dir",
+        str(tmp_path),
+    ])
+    captured = {}
+    sentinel = object()
+
+    def fake_from_env(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        compile_promo.PoiAssetSupabaseBackend,
+        "from_env",
+        fake_from_env,
+    )
+
+    assert compile_promo._build_backend(args) is sentinel
+    assert captured["use_music_library"] is True
+    assert captured["music_id"] == "11111111-1111-1111-1111-111111111111"
+    assert captured["music_min_duration_sec"] == 65
 
 
 def test_compile_promo_build_backend_rejects_mixed_clip_sources(tmp_path):
