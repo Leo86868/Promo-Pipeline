@@ -105,6 +105,8 @@ def _build_backend(args) -> PromoBackend:
     if args.local_clips:
         if args.supabase_poi_id or args.supabase_canonical_key:
             raise ValueError("choose either --local-clips or a Supabase POI lookup")
+        if args.supabase_music_library or args.supabase_music_id:
+            raise ValueError("Supabase Music Library requires a Supabase POI lookup")
         return LocalBackend(
             clips_dir=args.local_clips,
             output_dir=args.output_dir,
@@ -114,7 +116,12 @@ def _build_backend(args) -> PromoBackend:
             poi_id=args.supabase_poi_id,
             canonical_key=args.supabase_canonical_key,
             output_dir=args.output_dir,
+            use_music_library=args.supabase_music_library or bool(args.supabase_music_id),
+            music_id=args.supabase_music_id,
+            music_min_duration_sec=args.target_duration_sec,
         )
+    if args.supabase_music_library or args.supabase_music_id:
+        raise ValueError("Supabase Music Library requires a Supabase POI lookup")
     raise ValueError(
         "--local-clips or --supabase-poi-id/--supabase-canonical-key is required",
     )
@@ -149,6 +156,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bgm", type=str, default=None, help="Path to a single BGM file")
     parser.add_argument("--bgm-dir", type=str, default=None,
                         help="Directory of .mp3 files for per-variant BGM rotation")
+    parser.add_argument(
+        "--supabase-music-library",
+        action="store_true",
+        help=(
+            "Fetch BGM from public.music_library using duration_sec >= "
+            "--target-duration-sec"
+        ),
+    )
+    parser.add_argument(
+        "--supabase-music-id",
+        type=str,
+        default=None,
+        help="Fetch one exact public.music_library row by id and validate duration_sec",
+    )
     parser.add_argument("--skip-analysis", action="store_true",
                         help="Skip MiMo clip analysis (use blank descriptions)")
     parser.add_argument("--render-props", type=str, default=None,
@@ -240,6 +261,12 @@ def main():
         parser.error(
             "--local-clips or --supabase-poi-id/--supabase-canonical-key is required",
         )
+    if (args.supabase_music_library or args.supabase_music_id) and not has_supabase_lookup:
+        parser.error("Supabase Music Library requires a Supabase POI lookup")
+    if (args.supabase_music_library or args.supabase_music_id) and (
+        args.bgm or args.bgm_dir
+    ):
+        parser.error("choose either Supabase Music Library or --bgm/--bgm-dir")
 
     backend = _build_backend(args)
 

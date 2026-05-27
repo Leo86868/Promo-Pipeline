@@ -129,6 +129,11 @@ def render_concurrency() -> int:
     return _require_int("PROMO_RENDER_CONCURRENCY", default=2)
 
 
+def render_timeout_sec() -> int:
+    """Maximum seconds allowed for one Remotion render process."""
+    return _require_int("PROMO_RENDER_TIMEOUT_SEC", default=900)
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 

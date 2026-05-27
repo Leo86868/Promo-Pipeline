@@ -11,16 +11,20 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
 from collections.abc import Mapping
 from typing import Any
 
 from promo.core.backend import LocalBackend
+from promo.core.music_library import MusicLibraryError, SupabaseMusicLibrary
 from promo.core.pipeline.poi_asset_valid_clips import (
     POI_ASSET_VALID_CLIPS_VIEW,
     build_poi_asset_valid_clip_snapshot,
 )
 
 logger = logging.getLogger(__name__)
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_RETRY_DELAY_SEC = 1.0
 
 
 class PoiAssetBackendError(RuntimeError):
@@ -53,6 +57,9 @@ class PoiAssetSupabaseBackend:
         canonical_key: Fallback lookup key while operators bridge old inputs.
         output_dir: Optional final-output directory, matching ``LocalBackend``.
         bgm_path: Optional local BGM path.
+        use_music_library: When true, fetch BGM from ``public.music_library``.
+        music_id: Optional exact Music Library row to use.
+        music_min_duration_sec: Minimum audited track length for Music Library.
         max_clips: Optional read limit for smoke tests.
         verify_hash: Compare downloaded bytes to ``source_content_hash``.
     """
@@ -65,6 +72,9 @@ class PoiAssetSupabaseBackend:
         canonical_key: str | None = None,
         output_dir: str | None = None,
         bgm_path: str | None = None,
+        use_music_library: bool = False,
+        music_id: str | None = None,
+        music_min_duration_sec: float | None = None,
         max_clips: int | None = None,
         verify_hash: bool = True,
     ) -> None:
@@ -75,6 +85,15 @@ class PoiAssetSupabaseBackend:
         self._canonical_key = canonical_key
         self._output_dir = output_dir
         self._bgm_path = bgm_path
+        self._music_library = (
+            SupabaseMusicLibrary(
+                client,
+                min_duration_sec=music_min_duration_sec or 0,
+                music_id=music_id,
+            )
+            if use_music_library or music_id
+            else None
+        )
         self._max_clips = max_clips
         self._verify_hash = verify_hash
         self._shared_assets: list[dict[str, Any]] = []
@@ -145,9 +164,7 @@ class PoiAssetSupabaseBackend:
 
         clip_paths: dict[str, str] = {}
         for row in snapshot:
-            blob = self._client.storage.from_(row["source_storage_bucket"]).download(
-                row["source_storage_path"],
-            )
+            blob = self._download_clip_blob(row)
             data = _downloaded_bytes(blob)
             if self._verify_hash:
                 digest = "sha256:" + hashlib.sha256(data).hexdigest()
@@ -168,6 +185,29 @@ class PoiAssetSupabaseBackend:
         )
         return clip_paths
 
+    def _download_clip_blob(self, row: Mapping[str, Any]) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+            try:
+                return self._client.storage.from_(row["source_storage_bucket"]).download(
+                    row["source_storage_path"],
+                )
+            except Exception as exc:
+                last_error = exc
+                if attempt == _DOWNLOAD_ATTEMPTS:
+                    break
+                logger.warning(
+                    "Retrying shared asset download after error "
+                    "asset_id=%s attempt=%d/%d",
+                    row.get("asset_id"),
+                    attempt,
+                    _DOWNLOAD_ATTEMPTS,
+                )
+                time.sleep(_DOWNLOAD_RETRY_DELAY_SEC)
+        raise PoiAssetBackendError(
+            f"failed to download asset_id={row.get('asset_id')}",
+        ) from last_error
+
     def shared_assets(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self._shared_assets]
 
@@ -178,6 +218,11 @@ class PoiAssetSupabaseBackend:
         return self._canonical_key
 
     def fetch_bgm(self, poi_name: str, tmp_dir: str) -> str | None:
+        if self._music_library is not None:
+            try:
+                return self._music_library.fetch_bgm(tmp_dir)
+            except MusicLibraryError as exc:
+                raise PoiAssetBackendError(str(exc)) from exc
         return self._local_output.fetch_bgm(poi_name, tmp_dir)
 
     def save_output(self, poi_name: str, video_path: str) -> str:

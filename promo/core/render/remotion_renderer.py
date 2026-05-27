@@ -767,7 +767,7 @@ def render_promo(
     props: dict,
     output_path: str,
     composition_id: str = "HotelPromo",
-    timeout: int = 300,
+    timeout: int | None = None,
 ) -> bool:
     """Render a promo video via Remotion.
 
@@ -775,7 +775,8 @@ def render_promo(
         props: Validated props dict.
         output_path: Where to write the final MP4.
         composition_id: Remotion composition to render (default: HotelPromo).
-        timeout: Max render time in seconds.
+        timeout: Max render time in seconds. When omitted, resolved from
+            ``PROMO_RENDER_TIMEOUT_SEC``.
 
     Returns:
         True on success, False on failure.
@@ -808,8 +809,12 @@ def render_promo(
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         # Render with optimization flags
-        from promo.core.config import render_concurrency as _render_concurrency
+        from promo.core.config import (
+            render_concurrency as _render_concurrency,
+            render_timeout_sec as _render_timeout_sec,
+        )
         concurrency = _render_concurrency()
+        render_timeout = timeout if timeout is not None else _render_timeout_sec()
         cmd = [
             "npx", "remotion", "render", composition_id, output_path,
             "--props", props_path,
@@ -825,7 +830,7 @@ def render_promo(
             cwd=REMOTION_DIR,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=render_timeout,
         )
 
         if result.returncode != 0:
@@ -849,7 +854,7 @@ def render_promo(
         return True
 
     except subprocess.TimeoutExpired:
-        logger.error("Remotion render timed out after %ds", timeout)
+        logger.error("Remotion render timed out after %ds", render_timeout)
         return False
     except FileNotFoundError:
         logger.error("npx not found — is Node.js installed?")
