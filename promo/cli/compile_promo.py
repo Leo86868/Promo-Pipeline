@@ -38,6 +38,7 @@ from promo.core import config
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.backend import PromoBackend, LocalBackend
 from promo.core.errors import MimoAnalysisError, NoSuitableBGMError
+from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
 from promo.core.render.remotion_renderer import REMOTION_DIR, render_promo, validate_props
 
 # Re-exports preserve the ``from promo.cli.compile_promo import <symbol>``
@@ -102,11 +103,21 @@ def _build_backend(args) -> PromoBackend:
     use when calling the backend directly, not via CLI.
     """
     if args.local_clips:
+        if args.supabase_poi_id or args.supabase_canonical_key:
+            raise ValueError("choose either --local-clips or a Supabase POI lookup")
         return LocalBackend(
             clips_dir=args.local_clips,
             output_dir=args.output_dir,
         )
-    raise ValueError("--local-clips is required in the standalone promo repo")
+    if args.supabase_poi_id or args.supabase_canonical_key:
+        return PoiAssetSupabaseBackend.from_env(
+            poi_id=args.supabase_poi_id,
+            canonical_key=args.supabase_canonical_key,
+            output_dir=args.output_dir,
+        )
+    raise ValueError(
+        "--local-clips or --supabase-poi-id/--supabase-canonical-key is required",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -174,8 +185,20 @@ def _build_parser() -> argparse.ArgumentParser:
     # Standalone local-first flags
     parser.add_argument("--local-clips", type=str, default=None,
                         help="Path to local clips directory (standalone mode, no Supabase)")
+    parser.add_argument(
+        "--supabase-poi-id",
+        type=str,
+        default=None,
+        help="Read clips from public.poi_asset_valid_clips by stable poi_id",
+    )
+    parser.add_argument(
+        "--supabase-canonical-key",
+        type=str,
+        default=None,
+        help="Read clips from public.poi_asset_valid_clips by canonical_key",
+    )
     parser.add_argument("--output-dir", type=str, default=None,
-                        help="Directory to save output (used with --local-clips)")
+                        help="Directory to save output")
 
     # Sprint 16 — selector seam reproducibility flag. Landed here (inside
     # `_build_parser()` after the promo-handoff-readiness Sprint 1 parser
@@ -210,8 +233,13 @@ def main():
     if not args.poi:
         parser.error("--poi is required (or use --render-props)")
 
-    if not args.local_clips:
-        parser.error("--local-clips is required in the standalone promo repo")
+    has_supabase_lookup = bool(args.supabase_poi_id or args.supabase_canonical_key)
+    if args.local_clips and has_supabase_lookup:
+        parser.error("choose either --local-clips or a Supabase POI lookup")
+    if not args.local_clips and not has_supabase_lookup:
+        parser.error(
+            "--local-clips or --supabase-poi-id/--supabase-canonical-key is required",
+        )
 
     backend = _build_backend(args)
 
