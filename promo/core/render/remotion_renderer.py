@@ -339,11 +339,14 @@ def _bind_clips_to_narration(
         renderer_entries.append({
             "path": clip_path,
             "clip_id": clip_id,
+            "usage_role": "assigned_phrase",
+            "segment": a.get("segment"),
             "trim_start": round(trim_start, 3),
             "trim_end": round(trim_end, 3),
             "video_start": round(video_start, 3),
             "narration": narration_text,
             "source_duration": source_dur,
+            "source_duration_sec": source_dur,
         })
         logger.info(
             "  clip %s: %.1fs @ %.1f-%.1fs | \"%s\"",
@@ -429,11 +432,14 @@ def _bind_clips_to_narration(
             bridge = {
                 "path": new_path,
                 "clip_id": new_cid,
+                "usage_role": "bridge_tail",
+                "segment": None,
                 "trim_start": 0.0,
                 "trim_end": round(bridge_dur, 3),
                 "video_start": round(cursor, 3),
                 "narration": "",  # visual-only bridge, no caption tie-in
                 "source_duration": new_src,
+                "source_duration_sec": new_src,
             }
             fixed.append(bridge)
             bridge_count += 1
@@ -488,6 +494,42 @@ def _bind_clips_to_narration(
         )
 
     return renderer_entries
+
+
+def build_renderer_timeline_entries(
+    renderer_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project renderer entries into a manifest-friendly timeline shape.
+
+    ``_bind_clips_to_narration`` owns bridge insertion and tail extension.
+    This helper runs after that binding so the returned rows match the
+    final visual timeline that Remotion receives.
+    """
+    timeline: list[dict[str, Any]] = []
+    for i, entry in enumerate(renderer_entries):
+        display_start = float(entry["video_start"])
+        if i + 1 < len(renderer_entries):
+            display_end = float(renderer_entries[i + 1]["video_start"])
+        else:
+            display_end = display_start + (
+                float(entry["trim_end"]) - float(entry["trim_start"])
+            )
+        timeline.append({
+            "clip_id": str(entry["clip_id"]).zfill(4),
+            "usage_role": str(entry.get("usage_role") or "assigned_phrase"),
+            "segment": entry.get("segment"),
+            "source_path": entry.get("path"),
+            "trim_start_sec": round(float(entry["trim_start"]), 3),
+            "trim_end_sec": round(float(entry["trim_end"]), 3),
+            "display_start_sec": round(display_start, 3),
+            "display_end_sec": round(display_end, 3),
+            "source_duration_sec": round(
+                float(entry.get("source_duration_sec", entry.get("source_duration", 0.0))),
+                3,
+            ),
+            "narration": entry.get("narration", ""),
+        })
+    return timeline
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +599,7 @@ def build_props_from_script(
     assignments: list[ClipAssignment],
     fps: int = DEFAULT_FPS,
     target_duration_sec: float | None = None,
+    timeline_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
     """Build props.json from script + TTS + Gemini #2 clip assignments.
 
@@ -579,6 +622,8 @@ def build_props_from_script(
         assignments, clip_paths, word_timestamps,
         target_duration_sec=target_duration_sec,
     )
+    if timeline_entries is not None:
+        timeline_entries.extend(build_renderer_timeline_entries(clip_assignments))
 
     props = build_props(
         poi_name=poi_name,

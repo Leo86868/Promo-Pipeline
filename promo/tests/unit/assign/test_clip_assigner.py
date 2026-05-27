@@ -1320,10 +1320,11 @@ class TestSprint10C3F1Invariant:
         from promo.core.pipeline import sidecar_writer
 
         source = inspect.getsource(sidecar_writer)
-        # Look for the literal base_name prefix inside a _write_sidecar call.
+        # Look for the literal base_name prefix inside a structured sidecar
+        # write call.
         # Simple heuristic: count occurrences of the literal.
         call_signatures = re.findall(
-            r"_write_sidecar\s*\([^)]*f\"clip_assignments_[^\"]*\"[^)]*\)",
+            r"_write_sidecar_result\s*\([^)]*f\"clip_assignments_[^\"]*\"[^)]*\)",
             source,
             flags=re.DOTALL,
         )
@@ -1740,8 +1741,15 @@ class TestSprint18FRetrievalContractFieldInPayload:
         captured: list[tuple[str, dict]] = []
 
         def _fake_write(sidecar_dir, base_name, payload, description):
+            from promo.core.pipeline.sidecar_writer import SidecarWriteResult
+
             captured.append((base_name, payload))
-            return True
+            return SidecarWriteResult(
+                ok=True,
+                path=str(tmp_path / base_name),
+                description=description,
+                base_name=base_name,
+            )
 
         backend = MagicMock()
         backend.output_dir.return_value = str(tmp_path)
@@ -1754,7 +1762,7 @@ class TestSprint18FRetrievalContractFieldInPayload:
             "retrieval_contract": "soft_hint",
         }
 
-        with patch.object(sidecar_writer, "_write_sidecar", side_effect=_fake_write):
+        with patch.object(sidecar_writer, "_write_sidecar_result", side_effect=_fake_write):
             ok = sidecar_writer._emit_run_sidecars(
                 backend=backend,
                 output_path=str(tmp_path / "promo.mp4"),

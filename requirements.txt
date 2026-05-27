@@ -1,6 +1,7 @@
 google-generativeai
 requests
 python-dotenv
+supabase>=2.0
 PyYAML
 numpy
 torch>=2.8

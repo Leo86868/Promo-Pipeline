@@ -69,6 +69,7 @@ def _run_variant_loop(
     tts_metrics: list[dict],
     match_quality_entries: list[dict],
     clip_assignments_entries: list[dict],
+    rendered_outputs: list[dict] | None = None,
 ) -> tuple[bool, int, dict]:
     """Run the per-variant loop body end-to-end.
 
@@ -194,6 +195,7 @@ def _run_variant_loop(
         )
 
         logger.info("Step 7: Building props.json for variant %d...", variant_index)
+        variant_timeline_entries: list[dict] = []
         try:
             # TypedDict boundary — remotion_renderer narrows ``narration_result``
             # / ``assignments`` to ``Narration`` / ``list[ClipAssignment]``
@@ -208,6 +210,7 @@ def _run_variant_loop(
                 bgm_path=variant_bgm,
                 assignments=variant_assignments,  # type: ignore[arg-type]
                 target_duration_sec=variant_target_duration,
+                timeline_entries=variant_timeline_entries,
             )
         except FreezeWouldOccurError as exc:
             # Sprint 09a M-006: freeze-prevention raised mid-binding.
@@ -302,5 +305,18 @@ def _run_variant_loop(
         final_loc = backend.save_output(poi_name, variant_output_path)
         if final_loc != variant_output_path:
             logger.info("Output saved to: %s", final_loc)
+        if rendered_outputs is not None:
+            rendered_outputs.append({
+                "variant_index": variant_index,
+                "variant_status": "rendered",
+                "render_output_path": variant_output_path,
+                "final_output_path": final_loc,
+                "target_duration_sec": variant_target_duration,
+                "format_mode": script.get("format_mode"),
+                "voice_key": variant_voice_key,
+                "bgm_path": variant_bgm,
+                "file_size_bytes": os.path.getsize(variant_output_path),
+                "timeline_entries": variant_timeline_entries,
+            })
 
     return all_ok, pool_exhaustion_hard_fails, run_retrieval_provenance

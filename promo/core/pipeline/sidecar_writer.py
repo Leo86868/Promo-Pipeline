@@ -12,11 +12,45 @@ moved here for the Sprint 4 narrow decomposition.
 import json
 import logging
 import os
+from dataclasses import dataclass
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.backend import PromoBackend
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SidecarWriteResult:
+    """Structured result for one sidecar write."""
+
+    ok: bool
+    path: str | None
+    description: str
+    base_name: str
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+
+@dataclass(frozen=True)
+class RunSidecarEmitResult:
+    """Structured result for one run's sidecar emission."""
+
+    ok: bool
+    sidecar_dir: str | None
+    writes: tuple[SidecarWriteResult, ...]
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    @property
+    def paths(self) -> dict[str, str]:
+        return {
+            write.description: write.path
+            for write in self.writes
+            if write.ok and write.path is not None
+        }
 
 
 def _write_sidecar(
@@ -46,6 +80,22 @@ def _write_sidecar(
 
     Returns True on successful write, False on any failure path.
     """
+    return _write_sidecar_result(
+        sidecar_dir, base_name, payload, description,
+    ).ok
+
+
+def _write_sidecar_result(
+    sidecar_dir: str | None,
+    base_name: str,
+    payload,
+    description: str,
+) -> SidecarWriteResult:
+    """Write one sidecar and return the exact path on success.
+
+    ``_write_sidecar`` remains the bool-compatible wrapper used by older
+    callers and tests. This helper is the manifest-ready surface.
+    """
     if not isinstance(sidecar_dir, str) or not sidecar_dir:
         logger.warning(
             "Skipping %s sidecar: sidecar_dir unresolved "
@@ -53,7 +103,9 @@ def _write_sidecar(
             "Marking run as not-all-ok so the failure surfaces.",
             description,
         )
-        return False
+        return SidecarWriteResult(
+            ok=False, path=None, description=description, base_name=base_name,
+        )
 
     if not base_name.endswith(".json"):
         raise ValueError(
@@ -72,7 +124,9 @@ def _write_sidecar(
                 "in %s; marking run as not-all-ok.",
                 description, sidecar_dir,
             )
-            return False
+            return SidecarWriteResult(
+                ok=False, path=None, description=description, base_name=base_name,
+            )
     if candidate != os.path.join(sidecar_dir, base_name):
         logger.info(
             "Sidecar %s already exists; bumping to %s to preserve prior deliverable.",
@@ -91,7 +145,9 @@ def _write_sidecar(
             os.unlink(candidate)
         except OSError:
             pass
-        return False
+        return SidecarWriteResult(
+            ok=False, path=None, description=description, base_name=base_name,
+        )
 
     # Sprint 13 post-audit D-003: dict payloads (e.g. clip_assignments under
     # AC19) have a top-level shape `{provenance_fields..., "variants": [...]}`;
@@ -104,7 +160,9 @@ def _write_sidecar(
     else:
         size = 0
     logger.info("Wrote %s (%d entries)", candidate, size)
-    return True
+    return SidecarWriteResult(
+        ok=True, path=candidate, description=description, base_name=base_name,
+    )
 
 
 def _emit_run_sidecars(
@@ -124,6 +182,36 @@ def _emit_run_sidecars(
     failed or the sidecar dir could not be resolved while there were
     rows to commit (D-005 tripwire).
     """
+    sidecar_result = _emit_run_sidecars_result(
+        backend=backend,
+        output_path=output_path,
+        poi_name=poi_name,
+        target_duration_sec=target_duration_sec,
+        tts_metrics=tts_metrics,
+        match_quality_entries=match_quality_entries,
+        clip_assignments_entries=clip_assignments_entries,
+        run_retrieval_provenance=run_retrieval_provenance,
+    )
+    return sidecar_result.ok
+
+
+def _emit_run_sidecars_result(
+    *,
+    backend: PromoBackend,
+    output_path: str,
+    poi_name: str,
+    target_duration_sec: float,
+    tts_metrics: list[dict],
+    match_quality_entries: list[dict],
+    clip_assignments_entries: list[dict],
+    run_retrieval_provenance: dict,
+) -> RunSidecarEmitResult:
+    """Write run sidecars and return exact write paths.
+
+    This is the structured-result sibling of ``_emit_run_sidecars``. It is
+    intentionally additive so existing bool callers remain simple while a
+    future manifest writer can reference the real collision-bumped files.
+    """
     sidecar_dir: str | None = backend.output_dir() or os.path.dirname(output_path)
     if not isinstance(sidecar_dir, str) or not sidecar_dir:
         sidecar_dir = None
@@ -135,19 +223,33 @@ def _emit_run_sidecars(
             sidecar_dir = None
     sidecar_tag = f"{_safe_poi_dir(poi_name)}_{int(round(target_duration_sec))}s"
     ok = True
-    if tts_metrics and not _write_sidecar(
-        sidecar_dir, f"tts_metrics_{sidecar_tag}.json", tts_metrics, "tts_metrics",
-    ):
-        ok = False
-    if match_quality_entries and not _write_sidecar(
-        sidecar_dir, f"match_quality_{sidecar_tag}.json",
-        match_quality_entries, "match_quality",
-    ):
-        ok = False
-    if clip_assignments_entries and not _write_sidecar(
-        sidecar_dir, f"clip_assignments_{sidecar_tag}.json",
-        {**run_retrieval_provenance, "variants": clip_assignments_entries},
-        "clip_assignments",
-    ):
-        ok = False
-    return ok
+    writes: list[SidecarWriteResult] = []
+
+    if tts_metrics:
+        result = _write_sidecar_result(
+            sidecar_dir, f"tts_metrics_{sidecar_tag}.json",
+            tts_metrics, "tts_metrics",
+        )
+        writes.append(result)
+        if not result.ok:
+            ok = False
+    if match_quality_entries:
+        result = _write_sidecar_result(
+            sidecar_dir, f"match_quality_{sidecar_tag}.json",
+            match_quality_entries, "match_quality",
+        )
+        writes.append(result)
+        if not result.ok:
+            ok = False
+    if clip_assignments_entries:
+        result = _write_sidecar_result(
+            sidecar_dir, f"clip_assignments_{sidecar_tag}.json",
+            {**run_retrieval_provenance, "variants": clip_assignments_entries},
+            "clip_assignments",
+        )
+        writes.append(result)
+        if not result.ok:
+            ok = False
+    return RunSidecarEmitResult(
+        ok=ok, sidecar_dir=sidecar_dir, writes=tuple(writes),
+    )

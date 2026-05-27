@@ -19,13 +19,14 @@ import tempfile
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.backend import PromoBackend
-from promo.core.config import ConfigError
+from promo.core.config import ConfigError, promo_format_selector
 from promo.core.errors import NoSuitableBGMError
 from promo.core.pipeline.bgm_voice_resolver import (
     _resolve_bgm_paths,
     _resolve_voice_keys,
 )
-from promo.core.pipeline.sidecar_writer import _emit_run_sidecars
+from promo.core.pipeline.sidecar_writer import _emit_run_sidecars_result
+from promo.core.pipeline.run_manifest import build_run_manifest, emit_run_manifest
 from promo.core.pipeline.steps import (
     _build_variant_selections,
     _step_generate_script,
@@ -35,6 +36,18 @@ from promo.core.pipeline.variant_loop import _run_variant_loop
 from promo.core.render.remotion_renderer import REMOTION_DIR
 
 logger = logging.getLogger(__name__)
+
+
+def _optional_backend_value(backend: PromoBackend, name: str):
+    value = getattr(backend, name, None)
+    if callable(value):
+        return value()
+    return None
+
+
+def _optional_backend_text(backend: PromoBackend, name: str) -> str | None:
+    value = _optional_backend_value(backend, name)
+    return value if isinstance(value, str) and value else None
 
 
 def full_pipeline(
@@ -206,6 +219,7 @@ def full_pipeline(
         tts_metrics: list[dict] = []
         match_quality_entries: list[dict] = []
         clip_assignments_entries: list[dict] = []  # Sprint 10 C3 — F1 sidecar accumulator
+        rendered_outputs: list[dict] = []
         # Sprint 13 AC19: last-variant-wins run-level provenance is owned by
         # ``_run_variant_loop`` and surfaced through its return tuple.
         # Sprint 4 post-audit L-001/D-001 removed the caller-side init + kwarg
@@ -236,9 +250,10 @@ def full_pipeline(
             tts_metrics=tts_metrics,
             match_quality_entries=match_quality_entries,
             clip_assignments_entries=clip_assignments_entries,
+            rendered_outputs=rendered_outputs,
         )
 
-        sidecar_ok = _emit_run_sidecars(
+        sidecar_result = _emit_run_sidecars_result(
             backend=backend,
             output_path=output_path,
             poi_name=poi_name,
@@ -248,8 +263,38 @@ def full_pipeline(
             clip_assignments_entries=clip_assignments_entries,
             run_retrieval_provenance=run_retrieval_provenance,
         )
-        if not sidecar_ok:
+        if not sidecar_result.ok:
             all_ok = False
+        elif rendered_outputs:
+            shared_assets = _optional_backend_value(backend, "shared_assets")
+            manifest = build_run_manifest(
+                poi_name=poi_name,
+                location=location,
+                target_duration_sec=target_duration_sec,
+                n_variants=n_variants,
+                script_candidates=script_candidates,
+                format_selector=promo_format_selector(),
+                embedding_cache_active=embedding_cache_dir is not None,
+                clip_paths=clip_paths,
+                clips_metadata=clips_metadata,
+                clip_durations=clip_durations,
+                rendered_outputs=rendered_outputs,
+                sidecar_paths=sidecar_result.paths,
+                poi_id=_optional_backend_text(backend, "shared_poi_id"),
+                canonical_key=_optional_backend_text(backend, "shared_canonical_key"),
+                shared_assets=shared_assets if isinstance(shared_assets, list) else None,
+                skip_analysis=skip_analysis,
+                tts_speed=tts_speed,
+                seed=seed,
+            )
+            manifest_result = emit_run_manifest(
+                sidecar_dir=sidecar_result.sidecar_dir,
+                poi_name=poi_name,
+                target_duration_sec=target_duration_sec,
+                manifest=manifest,
+            )
+            if not manifest_result.ok:
+                all_ok = False
 
         # Sprint 09b C7: pool-exhaustion metric. Emit once per run as a
         # grepable log line. Clean runs report 0; a non-zero value means

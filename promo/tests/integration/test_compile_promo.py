@@ -756,15 +756,14 @@ class TestSprint09aSuccessGatedSidecars:
         """Criterion 15: sidecar filenames include poi-slug + target-sec so
         two POI runs in the same output dir do not overwrite each other.
 
-        Sprint 16 — the per-run sidecar emission moved into the
-        ``_emit_run_sidecars`` helper to keep ``full_pipeline`` under the
-        400-line ceiling. The structural invariant still holds; the
-        source-grep just looks at the helper now.
+        Sprint 2 observability prep — the path-building logic now lives in
+        the structured-result helper so future manifest code can see exact
+        collision-bumped paths.
         """
         import inspect
-        from promo.cli import compile_promo
+        from promo.core.pipeline import sidecar_writer
 
-        source = inspect.getsource(compile_promo._emit_run_sidecars)
+        source = inspect.getsource(sidecar_writer._emit_run_sidecars_result)
         # The tag format and path constructions must both be present.
         assert 'f"{_safe_poi_dir(poi_name)}_{int(round(target_duration_sec))}s"' in source
         assert 'f"tts_metrics_{sidecar_tag}.json"' in source

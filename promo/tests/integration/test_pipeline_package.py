@@ -3,7 +3,7 @@
 promo-handoff-readiness Sprint 4 A-001 narrow — these regression-lock
 the shape constraints from the sprint contract:
 
-- AC1: the subpackage contains ≤6 Python modules (+ optional ``py.typed``
+- AC1: the subpackage contains the expected Python modules (+ optional ``py.typed``
   marker).
 - AC1(c): ``__init__.py`` stays ≤20 LOC (thin re-export, ``aigc/``
   precedent).
@@ -37,6 +37,8 @@ EXPECTED_MODULES = frozenset({
     "__init__.py",
     "bgm_voice_resolver.py",
     "pipeline.py",
+    "poi_asset_valid_clips.py",
+    "run_manifest.py",
     "sidecar_writer.py",
     "steps.py",
     "variant_loop.py",
@@ -81,7 +83,7 @@ EXPECTED_COMPILE_PROMO_IMPORTS = frozenset({
 
 
 class TestSprint4SubpackageShape:
-    """AC1 + AC1(c) — ``promo/core/pipeline/`` has exactly the 6 contracted
+    """AC1 + AC1(c) — ``promo/core/pipeline/`` has the contracted
     files (+ optional ``py.typed``), ``__init__.py`` is ≤20 LOC, and
     ``full_pipeline`` imports cleanly from the package root."""
 
