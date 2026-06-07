@@ -40,4 +40,4 @@ The diagram is what `_bind_clips_to_narration` decides for each variant. Healthy
 
 - **Renderer space ceiling = `final_display_end = max(target_duration_sec, narration_end)`** — the renderer is the only module that knows this. The buffer between `narration_end` and `target_duration_sec` (= `bridge_tail`) is renderer territory; assigner space stops at `narration_end`.
 - **`ffmpeg` is a required system dependency** — the renderer itself only shells out to Remotion, but Remotion's encode pipeline plus `narrate/`'s audio assembly both depend on `ffmpeg` being on `PATH`.
-- **Vertical 1080×1920 / 30 fps defaults** — short-form vertical promo. BGM volume 0.35 (ducked to 0.08 during narration with a 0.3s ramp).
+- **Vertical 1080×1920 / 30 fps defaults** — short-form vertical promo. BGM volume 0.35 (ducked to 0.18 during narration with a 0.3s ramp).

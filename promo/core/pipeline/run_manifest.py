@@ -95,6 +95,31 @@ def build_usage_event_id(
     return "sha256:" + sha256(payload.encode("utf-8")).hexdigest()
 
 
+def validate_shared_asset_id_coverage(
+    *,
+    clip_paths: dict[str, str],
+    shared_assets: list[dict[str, Any]] | None,
+) -> None:
+    """Fail fast when a shared-asset run cannot map every clip to asset_id."""
+    if not shared_assets:
+        return
+    shared_by_id = {
+        _clip_id(item.get("clip_id")): item
+        for item in shared_assets
+        if item.get("clip_id") is not None
+    }
+    missing = [
+        _clip_id(raw_clip_id)
+        for raw_clip_id in sorted(clip_paths.keys(), key=lambda value: _clip_id(value))
+        if not shared_by_id.get(_clip_id(raw_clip_id), {}).get("asset_id")
+    ]
+    if missing:
+        raise ValueError(
+            "shared asset manifest requires asset_id for clip_id="
+            + ", ".join(missing)
+        )
+
+
 def build_asset_snapshot(
     *,
     clip_paths: dict[str, str],
@@ -112,6 +137,12 @@ def build_asset_snapshot(
         for item in (shared_assets or [])
         if item.get("clip_id") is not None
     }
+    require_shared_asset_ids = bool(shared_assets)
+    if require_shared_asset_ids:
+        validate_shared_asset_id_coverage(
+            clip_paths=clip_paths,
+            shared_assets=shared_assets,
+        )
     rows: list[dict[str, Any]] = []
     for raw_clip_id in sorted(clip_paths.keys(), key=lambda value: _clip_id(value)):
         clip_id = _clip_id(raw_clip_id)
@@ -182,7 +213,7 @@ def _build_outputs(*, rendered_outputs: list[dict]) -> list[dict[str, Any]]:
     outputs: list[dict[str, Any]] = []
     for rendered in rendered_outputs:
         voice_key = rendered.get("voice_key")
-        outputs.append({
+        output = {
             "variant_index": int(rendered["variant_index"]),
             "variant_status": rendered.get("variant_status", "rendered"),
             "output_path": rendered.get("final_output_path")
@@ -195,7 +226,23 @@ def _build_outputs(*, rendered_outputs: list[dict]) -> list[dict[str, Any]]:
             "voice_backend": _voice_backend(str(voice_key)) if voice_key else None,
             "bgm_path": rendered.get("bgm_path"),
             "file_size_bytes": rendered.get("file_size_bytes"),
-        })
+        }
+        music = rendered.get("music")
+        if isinstance(music, dict):
+            output["music"] = dict(music)
+        for key in (
+            "music_label",
+            "music_id",
+            "music_name",
+            "music_duration_sec",
+            "music_drive_file_id",
+        ):
+            value = rendered.get(key)
+            if value is None and isinstance(music, dict):
+                value = music.get(key)
+            if value is not None:
+                output[key] = value
+        outputs.append(output)
     return outputs
 
 
@@ -211,6 +258,7 @@ def _build_timeline_entries(
     rendered_outputs: list[dict],
     *,
     asset_id_by_clip_id: dict[str, str | None],
+    require_asset_ids: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for rendered in sorted(rendered_outputs, key=lambda item: int(item["variant_index"])):
@@ -218,13 +266,19 @@ def _build_timeline_entries(
         for occurrence_index, entry in enumerate(rendered.get("timeline_entries", [])):
             usage_role = str(entry.get("usage_role") or "assigned_phrase")
             clip_id = _clip_id(entry.get("clip_id"))
+            asset_id = entry.get("asset_id") or asset_id_by_clip_id.get(clip_id)
+            if require_asset_ids and not asset_id:
+                raise ValueError(
+                    "shared asset timeline entries require asset_id "
+                    f"for clip_id={clip_id}"
+                )
             rows.append({
                 "variant_index": variant_index,
                 "occurrence_index": occurrence_index,
                 "occurrence_id": _occurrence_id(variant_index, occurrence_index),
                 "usage_role": usage_role,
                 "clip_id": clip_id,
-                "asset_id": entry.get("asset_id") or asset_id_by_clip_id.get(clip_id),
+                "asset_id": asset_id,
                 "segment": None
                 if usage_role == "bridge_tail"
                 else _maybe_int(entry.get("segment")),
@@ -237,7 +291,12 @@ def _build_timeline_entries(
     return rows
 
 
-def build_usage_events_from_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def build_usage_events_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    retrieval_contract: str | None = None,
+    retrieval_fallback_reason: str | None = None,
+) -> list[dict[str, Any]]:
     """Build future RPC payload rows from a fully identified manifest.
 
     This is a pure helper for tests/adapters. It does not write to Supabase.
@@ -289,6 +348,8 @@ def build_usage_events_from_manifest(manifest: dict[str, Any]) -> list[dict[str,
             "format_mode": output.get("format_mode"),
             "voice_key": output.get("voice_key"),
             "voice_backend": output.get("voice_backend"),
+            "retrieval_contract": retrieval_contract,
+            "retrieval_fallback_reason": retrieval_fallback_reason,
             "clip_assignments_sidecar_path": sidecars.get("clip_assignments"),
             "tts_metrics_sidecar_path": sidecars.get("tts_metrics"),
             "match_quality_sidecar_path": sidecars.get("match_quality"),
@@ -334,6 +395,7 @@ def build_run_manifest(
     timeline_entries = _build_timeline_entries(
         rendered_outputs,
         asset_id_by_clip_id=asset_id_by_clip_id,
+        require_asset_ids=bool(shared_assets),
     )
     poi = {
         "poi_id": poi_id,

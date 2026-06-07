@@ -25,8 +25,9 @@ export const RemotionRoot: React.FC = () => {
         clips: [],
         audio: {
           bgmVolume: 0.35,
-          bgmDuckedVolume: 0.08,
+          bgmDuckedVolume: 0.18,
           duckRampSec: 0.3,
+          pauseWindows: [],
         },
         captions: {
           wordTimestamps: [],

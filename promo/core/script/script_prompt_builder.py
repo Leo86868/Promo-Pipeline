@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import os
 from string import Template
+from typing import Any
 
 from promo.core import arsenal_loader
 from promo.core.format_profiles import PromoFormatProfile
@@ -143,6 +144,55 @@ def format_clip_inventory(
     return "\n".join(lines)
 
 
+def format_asset_visual_brief(asset_visual_brief: dict[str, Any]) -> str:
+    """Format an Asset Visual Brief into Gemini #1 grounding text."""
+    lines = [
+        "ASSET VISUAL BRIEF",
+        (
+            f"Eligible visual pool: {asset_visual_brief.get('eligible_asset_count', 0)} clips, "
+            f"{float(asset_visual_brief.get('eligible_total_seconds') or 0.0):.1f}s total."
+        ),
+        "",
+        "Category coverage:",
+    ]
+    for row in asset_visual_brief.get("categories") or []:
+        motifs = "; ".join(
+            str(item.get("phrase") or "")
+            for item in (row.get("coverage_motifs") or [])[:3]
+            if item.get("phrase")
+        )
+        suffix = f" — {motifs}" if motifs else ""
+        lines.append(
+            f"- {row.get('category', 'unknown')}: "
+            f"{row.get('asset_count', 0)} clips, "
+            f"{float(row.get('total_seconds') or 0.0):.1f}s{suffix}"
+        )
+
+    core_visuals = asset_visual_brief.get("core_visuals") or []
+    if core_visuals:
+        lines.extend(["", "Core visual anchors:"])
+        for item in core_visuals:
+            phrase = item.get("phrase")
+            if phrase:
+                lines.append(f"- {phrase}")
+
+    grounding_set = asset_visual_brief.get("grounding_set") or []
+    if grounding_set:
+        lines.extend(["", "Concrete visual grounding set:"])
+        for item in grounding_set:
+            detail = item.get("visual_detail")
+            if not detail:
+                continue
+            role = item.get("coverage_role", "detail")
+            category = item.get("category", "unknown")
+            lines.append(f"- [{role}] {category}: {detail}")
+
+    note = asset_visual_brief.get("summary_note")
+    if note:
+        lines.extend(["", f"Note: {note}"])
+    return "\n".join(lines)
+
+
 def format_examples(persona: NarratorPersona, mode: str = "short") -> str:
     """Format example scripts from persona into prompt text.
 
@@ -176,6 +226,7 @@ def build_prompt(
     n_variants: int = 1,
     variant_plan: dict | None = None,
     tighten_hint: str = "",
+    asset_visual_brief: dict[str, Any] | None = None,
 ) -> str:
     """Build the full generation prompt.
 
@@ -185,7 +236,11 @@ def build_prompt(
     ``promo/core/clip_assigner.py`` for how the hint is constructed.
     """
 
-    clip_inventory = format_clip_inventory(clips_metadata)
+    clip_inventory = (
+        format_asset_visual_brief(asset_visual_brief)
+        if asset_visual_brief
+        else format_clip_inventory(clips_metadata)
+    )
     examples = format_examples(persona, mode=profile.mode)
     banned = ", ".join(persona.forbidden_phrases)
     system_prompt = persona.system_prompt.format(

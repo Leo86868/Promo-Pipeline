@@ -44,7 +44,7 @@ export const AudioMix: React.FC<AudioMixProps> = ({ audio, segments }) => {
     : null;
 
   const bgmNormal = audio.bgmVolume ?? 0.35;
-  const bgmDucked = audio.bgmDuckedVolume ?? 0.08;
+  const bgmDucked = audio.bgmDuckedVolume ?? 0.18;
   const ramp = audio.duckRampSec ?? 0.3;
 
   // Simple-span volume callback: one interpolate across the full narration

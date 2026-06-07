@@ -163,6 +163,21 @@ class PoiAssetSupabaseBackend:
         self._canonical_key = next(iter(canonical_keys), self._canonical_key)
 
         clip_paths: dict[str, str] = {}
+        self._download_snapshot(snapshot, clip_paths, tmp_dir)
+
+        self._shared_assets = snapshot
+        logger.info(
+            "Loaded %d shared POI asset clips for %s",
+            len(clip_paths), poi_name,
+        )
+        return clip_paths
+
+    def _download_snapshot(
+        self,
+        snapshot: list[dict[str, Any]],
+        clip_paths: dict[str, str],
+        tmp_dir: str,
+    ) -> None:
         for row in snapshot:
             blob = self._download_clip_blob(row)
             data = _downloaded_bytes(blob)
@@ -178,10 +193,55 @@ class PoiAssetSupabaseBackend:
                 fh.write(data)
             clip_paths[row["clip_id"]] = dest
 
+    def fetch_candidate_clips(
+        self,
+        poi_name: str,
+        tmp_dir: str,
+        asset_ids: list[str],
+    ) -> dict[str, str]:
+        requested_asset_ids = list(dict.fromkeys(str(asset_id) for asset_id in asset_ids))
+        if not requested_asset_ids:
+            raise PoiAssetBackendError("candidate asset_ids are required")
+        rows = self._fetch_rows()
+        rows_by_asset_id = {
+            str(row.get("asset_id")): row
+            for row in rows
+            if row.get("asset_id")
+        }
+        missing = [
+            asset_id
+            for asset_id in requested_asset_ids
+            if asset_id not in rows_by_asset_id
+        ]
+        if missing:
+            raise PoiAssetBackendError(
+                "candidate asset_ids not found in poi_asset_valid_clips: "
+                + ", ".join(missing[:5])
+            )
+        ordered_rows = [rows_by_asset_id[asset_id] for asset_id in requested_asset_ids]
+        snapshot = build_poi_asset_valid_clip_snapshot(ordered_rows, poi_id=self._poi_id)
+        poi_ids = {row["poi_id"] for row in snapshot}
+        if len(poi_ids) != 1:
+            raise PoiAssetBackendError("candidate asset rows span multiple poi_id values")
+        self._poi_id = next(iter(poi_ids))
+        canonical_keys = {
+            row.get("canonical_key")
+            for row in snapshot
+            if row.get("canonical_key")
+        }
+        if len(canonical_keys) > 1:
+            raise PoiAssetBackendError(
+                "candidate asset rows span multiple canonical_key values",
+            )
+        self._canonical_key = next(iter(canonical_keys), self._canonical_key)
+
+        clip_paths: dict[str, str] = {}
+        self._download_snapshot(snapshot, clip_paths, tmp_dir)
         self._shared_assets = snapshot
         logger.info(
-            "Loaded %d shared POI asset clips for %s",
-            len(clip_paths), poi_name,
+            "Loaded %d candidate shared POI asset clips for %s",
+            len(clip_paths),
+            poi_name,
         )
         return clip_paths
 
@@ -211,6 +271,14 @@ class PoiAssetSupabaseBackend:
     def shared_assets(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self._shared_assets]
 
+    def ready_assets_for_retrieval(self):
+        """Load ready embedding rows for this POI without downloading media."""
+        if not self._poi_id:
+            raise PoiAssetBackendError("poi_id is required for semantic retrieval")
+        from promo.core.assets.retrieval import fetch_ready_assets
+
+        return fetch_ready_assets(self._client, poi_id=self._poi_id)
+
     def shared_poi_id(self) -> str | None:
         return self._poi_id
 
@@ -224,6 +292,20 @@ class PoiAssetSupabaseBackend:
             except MusicLibraryError as exc:
                 raise PoiAssetBackendError(str(exc)) from exc
         return self._local_output.fetch_bgm(poi_name, tmp_dir)
+
+    def fetch_bgms(self, poi_name: str, tmp_dir: str, *, count: int) -> list[str]:
+        if self._music_library is None:
+            fetched = self._local_output.fetch_bgm(poi_name, tmp_dir)
+            return [fetched] if fetched else []
+        try:
+            return self._music_library.fetch_bgms(tmp_dir, count=count)
+        except MusicLibraryError as exc:
+            raise PoiAssetBackendError(str(exc)) from exc
+
+    def music_metadata_for_path(self, path: str) -> dict[str, Any] | None:
+        if self._music_library is None:
+            return None
+        return self._music_library.music_metadata_for_path(path)
 
     def save_output(self, poi_name: str, video_path: str) -> str:
         return self._local_output.save_output(poi_name, video_path)

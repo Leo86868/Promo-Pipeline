@@ -91,6 +91,7 @@ def _step_generate_script(
     resolved_voice_keys: list[str],
     variant_profiles: list[PromoFormatProfile] | None = None,
     variant_personas: "list[NarratorPersona] | None" = None,
+    asset_visual_brief: dict | None = None,
 ) -> list[dict]:
     """Run Gemini #1 + resolve per-variant effective_wpm + apply
     compute_pause_budget on each accepted script. Returns ``scripts``
@@ -148,6 +149,7 @@ def _step_generate_script(
         target_duration_sec=target_duration_sec,
         profiles=variant_profiles,
         personas=variant_personas,
+        asset_visual_brief=asset_visual_brief,
     )
     if len(scripts) != n_variants:
         raise RuntimeError(
@@ -428,6 +430,7 @@ def _step_assign_clips(
     embedding_cache_dir: str | None = None,
     variant_profile: "PromoFormatProfile | None" = None,
     variant_persona: "NarratorPersona | None" = None,
+    asset_visual_brief: dict | None = None,
 ) -> tuple[dict, dict, list[dict], dict]:
     """Gemini #2 clip assignment with F3 single-retry policy.
 
@@ -494,6 +497,7 @@ def _step_assign_clips(
             target_duration_sec=target_duration_sec,
             profile=variant_profile,
             persona=variant_persona,
+            asset_visual_brief=asset_visual_brief,
         )
 
     def _regen_narration(new_script: dict) -> dict:

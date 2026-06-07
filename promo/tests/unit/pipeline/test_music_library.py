@@ -132,6 +132,81 @@ def test_supabase_music_library_selects_and_downloads_eligible_track(
     assert downloaded == [("drive_file_2", bgm_path)]
 
 
+def test_supabase_music_library_fetches_multiple_eligible_tracks(
+    monkeypatch,
+    tmp_path,
+):
+    from promo.core import music_library
+    from promo.core.music_library import SupabaseMusicLibrary
+
+    rows = [
+        _track(music_name="Short", duration_sec=30),
+        _track(
+            id="22222222-2222-2222-2222-222222222222",
+            music_name="Long A",
+            duration_sec=70,
+            drive_file_id="drive_file_2",
+        ),
+        _track(
+            id="33333333-3333-3333-3333-333333333333",
+            music_name="Long B",
+            duration_sec=80,
+            drive_file_id="drive_file_3",
+        ),
+    ]
+    client = _FakeSupabase(rows)
+    downloaded = []
+
+    def fake_download_drive_file(drive_file_id, dest):
+        downloaded.append((drive_file_id, dest))
+        with open(dest, "wb") as fh:
+            fh.write(b"mp3")
+
+    monkeypatch.setattr(music_library, "download_drive_file", fake_download_drive_file)
+
+    paths = SupabaseMusicLibrary(client, min_duration_sec=65).fetch_bgms(
+        str(tmp_path),
+        count=2,
+    )
+
+    assert ("limit", 2) in client.query.calls
+    assert len(paths) == 2
+    assert [item[0] for item in downloaded] == ["drive_file_2", "drive_file_3"]
+
+
+def test_supabase_music_library_maps_downloaded_path_to_music_metadata(
+    monkeypatch,
+    tmp_path,
+):
+    from promo.core import music_library
+    from promo.core.music_library import SupabaseMusicLibrary
+
+    track = _track(
+        id="22222222-2222-2222-2222-222222222222",
+        music_name="Run Away with Me",
+        duration_sec=70,
+        drive_file_id="drive_file_2",
+    )
+    client = _FakeSupabase([track])
+
+    def fake_download_drive_file(_drive_file_id, dest):
+        with open(dest, "wb") as fh:
+            fh.write(b"mp3")
+
+    monkeypatch.setattr(music_library, "download_drive_file", fake_download_drive_file)
+
+    library = SupabaseMusicLibrary(client, min_duration_sec=65)
+    bgm_path = library.fetch_bgm(str(tmp_path))
+
+    assert library.music_metadata_for_path(bgm_path) == {
+        "music_id": "22222222-2222-2222-2222-222222222222",
+        "music_label": "Run Away with Me",
+        "music_name": "Run Away with Me",
+        "music_duration_sec": 70.0,
+        "music_drive_file_id": "drive_file_2",
+    }
+
+
 def test_duration_probe_update_sql_is_review_only_shape():
     from promo.cli.probe_music_library_durations import duration_update_sql
 

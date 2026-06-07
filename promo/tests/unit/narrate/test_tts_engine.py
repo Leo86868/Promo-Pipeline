@@ -894,6 +894,7 @@ class TestSprint09bC6HelperExtractions:
         from promo.cli.compile_promo import _resolve_bgm_paths
         from unittest.mock import MagicMock
         backend = MagicMock()
+        del backend.fetch_bgms
         backend.fetch_bgm.return_value = "/tmp/fetched.mp3"
         result = _resolve_bgm_paths(
             bgm_paths=None,
@@ -904,6 +905,33 @@ class TestSprint09bC6HelperExtractions:
             target_duration_sec=65,
         )
         assert result == ["/tmp/fetched.mp3"]
+
+    def test_resolve_bgm_paths_backend_multi_fetch_when_available(self, tmp_path):
+        from promo.cli.compile_promo import _resolve_bgm_paths
+        calls = []
+
+        class Backend:
+            def fetch_bgms(self, poi_name, tmp_dir, *, count):
+                calls.append((poi_name, tmp_dir, count))
+                return ["/tmp/a.mp3", "/tmp/b.mp3"]
+
+            def fetch_bgm(self, poi_name, tmp_dir):
+                raise AssertionError("fetch_bgm should not be called")
+
+        backend = Backend()
+
+        result = _resolve_bgm_paths(
+            bgm_paths=None,
+            bgm_path=None,
+            poi_name="X",
+            backend=backend,
+            tmp_dir=str(tmp_path),
+            target_duration_sec=65,
+            count=2,
+        )
+
+        assert result == ["/tmp/a.mp3", "/tmp/b.mp3"]
+        assert calls == [("X", str(tmp_path), 2)]
 
     def test_resolve_voice_keys_explicit_voice(self):
         from promo.cli.compile_promo import _resolve_voice_keys

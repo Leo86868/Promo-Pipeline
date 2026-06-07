@@ -16,7 +16,7 @@ return-tuple payload.
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from promo.core.backend import PromoBackend
 from promo.core.errors import FreezeWouldOccurError
@@ -45,6 +45,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _music_metadata_for_path(backend: PromoBackend, bgm_path: str) -> dict[str, Any] | None:
+    resolver = getattr(backend, "music_metadata_for_path", None)
+    if not callable(resolver):
+        return None
+    metadata = resolver(bgm_path)
+    return metadata if isinstance(metadata, dict) else None
+
+
 def _run_variant_loop(
     *,
     scripts: list[dict],
@@ -70,6 +78,7 @@ def _run_variant_loop(
     match_quality_entries: list[dict],
     clip_assignments_entries: list[dict],
     rendered_outputs: list[dict] | None = None,
+    asset_visual_brief: dict | None = None,
 ) -> tuple[bool, int, dict]:
     """Run the per-variant loop body end-to-end.
 
@@ -163,6 +172,7 @@ def _run_variant_loop(
                 embedding_cache_dir=embedding_cache_dir,
                 variant_profile=variant_profile,
                 variant_persona=variant_persona,
+                asset_visual_brief=asset_visual_brief,
             )
             run_retrieval_provenance = variant_retrieval
             logger.info(
@@ -306,7 +316,8 @@ def _run_variant_loop(
         if final_loc != variant_output_path:
             logger.info("Output saved to: %s", final_loc)
         if rendered_outputs is not None:
-            rendered_outputs.append({
+            music_metadata = _music_metadata_for_path(backend, variant_bgm)
+            rendered_output = {
                 "variant_index": variant_index,
                 "variant_status": "rendered",
                 "render_output_path": variant_output_path,
@@ -317,6 +328,10 @@ def _run_variant_loop(
                 "bgm_path": variant_bgm,
                 "file_size_bytes": os.path.getsize(variant_output_path),
                 "timeline_entries": variant_timeline_entries,
-            })
+            }
+            if music_metadata:
+                rendered_output["music"] = music_metadata
+                rendered_output["music_label"] = music_metadata.get("music_label")
+            rendered_outputs.append(rendered_output)
 
     return all_ok, pool_exhaustion_hard_fails, run_retrieval_provenance

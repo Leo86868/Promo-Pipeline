@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import tempfile
+from typing import Any
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.backend import PromoBackend
@@ -26,7 +27,11 @@ from promo.core.pipeline.bgm_voice_resolver import (
     _resolve_voice_keys,
 )
 from promo.core.pipeline.sidecar_writer import _emit_run_sidecars_result
-from promo.core.pipeline.run_manifest import build_run_manifest, emit_run_manifest
+from promo.core.pipeline.run_manifest import (
+    build_run_manifest,
+    emit_run_manifest,
+    validate_shared_asset_id_coverage,
+)
 from promo.core.pipeline.steps import (
     _build_variant_selections,
     _step_generate_script,
@@ -48,6 +53,176 @@ def _optional_backend_value(backend: PromoBackend, name: str):
 def _optional_backend_text(backend: PromoBackend, name: str) -> str | None:
     value = _optional_backend_value(backend, name)
     return value if isinstance(value, str) and value else None
+
+
+def _backend_declares_callable(backend: PromoBackend, name: str) -> bool:
+    return callable(getattr(type(backend), name, None))
+
+
+def _compact_shared_candidate(ranked) -> dict[str, Any]:
+    asset = ranked.asset
+    return {
+        "asset_id": asset.asset_id,
+        "clip_id": asset.clip_id,
+        "category": asset.category,
+        "score": round(float(ranked.score), 6),
+        "query_index": ranked.query_index,
+        "rank_for_query": ranked.rank_for_query,
+        "duration_sec": asset.duration_sec,
+        "usage_count": asset.usage_count,
+        "scene_description": asset.scene_description,
+    }
+
+
+def _filter_candidate_metadata(
+    *,
+    clips_metadata: list[dict],
+    ready_assets: list[Any],
+    asset_ids: list[str],
+) -> list[dict]:
+    clip_id_by_asset_id = {
+        asset.asset_id: asset.clip_id
+        for asset in ready_assets
+    }
+    metadata_by_clip_id = {
+        str(item.get("id")).zfill(4): item
+        for item in clips_metadata
+        if item.get("id") is not None
+    }
+    filtered: list[dict] = []
+    for asset_id in asset_ids:
+        clip_id = clip_id_by_asset_id.get(asset_id)
+        if clip_id is None:
+            continue
+        metadata = metadata_by_clip_id.get(str(clip_id).zfill(4))
+        if metadata is not None:
+            filtered.append(metadata)
+    return filtered
+
+
+def _clip_durations_from_metadata(clips_metadata: list[dict]) -> dict[str, float]:
+    durations: dict[str, float] = {}
+    for item in clips_metadata:
+        clip_id = item.get("id")
+        duration = item.get("source_duration_sec")
+        if clip_id is None or duration is None:
+            continue
+        try:
+            durations[str(clip_id).zfill(4)] = float(duration)
+        except (TypeError, ValueError):
+            continue
+    return durations
+
+
+def _retrieve_shared_asset_candidates_from_ready_assets(
+    *,
+    ready_assets: list[Any],
+    scripts: list[dict],
+) -> dict[str, Any]:
+    """Run asset-library semantic retrieval after Gemini #1 script generation."""
+    from promo.core.assets.retrieval import (
+        DEFAULT_MAX_CANDIDATES,
+        DEFAULT_MIN_DOWNLOAD_CANDIDATES,
+        DEFAULT_MIN_ELIGIBLE_ASSETS,
+        DEFAULT_TOP_K_PER_QUERY,
+        build_script_retrieval_queries,
+        candidate_asset_ids_for_download,
+        retrieve_candidates,
+    )
+    from promo.core.assign.clip_embedder import embed_texts
+
+    queries = build_script_retrieval_queries(scripts)
+    query_vectors = [tuple(vector) for vector in embed_texts(queries)]
+    candidates = retrieve_candidates(
+        assets=ready_assets,
+        queries=queries,
+        query_vectors=query_vectors,
+        top_k_per_query=DEFAULT_TOP_K_PER_QUERY,
+        max_candidates=DEFAULT_MAX_CANDIDATES,
+        min_eligible_assets=DEFAULT_MIN_ELIGIBLE_ASSETS,
+    )
+    download_asset_ids = candidate_asset_ids_for_download(
+        candidates=candidates,
+        assets=ready_assets,
+        min_candidates=DEFAULT_MIN_DOWNLOAD_CANDIDATES,
+        max_candidates=DEFAULT_MAX_CANDIDATES,
+    )
+    candidate_asset_ids = [ranked.asset.asset_id for ranked in candidates]
+    return {
+        "retrieval_active": True,
+        "retrieval_contract": "shared_asset_semantic_candidates_v1",
+        "fallback_reason": None,
+        "eligible_asset_pool_size": len(ready_assets),
+        "query_count": len(queries),
+        "top_k_per_query": DEFAULT_TOP_K_PER_QUERY,
+        "max_candidates": DEFAULT_MAX_CANDIDATES,
+        "min_eligible_assets": DEFAULT_MIN_ELIGIBLE_ASSETS,
+        "min_download_candidates": DEFAULT_MIN_DOWNLOAD_CANDIDATES,
+        "candidate_count": len(candidates),
+        "download_pool_count": len(download_asset_ids),
+        "download_pool_padding_count": max(
+            0,
+            len(download_asset_ids) - len(set(candidate_asset_ids)),
+        ),
+        "queries": [
+            {"query_index": index, "text": text}
+            for index, text in enumerate(queries)
+        ],
+        "candidate_asset_ids": candidate_asset_ids,
+        "download_asset_ids": download_asset_ids,
+        "candidates": [
+            _compact_shared_candidate(ranked)
+            for ranked in candidates
+        ],
+    }
+
+
+def _retrieve_shared_asset_candidates(
+    *,
+    backend: PromoBackend,
+    scripts: list[dict],
+) -> dict[str, Any]:
+    """Run asset-library semantic retrieval after Gemini #1 script generation."""
+    ready_assets_fn = getattr(backend, "ready_assets_for_retrieval", None)
+    if not callable(ready_assets_fn):
+        return {
+            "retrieval_active": False,
+            "retrieval_contract": "shared_asset_semantic_candidates_v1",
+            "fallback_reason": "backend_missing_ready_asset_reader",
+            "eligible_asset_pool_size": 0,
+            "query_count": 0,
+            "candidate_count": 0,
+            "candidate_asset_ids": [],
+            "download_asset_ids": [],
+            "candidates": [],
+        }
+
+    return _retrieve_shared_asset_candidates_from_ready_assets(
+        ready_assets=ready_assets_fn(),
+        scripts=scripts,
+    )
+
+
+def _merge_shared_asset_retrieval_provenance(
+    run_retrieval_provenance: dict[str, Any],
+    shared_asset_retrieval_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **run_retrieval_provenance,
+        "retrieval_active": shared_asset_retrieval_provenance["retrieval_active"],
+        "embedded_pool_size": shared_asset_retrieval_provenance.get(
+            "eligible_asset_pool_size", 0
+        ),
+        "reduced_pool_size": shared_asset_retrieval_provenance.get(
+            "download_pool_count",
+            shared_asset_retrieval_provenance.get("candidate_count", 0),
+        ),
+        "fallback_reason": shared_asset_retrieval_provenance.get("fallback_reason"),
+        "retrieval_contract": shared_asset_retrieval_provenance.get(
+            "retrieval_contract"
+        ),
+        "shared_asset_retrieval": shared_asset_retrieval_provenance,
+    }
 
 
 def full_pipeline(
@@ -100,17 +275,77 @@ def full_pipeline(
     logger.info("Temp dir: %s", tmp_dir)
 
     try:
-        # Steps 1-2.5 (Sprint 10 C4): fetch + analyze + ffprobe extracted.
-        prep = _step_prepare_clips(
-            backend=backend,
-            poi_name=poi_name,
-            tmp_dir=tmp_dir,
-            target_duration_sec=target_duration_sec,
-            skip_analysis=skip_analysis,
+        asset_visual_brief: dict | None = None
+        shared_assets_for_manifest: list[dict[str, Any]] | None = None
+        shared_asset_ready_pool: list[Any] | None = None
+        candidate_only_mode = (
+            _backend_declares_callable(backend, "ready_assets_for_retrieval")
+            and _backend_declares_callable(backend, "fetch_candidate_clips")
         )
-        if prep is None:
-            return False
-        clip_paths, clips_metadata, clip_durations = prep
+        if candidate_only_mode:
+            try:
+                from promo.core.assets.retrieval import (
+                    build_asset_visual_brief,
+                    clip_metadata_from_ready_assets,
+                )
+
+                shared_asset_ready_pool = backend.ready_assets_for_retrieval()  # type: ignore[attr-defined]
+                clips_metadata = clip_metadata_from_ready_assets(shared_asset_ready_pool)
+                clip_durations = _clip_durations_from_metadata(clips_metadata)
+                clip_paths: dict[str, str] = {}
+                asset_visual_brief = build_asset_visual_brief(shared_asset_ready_pool)
+                logger.info(
+                    "Candidate-only shared asset mode: %d ready assets, %.1fs total",
+                    asset_visual_brief["eligible_asset_count"],
+                    asset_visual_brief["eligible_total_seconds"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Candidate-only shared asset setup failed: %s", exc)
+                return False
+        else:
+            # Steps 1-2.5 (Sprint 10 C4): fetch + analyze + ffprobe extracted.
+            prep = _step_prepare_clips(
+                backend=backend,
+                poi_name=poi_name,
+                tmp_dir=tmp_dir,
+                target_duration_sec=target_duration_sec,
+                skip_analysis=skip_analysis,
+            )
+            if prep is None:
+                return False
+            clip_paths, clips_metadata, clip_durations = prep
+            shared_assets = _optional_backend_value(backend, "shared_assets")
+            shared_assets_for_manifest = (
+                shared_assets if isinstance(shared_assets, list) else None
+            )
+            try:
+                validate_shared_asset_id_coverage(
+                    clip_paths=clip_paths,
+                    shared_assets=shared_assets_for_manifest,
+                )
+            except ValueError as exc:
+                logger.error("Shared asset preflight failed: %s", exc)
+                return False
+            if shared_assets_for_manifest:
+                try:
+                    from promo.core.assets.retrieval import (
+                        brief_assets_from_rows,
+                        build_asset_visual_brief,
+                    )
+
+                    brief_assets = brief_assets_from_rows(shared_assets_for_manifest)
+                    if brief_assets:
+                        asset_visual_brief = build_asset_visual_brief(brief_assets)
+                        logger.info(
+                            "Asset Visual Brief enabled for Gemini #1: %d assets, %.1fs total",
+                            asset_visual_brief["eligible_asset_count"],
+                            asset_visual_brief["eligible_total_seconds"],
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Asset Visual Brief unavailable; falling back to clip inventory: %s",
+                        exc,
+                    )
 
         # Sprint 12b — resolve the embedding sidecar directory for retrieval.
         # Same derivation pattern ``_step_prepare_clips`` uses for
@@ -182,10 +417,83 @@ def full_pipeline(
                 resolved_voice_keys=resolved_voice_keys,
                 variant_profiles=variant_profiles,
                 variant_personas=variant_personas,
+                asset_visual_brief=asset_visual_brief,
             )
         except RuntimeError as exc:
             logger.error("Variant-pack generation failed: %s", exc)
             return False
+
+        shared_asset_retrieval_provenance: dict[str, Any] | None = None
+        if candidate_only_mode and shared_asset_ready_pool is not None:
+            try:
+                shared_asset_retrieval_provenance = (
+                    _retrieve_shared_asset_candidates_from_ready_assets(
+                        ready_assets=shared_asset_ready_pool,
+                        scripts=scripts,
+                    )
+                )
+                download_asset_ids = shared_asset_retrieval_provenance[
+                    "download_asset_ids"
+                ]
+                clip_paths = backend.fetch_candidate_clips(  # type: ignore[attr-defined]
+                    poi_name,
+                    tmp_dir,
+                    download_asset_ids,
+                )
+                shared_assets = _optional_backend_value(backend, "shared_assets")
+                shared_assets_for_manifest = (
+                    shared_assets if isinstance(shared_assets, list) else None
+                )
+                clips_metadata = _filter_candidate_metadata(
+                    clips_metadata=clips_metadata,
+                    ready_assets=shared_asset_ready_pool,
+                    asset_ids=download_asset_ids,
+                )
+                clip_durations = _clip_durations_from_metadata(clips_metadata)
+                validate_shared_asset_id_coverage(
+                    clip_paths=clip_paths,
+                    shared_assets=shared_assets_for_manifest,
+                )
+                from promo.core.assets.retrieval import (
+                    brief_assets_from_rows,
+                    build_asset_visual_brief,
+                )
+
+                asset_visual_brief = build_asset_visual_brief(
+                    brief_assets_from_rows(shared_assets_for_manifest or [])
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Candidate-only shared asset retrieval/download failed: %s", exc)
+                return False
+            logger.info(
+                "Candidate-only download selected %d semantic candidates and "
+                "downloaded %d clips from %d ready assets",
+                shared_asset_retrieval_provenance["candidate_count"],
+                len(clip_paths),
+                shared_asset_retrieval_provenance["eligible_asset_pool_size"],
+            )
+        elif shared_assets_for_manifest:
+            try:
+                shared_asset_retrieval_provenance = _retrieve_shared_asset_candidates(
+                    backend=backend,
+                    scripts=scripts,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Shared asset semantic retrieval failed: %s", exc)
+                return False
+            if shared_asset_retrieval_provenance["retrieval_active"]:
+                logger.info(
+                    "Shared asset semantic retrieval selected %d candidates "
+                    "from %d ready assets over %d script queries",
+                    shared_asset_retrieval_provenance["candidate_count"],
+                    shared_asset_retrieval_provenance["eligible_asset_pool_size"],
+                    shared_asset_retrieval_provenance["query_count"],
+                )
+            else:
+                logger.info(
+                    "Shared asset semantic retrieval inactive: %s",
+                    shared_asset_retrieval_provenance["fallback_reason"],
+                )
 
         # Step 6: Select BGM(s). Voice rotation pre-resolved above
         # (Sprint TTS-Migration Phase 4 moved it earlier so Step 3
@@ -200,6 +508,7 @@ def full_pipeline(
                 backend=backend,
                 tmp_dir=tmp_dir,
                 target_duration_sec=target_duration_sec,
+                count=n_variants,
             )
         except NoSuitableBGMError as exc:
             logger.error("No BGM available: %s", exc)
@@ -207,10 +516,6 @@ def full_pipeline(
 
         for i, bp in enumerate(resolved_bgm_paths):
             logger.info("  BGM %d: %s", i + 1, os.path.basename(bp))
-
-        # Voice rotation (AC14): mirrors BGM round-robin.
-        # ``resolved_voice_keys`` pre-resolved above (Sprint TTS-Migration
-        # Phase 4 move so Step 3 could read primary_backend).
 
         # Sprint 09b C7 pool-exhaustion metric + Sprint 09a M-004 / Sprint
         # 10 C3 (F1) success-gated accumulators. Constructed before the
@@ -247,11 +552,17 @@ def full_pipeline(
             target_duration_sec=target_duration_sec,
             script_candidates=script_candidates,
             embedding_cache_dir=embedding_cache_dir,
+            asset_visual_brief=asset_visual_brief,
             tts_metrics=tts_metrics,
             match_quality_entries=match_quality_entries,
             clip_assignments_entries=clip_assignments_entries,
             rendered_outputs=rendered_outputs,
         )
+        if shared_asset_retrieval_provenance is not None:
+            run_retrieval_provenance = _merge_shared_asset_retrieval_provenance(
+                run_retrieval_provenance,
+                shared_asset_retrieval_provenance,
+            )
 
         sidecar_result = _emit_run_sidecars_result(
             backend=backend,
@@ -266,35 +577,39 @@ def full_pipeline(
         if not sidecar_result.ok:
             all_ok = False
         elif rendered_outputs:
-            shared_assets = _optional_backend_value(backend, "shared_assets")
-            manifest = build_run_manifest(
-                poi_name=poi_name,
-                location=location,
-                target_duration_sec=target_duration_sec,
-                n_variants=n_variants,
-                script_candidates=script_candidates,
-                format_selector=promo_format_selector(),
-                embedding_cache_active=embedding_cache_dir is not None,
-                clip_paths=clip_paths,
-                clips_metadata=clips_metadata,
-                clip_durations=clip_durations,
-                rendered_outputs=rendered_outputs,
-                sidecar_paths=sidecar_result.paths,
-                poi_id=_optional_backend_text(backend, "shared_poi_id"),
-                canonical_key=_optional_backend_text(backend, "shared_canonical_key"),
-                shared_assets=shared_assets if isinstance(shared_assets, list) else None,
-                skip_analysis=skip_analysis,
-                tts_speed=tts_speed,
-                seed=seed,
-            )
-            manifest_result = emit_run_manifest(
-                sidecar_dir=sidecar_result.sidecar_dir,
-                poi_name=poi_name,
-                target_duration_sec=target_duration_sec,
-                manifest=manifest,
-            )
-            if not manifest_result.ok:
+            try:
+                manifest = build_run_manifest(
+                    poi_name=poi_name,
+                    location=location,
+                    target_duration_sec=target_duration_sec,
+                    n_variants=n_variants,
+                    script_candidates=script_candidates,
+                    format_selector=promo_format_selector(),
+                    embedding_cache_active=embedding_cache_dir is not None,
+                    clip_paths=clip_paths,
+                    clips_metadata=clips_metadata,
+                    clip_durations=clip_durations,
+                    rendered_outputs=rendered_outputs,
+                    sidecar_paths=sidecar_result.paths,
+                    poi_id=_optional_backend_text(backend, "shared_poi_id"),
+                    canonical_key=_optional_backend_text(backend, "shared_canonical_key"),
+                    shared_assets=shared_assets_for_manifest,
+                    skip_analysis=skip_analysis,
+                    tts_speed=tts_speed,
+                    seed=seed,
+                )
+            except ValueError as exc:
+                logger.error("Run manifest validation failed: %s", exc)
                 all_ok = False
+            else:
+                manifest_result = emit_run_manifest(
+                    sidecar_dir=sidecar_result.sidecar_dir,
+                    poi_name=poi_name,
+                    target_duration_sec=target_duration_sec,
+                    manifest=manifest,
+                )
+                if not manifest_result.ok:
+                    all_ok = False
 
         # Sprint 09b C7: pool-exhaustion metric. Emit once per run as a
         # grepable log line. Clean runs report 0; a non-zero value means

@@ -142,6 +142,10 @@ run_manifest_hotel_name_60s-3.json
       "voice_key": "kore",
       "voice_backend": "gemini",
       "bgm_path": "output/run-1/bgm.mp3",
+      "music_label": "Run Away with Me",
+      "music_id": "22222222-2222-2222-2222-222222222222",
+      "music_duration_sec": 70.0,
+      "music_drive_file_id": "drive_file_123",
       "file_size_bytes": 43811820
     }
   ],
@@ -213,6 +217,24 @@ during rendering.
 | `embedding_source_analysis_sha1` | no | yes | Analysis hash used to produce embedding text/vector. |
 | `embedding_status` | no | yes | Current embedding readiness state. |
 | `embedding_key` | no | local/debug | Compact local cache key when known. |
+
+## Outputs
+
+Each `outputs` row records one successfully rendered variant. `bgm_path` remains
+the local audio file used by the renderer. When PGC selects BGM from Supabase
+Music Library, the row should also include `music_label` at minimum so the
+release-candidate handoff does not need to infer music from filenames.
+
+Recommended Music Library fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `music_label` | `str` | Human-readable music label/name used by AIGC distribution filenames. |
+| `music_id` | `str` | Stable `public.music_library.id` when known. |
+| `music_name` | `str` | Music Library name; usually same as `music_label` for v1. |
+| `music_duration_sec` | `float` | Audited Music Library duration. |
+| `music_drive_file_id` | `str` | Source Drive file id from Music Library. |
+| `music` | `dict` | Optional nested copy of the same music snapshot for future expansion. |
 
 ## Timeline Entries
 
@@ -291,6 +313,34 @@ promo.core.pipeline.run_manifest.build_usage_events_from_manifest()
 
 It builds future RPC payload rows from a fully identified manifest but
 does not write to Supabase.
+
+Current read-only preview CLI:
+
+```bash
+python3 -m promo.cli.usage_events_preview \
+  path/to/run_manifest_*.json \
+  --output path/to/usage_events_preview.json
+```
+
+The preview CLI reads local manifests and, when available, the referenced
+`clip_assignments` sidecar to attach retrieval provenance such as
+`retrieval_contract` and `retrieval_fallback_reason`.
+
+Current explicit writeback CLI:
+
+```bash
+python3 -m promo.cli.usage_events_writeback \
+  path/to/run_manifest_*.json \
+  --execute
+```
+
+Without `--execute`, the writeback CLI prints the same manifest-derived
+summary without calling Supabase. With `--execute`, it sends one JSON
+array per manifest to `rpc_record_poi_asset_usage_events(p_payload jsonb)`.
+
+Freshness is not a manifest responsibility. The manifest records actual
+asset usage; the shared asset library should use usage events to update
+`usage_count` and keep overused assets out of the active read surface.
 
 ## Implementation Notes
 
