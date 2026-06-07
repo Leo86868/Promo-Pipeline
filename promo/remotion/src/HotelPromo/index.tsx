@@ -73,7 +73,7 @@ export const hotelPromoSchema = z.object({
     narration: z.string().optional(),
     bgm: z.string().optional(),
     bgmVolume: z.number().default(0.35),
-    bgmDuckedVolume: z.number().default(0.08),
+    bgmDuckedVolume: z.number().default(0.18),
     duckRampSec: z.number().default(0.3),
     pauseWindows: z.array(pauseWindowSchema).optional().default([]),
   }).optional(),

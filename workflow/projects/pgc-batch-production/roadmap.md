@@ -1,7 +1,7 @@
 # PGC Batch Production Roadmap
 
-**Last updated:** 2026-05-27
-**Status:** In progress - Sprint 5 fixture adapter implemented locally; Sprint 4 planned
+**Last updated:** 2026-05-29
+**Status:** In progress - live Supabase proof passed; shared-asset manifest/preflight hardening implemented locally; semantic candidate retrieval and candidate-only download smoked across 15 local review videos; one manifest usage writeback + revert live proof passed
 **Owner repo:** PGC Pipeline
 
 ## Goal
@@ -42,7 +42,10 @@ behind tests.
 
 ## Current State
 
-- PGC is local-first and currently reads clips through `PromoBackend`.
+- PGC can read local clips through `PromoBackend` and can also read shared
+  POI clips through the read-only Supabase backend.
+- A real 65s proof run has used Supabase POI clips plus Supabase Music
+  Library BGM.
 - Current run observability is split across:
   - `clip_assignments_*.json`;
   - `tts_metrics_*.json`;
@@ -56,14 +59,38 @@ behind tests.
 - A pure fixture adapter for `public.poi_asset_valid_clips` validates
   identity/storage/hash rows and projects them into manifest-ready asset
   snapshots. It performs no live Supabase reads or writes.
+- The live read-only Supabase clip backend can load `poi_asset_valid_clips`
+  rows, download `poi-assets` objects, and verify `source_content_hash`.
+- Shared-asset runs now fail fast before expensive script/TTS/render work if
+  the staged clip pool cannot map back to `asset_id`.
+- Final manifest creation also fails closed if any rendered shared-asset
+  timeline entry, including `bridge_tail`, cannot resolve `asset_id`.
+- Asset Visual Brief is wired into Gemini #1 for shared-asset runs.
+- Terranea and Marriott Marquis Houston can retrieve semantic candidate
+  `asset_id` values from centralized Supabase embeddings after Gemini #1
+  script generation, and record those candidates in sidecar provenance.
+- Shared-asset Supabase runs can now skip full-pool media download: PGC reads
+  ready asset metadata/embeddings first, retrieves a semantic candidate set,
+  downloads only that candidate set, and snapshots those rows into the
+  manifest.
+- `promo.cli.run_batch` can run a small production-style batch as one isolated
+  subprocess per requested video. A VPS smoke rendered 4 / 4 videos:
+  Terranea Resort x 2 and Marriott Marquis Houston x 2.
+- `promo.cli.usage_events_writeback` can explicitly write manifest-derived
+  usage events through the Supabase RPC. A controlled live proof inserted 16
+  events for one Terranea manifest and verified duplicate retry behavior.
+- A five-POI preview batch rendered 5 / 5 additional 65s videos with
+  candidate-only shared-asset download and manifest-ready usage previews.
+- A combined local review folder now contains 15 65s videos:
+  `/Users/leowu/Downloads/pgc_65s_review_15_videos_20260529`.
 - Renderer bridge clips are created inside
   `promo/core/render/remotion_renderer.py::_bind_clips_to_narration`.
 - Existing bool sidecar APIs remain compatible, and structured sidecar
   helpers now expose exact collision-bumped paths.
 - Successful rendered variants can now accumulate final backend output
   locations and bridge-aware timeline facts for manifest emission.
-- Shared-library Supabase schema and storage are being handled outside
-  this repo. PGC should not add live Supabase reads/writes yet.
+- Shared-library Supabase schema, storage, and embedding backfill are being
+  handled outside this repo. PGC should not add Supabase writes yet.
 
 ## Decisions
 
@@ -77,6 +104,9 @@ behind tests.
   future adapter fixtures.
 - Treat `run_manifest` as a separate module/artifact, but gather its
   facts from production execution.
+- Treat current all-clips Supabase downloading as a proof path. The target
+  production path should read metadata/embeddings first, retrieve candidates,
+  and download only selected candidate clips.
 
 ## Sprint Roadmap
 
@@ -89,7 +119,11 @@ behind tests.
 | 3b - Manifest contract cleanup | implemented locally | Align manifest with `poi_asset_valid_clips` snapshot semantics, add stable `occurrence_id`, remove placeholder usage-event drafts, and add pure event derivation helpers. |
 | 4 - Interface cleanup | planned | Reduce messy stage inputs/outputs based on Sprint 1 findings. Keep changes surgical and behavior-preserving. |
 | 5 - Shared-library adapter fixtures | implemented locally | Add fixture-based mapping tests for `poi_asset_valid_clips` ingestion and storage-path/hash propagation. No live network. |
-| 6 - Live shared-library adapter | deferred | Add live reads/writeback only after fixture contract and external schema stabilize. |
+| 6 - Live shared-library adapter proof | implemented locally | Add read-only Supabase clip backend and prove 65s render with Supabase clips + Music Library. No usage writeback. |
+| 7 - Shared manifest identity hardening | implemented locally | Add `asset_id` coverage preflight and fail-closed manifest checks for shared runs, including bridge clips. |
+| 8 - Asset-library-native retrieval | implemented locally and smoked on VPS | Build Asset Visual Brief for Gemini #1, retrieve post-script semantic candidate assets from Supabase embeddings, and download only candidate videos for shared-asset runs. |
+| 8b - Thin batch runner | implemented locally and smoked on VPS | Expand a POI list into isolated one-video subprocesses, rotate voice/music, and preserve per-video manifests. |
+| 9 - Usage writeback | implemented locally and one-manifest live proof passed | Derive usage events from manifest and call the shared usage RPC explicitly; not automatic in batch production yet. |
 
 ## Sprint 1 Detail — Core Map And Input Inventory
 
@@ -215,12 +249,14 @@ Out of scope:
 
 ## Open Items
 
-- Decide whether manifest emission should remain always-on for successful
-  local renders or become configurable before broader batch use.
-- Wait for an explicit live-read task before adding Supabase access in
-  PGC production code.
-- Keep semantic retrieval gated until analysis/embedding fields are
-  populated in `poi_asset_valid_clips`.
+- Decide first production eligible-pool policy. Current working direction:
+  hard-filtered eligible assets should be above 50 before a POI is considered
+  suitable for production PGC.
+- Move the shared-asset pipeline order from proof mode to production mode:
+  metadata/embedding read first, candidate retrieval second, video download
+  third.
+- Run a second Terranea 65s render with semantic retrieval provenance enabled.
+- Defer usage writeback until the shared RPC payload is finalized.
 
 ## Guardrails
 

@@ -141,8 +141,9 @@ class SupabaseMusicLibrary:
         self._min_duration_sec = float(min_duration_sec)
         self._music_id = music_id
         self._selected_track: dict[str, Any] | None = None
+        self._selected_tracks_by_path: dict[str, dict[str, Any]] = {}
 
-    def _fetch_rows(self) -> list[Mapping[str, Any]]:
+    def _fetch_rows(self, *, limit: int = 1) -> list[Mapping[str, Any]]:
         query = self._client.table(MUSIC_LIBRARY_TABLE).select(
             MUSIC_LIBRARY_SELECT_FIELDS,
         )
@@ -151,32 +152,61 @@ class SupabaseMusicLibrary:
         else:
             query = query.gte("duration_sec", self._min_duration_sec)
             query = query.order("duration_sec")
-            query = query.limit(1)
+            query = query.limit(max(1, int(limit)))
         rows = _response_data(query.execute()) or []
         if not isinstance(rows, list):
             raise MusicLibraryError("music_library query returned non-list data")
         return rows
 
-    def select_track(self) -> dict[str, Any]:
-        rows = self._fetch_rows()
+    def select_tracks(self, *, count: int = 1) -> list[dict[str, Any]]:
+        rows = self._fetch_rows(limit=count)
         if not rows:
             raise MusicLibraryError(
                 "music_library returned no tracks with duration_sec >= "
                 f"{self._min_duration_sec:.1f}",
             )
-        track = normalize_music_library_track(
-            rows[0],
-            min_duration_sec=self._min_duration_sec,
-        )
-        self._selected_track = track
-        return track
+        tracks = [
+            normalize_music_library_track(
+                row,
+                min_duration_sec=self._min_duration_sec,
+            )
+            for row in rows
+        ]
+        self._selected_track = tracks[0]
+        return tracks
+
+    def select_track(self) -> dict[str, Any]:
+        return self.select_tracks(count=1)[0]
 
     def selected_track(self) -> dict[str, Any] | None:
         return dict(self._selected_track) if self._selected_track else None
 
+    def music_metadata_for_path(self, path: str) -> dict[str, Any] | None:
+        track = (
+            self._selected_tracks_by_path.get(path)
+            or self._selected_tracks_by_path.get(os.path.abspath(path))
+        )
+        if not track:
+            return None
+        return {
+            "music_id": track["id"],
+            "music_label": track["music_name"],
+            "music_name": track["music_name"],
+            "music_duration_sec": track["duration_sec"],
+            "music_drive_file_id": track["drive_file_id"],
+        }
+
     def fetch_bgm(self, tmp_dir: str) -> str:
-        track = self.select_track()
+        return self.fetch_bgms(tmp_dir, count=1)[0]
+
+    def fetch_bgms(self, tmp_dir: str, *, count: int) -> list[str]:
+        tracks = self.select_tracks(count=count)
         os.makedirs(tmp_dir, exist_ok=True)
-        dest = os.path.join(tmp_dir, music_filename(track))
-        download_drive_file(track["drive_file_id"], dest)
-        return dest
+        paths: list[str] = []
+        for track in tracks:
+            dest = os.path.join(tmp_dir, music_filename(track))
+            download_drive_file(track["drive_file_id"], dest)
+            self._selected_tracks_by_path[dest] = track
+            self._selected_tracks_by_path[os.path.abspath(dest)] = track
+            paths.append(dest)
+        return paths

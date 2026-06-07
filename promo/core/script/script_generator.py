@@ -89,6 +89,8 @@ from promo.core.script.script_prompt_builder import (  # noqa: E402
     build_prompt as _build_prompt,
     build_variant_plans,
     build_variant_plans as _build_variant_plans,
+    format_asset_visual_brief,
+    format_asset_visual_brief as _format_asset_visual_brief,
     format_clip_inventory,
     format_clip_inventory as _format_clip_inventory,
     format_examples,
@@ -126,6 +128,7 @@ def generate_script_variants(
     profiles: list[PromoFormatProfile] | None = None,
     persona: NarratorPersona | None = None,
     personas: list[NarratorPersona] | None = None,
+    asset_visual_brief: dict | None = None,
 ) -> list[Script]:
     """Generate one or more script variants over a shared analyzed clip pool.
 
@@ -221,6 +224,7 @@ def generate_script_variants(
                 variant_index=variant_index,
                 n_variants=n_variants,
                 variant_plan=plan,
+                asset_visual_brief=asset_visual_brief,
             )
             raw = _generate_one(prompt, model)
             if raw is None:
@@ -323,6 +327,7 @@ def regenerate_single_variant_with_hint(
     target_duration_sec: float | int | None = None,
     profile: PromoFormatProfile | None = None,
     persona: NarratorPersona | None = None,
+    asset_visual_brief: dict | None = None,
 ) -> Script:
     """Regenerate one variant's script with a Sprint 10 F3 "tighten segment X"
     hint injected into the Gemini #1 prompt.
@@ -378,6 +383,7 @@ def regenerate_single_variant_with_hint(
         n_variants=n_variants,
         variant_plan=variant_plan,
         tighten_hint=tighten_hint,
+        asset_visual_brief=asset_visual_brief,
     )
 
     attempts = max(n_candidates, 1) * (1 + max(max_retries, 0))

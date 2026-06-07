@@ -188,6 +188,43 @@ def test_poi_asset_supabase_backend_retries_transient_download_error(
     assert client.storage.bucket.calls == 2
 
 
+def test_poi_asset_supabase_backend_downloads_only_candidate_assets(tmp_path):
+    from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
+
+    first = b"clip-one"
+    second = b"clip-two"
+    third = b"clip-three"
+    rows = [
+        _row(clip_id="0001", asset_id="asset_a1", data=first),
+        _row(clip_id="0002", asset_id="asset_b2", data=second),
+        _row(clip_id="0003", asset_id="asset_c3", data=third),
+    ]
+    blobs = {
+        "poi_123/clips/asset_a1.mp4": first,
+        "poi_123/clips/asset_b2.mp4": second,
+        "poi_123/clips/asset_c3.mp4": third,
+    }
+    client = _FakeSupabase(rows, blobs)
+    backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
+
+    clip_paths = backend.fetch_candidate_clips(
+        "Hotel Maya",
+        str(tmp_path),
+        ["asset_c3", "asset_b2"],
+    )
+
+    assert sorted(clip_paths) == ["0002", "0003"]
+    assert client.storage.downloads == [
+        "poi_123/clips/asset_b2.mp4",
+        "poi_123/clips/asset_c3.mp4",
+    ]
+    assert [row["asset_id"] for row in backend.shared_assets()] == [
+        "asset_b2",
+        "asset_c3",
+    ]
+    assert not (tmp_path / "clip_0001_asset_a1.mp4").exists()
+
+
 def test_poi_asset_supabase_backend_rejects_mixed_canonical_keys(tmp_path):
     from promo.core.poi_asset_backend import PoiAssetBackendError, PoiAssetSupabaseBackend
 
@@ -435,3 +472,313 @@ def test_full_pipeline_passes_backend_shared_assets_to_manifest(tmp_path):
     assert captured["poi_id"] == "poi_123"
     assert captured["canonical_key"] == "hotel maya"
     assert captured["shared_assets"] == shared_assets
+
+
+def test_full_pipeline_records_shared_asset_semantic_retrieval(
+    monkeypatch,
+    tmp_path,
+):
+    from promo.core.assets.retrieval import ReadyAsset
+    from promo.core.pipeline import pipeline
+
+    shared_assets = [
+        _row(
+            clip_id=f"{index:04d}",
+            asset_id=f"asset_{index:04d}",
+            data=b"clip",
+            category="pool" if index % 2 else "exterior",
+            scene_description=f"asset {index} scene",
+            main_subject=f"asset {index}",
+        )
+        for index in range(1, 52)
+    ]
+    ready_assets = [
+        ReadyAsset(
+            poi_id="poi_123",
+            asset_id=row["asset_id"],
+            clip_id=row["clip_id"],
+            category=row.get("category"),
+            scene_description=row.get("scene_description"),
+            shot_size=row.get("shot_size"),
+            main_subject=row.get("main_subject"),
+            camera_motion=row.get("camera_motion"),
+            embedding_text=f"{row['scene_description']} | {row['category']}",
+            duration_sec=float(row["duration_sec"]),
+            usage_count=0,
+            source_storage_bucket=row["source_storage_bucket"],
+            source_storage_path=row["source_storage_path"],
+            source_content_hash=row["source_content_hash"],
+            embedding_vector=(1.0, 0.0, 0.0)
+            if int(row["clip_id"]) % 2
+            else (0.0, 1.0, 0.0),
+        )
+        for row in shared_assets
+    ]
+    captured_sidecar = {}
+
+    class Backend:
+        def fetch_clips(self, poi_name, tmp_dir):
+            return {
+                row["clip_id"]: str(tmp_path / f"clip_{row['clip_id']}.mp4")
+                for row in shared_assets
+            }
+
+        def fetch_bgm(self, poi_name, tmp_dir):
+            return None
+
+        def save_output(self, poi_name, video_path):
+            return video_path
+
+        def clips_dir(self):
+            return None
+
+        def output_dir(self):
+            return str(tmp_path)
+
+        def shared_assets(self):
+            return shared_assets
+
+        def shared_poi_id(self):
+            return "poi_123"
+
+        def shared_canonical_key(self):
+            return "hotel maya"
+
+        def ready_assets_for_retrieval(self):
+            return ready_assets
+
+    def fake_variant_loop(**kwargs):
+        kwargs["clip_assignments_entries"].append({"variant_index": 1})
+        return True, 0, {"retrieval_contract": "soft_hint"}
+
+    def fake_emit_sidecars(**kwargs):
+        captured_sidecar.update(kwargs["run_retrieval_provenance"])
+        return SimpleNamespace(
+            ok=True,
+            paths={"clip_assignments": str(tmp_path / "clip_assignments.json")},
+            sidecar_dir=str(tmp_path),
+        )
+
+    monkeypatch.setattr(
+        pipeline,
+        "_step_prepare_clips",
+        lambda **kwargs: (
+            {
+                row["clip_id"]: str(tmp_path / f"clip_{row['clip_id']}.mp4")
+                for row in shared_assets
+            },
+            [{"id": row["clip_id"]} for row in shared_assets],
+            {row["clip_id"]: float(row["duration_sec"]) for row in shared_assets},
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_resolve_voice_keys", lambda voice_key: ["kore"])
+    monkeypatch.setattr(
+        pipeline,
+        "_build_variant_selections",
+        lambda **kwargs: (["profile"], ["persona"]),
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_step_generate_script",
+        lambda **kwargs: [{
+            "variant_index": 1,
+            "segments": [
+                {"segment": 1, "text": "Oceanfront pool and coastal arrival."},
+                {"segment": 2, "text": "Guest rooms with resort views."},
+            ],
+        }],
+    )
+    monkeypatch.setattr(
+        "promo.core.assign.clip_embedder.embed_texts",
+        lambda queries: [
+            [1.0, 0.0, 0.0] if index == 0 else [0.0, 1.0, 0.0]
+            for index, _query in enumerate(queries)
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_bgm_paths",
+        lambda **kwargs: [str(tmp_path / "bgm.mp3")],
+    )
+    monkeypatch.setattr(pipeline, "_run_variant_loop", fake_variant_loop)
+    monkeypatch.setattr(pipeline, "_emit_run_sidecars_result", fake_emit_sidecars)
+
+    ok = pipeline.full_pipeline(
+        poi_name="Hotel Maya",
+        location="Long Beach",
+        output_path=str(tmp_path / "promo.mp4"),
+        backend=Backend(),
+        skip_analysis=True,
+    )
+
+    assert ok is True
+    shared_retrieval = captured_sidecar["shared_asset_retrieval"]
+    assert shared_retrieval["retrieval_active"] is True
+    assert shared_retrieval["retrieval_contract"] == "shared_asset_semantic_candidates_v1"
+    assert shared_retrieval["eligible_asset_pool_size"] == 51
+    assert shared_retrieval["query_count"] == 2
+    assert shared_retrieval["candidate_count"] > 0
+    assert shared_retrieval["candidate_asset_ids"][0].startswith("asset_")
+    assert shared_retrieval["candidates"][0]["scene_description"]
+
+
+def test_full_pipeline_candidate_only_downloads_retrieved_pool(
+    monkeypatch,
+    tmp_path,
+):
+    from promo.core.assets.retrieval import ReadyAsset
+    from promo.core.pipeline import pipeline
+
+    shared_assets = [
+        _row(
+            clip_id=f"{index:04d}",
+            asset_id=f"asset_{index:04d}",
+            data=b"clip",
+            category="pool" if index % 2 else "exterior",
+            scene_description=f"asset {index} scene",
+            main_subject=f"asset {index}",
+        )
+        for index in range(1, 52)
+    ]
+    ready_assets = [
+        ReadyAsset(
+            poi_id="poi_123",
+            asset_id=row["asset_id"],
+            clip_id=row["clip_id"],
+            category=row.get("category"),
+            scene_description=row.get("scene_description"),
+            shot_size=row.get("shot_size"),
+            main_subject=row.get("main_subject"),
+            camera_motion=row.get("camera_motion"),
+            embedding_text=f"{row['scene_description']} | {row['category']}",
+            duration_sec=float(row["duration_sec"]),
+            usage_count=0,
+            source_storage_bucket=row["source_storage_bucket"],
+            source_storage_path=row["source_storage_path"],
+            source_content_hash=row["source_content_hash"],
+            embedding_vector=(1.0, 0.0, 0.0)
+            if int(row["clip_id"]) % 2
+            else (0.0, 1.0, 0.0),
+        )
+        for row in shared_assets
+    ]
+    captured_sidecar = {}
+    captured_script_kwargs = {}
+    downloaded_asset_ids = []
+
+    class Backend:
+        def fetch_clips(self, poi_name, tmp_dir):
+            raise AssertionError("candidate-only path must not download full pool")
+
+        def fetch_candidate_clips(self, poi_name, tmp_dir, asset_ids):
+            downloaded_asset_ids.extend(asset_ids)
+            selected = {
+                row["asset_id"]: row
+                for row in shared_assets
+            }
+            self._shared_assets = [selected[asset_id] for asset_id in asset_ids]
+            return {
+                row["clip_id"]: str(tmp_path / f"clip_{row['clip_id']}.mp4")
+                for row in self._shared_assets
+            }
+
+        def fetch_bgm(self, poi_name, tmp_dir):
+            return None
+
+        def save_output(self, poi_name, video_path):
+            return video_path
+
+        def clips_dir(self):
+            return None
+
+        def output_dir(self):
+            return str(tmp_path)
+
+        def shared_assets(self):
+            return list(getattr(self, "_shared_assets", []))
+
+        def shared_poi_id(self):
+            return "poi_123"
+
+        def shared_canonical_key(self):
+            return "hotel maya"
+
+        def ready_assets_for_retrieval(self):
+            return ready_assets
+
+    def fake_variant_loop(**kwargs):
+        assert len(kwargs["clip_paths"]) == 30
+        assert len(kwargs["clips_metadata"]) == 30
+        kwargs["clip_assignments_entries"].append({"variant_index": 1})
+        return True, 0, {"retrieval_contract": "soft_hint"}
+
+    def fake_emit_sidecars(**kwargs):
+        captured_sidecar.update(kwargs["run_retrieval_provenance"])
+        return SimpleNamespace(
+            ok=True,
+            paths={"clip_assignments": str(tmp_path / "clip_assignments.json")},
+            sidecar_dir=str(tmp_path),
+        )
+
+    def fake_generate_script(**kwargs):
+        captured_script_kwargs.update(kwargs)
+        return [{
+            "variant_index": 1,
+            "segments": [
+                {"segment": 1, "text": "Oceanfront pool and coastal arrival."},
+                {"segment": 2, "text": "Guest rooms with resort views."},
+            ],
+        }]
+
+    monkeypatch.setattr(
+        pipeline,
+        "_step_prepare_clips",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("candidate-only path must not prepare full pool")
+        ),
+    )
+    monkeypatch.setattr(pipeline, "_resolve_voice_keys", lambda voice_key: ["kore"])
+    monkeypatch.setattr(
+        pipeline,
+        "_build_variant_selections",
+        lambda **kwargs: (["profile"], ["persona"]),
+    )
+    monkeypatch.setattr(pipeline, "_step_generate_script", fake_generate_script)
+    monkeypatch.setattr(
+        "promo.core.assign.clip_embedder.embed_texts",
+        lambda queries: [
+            [1.0, 0.0, 0.0] if index == 0 else [0.0, 1.0, 0.0]
+            for index, _query in enumerate(queries)
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_resolve_bgm_paths",
+        lambda **kwargs: [str(tmp_path / "bgm.mp3")],
+    )
+    monkeypatch.setattr(pipeline, "_run_variant_loop", fake_variant_loop)
+    monkeypatch.setattr(pipeline, "_emit_run_sidecars_result", fake_emit_sidecars)
+
+    ok = pipeline.full_pipeline(
+        poi_name="Hotel Maya",
+        location="Long Beach",
+        output_path=str(tmp_path / "promo.mp4"),
+        backend=Backend(),
+        skip_analysis=True,
+    )
+
+    assert ok is True
+    assert captured_script_kwargs["asset_visual_brief"]["eligible_asset_count"] == 51
+    assert len(downloaded_asset_ids) == 30
+    assert len(set(downloaded_asset_ids)) == 30
+    assert captured_sidecar["retrieval_active"] is True
+    assert captured_sidecar["retrieval_contract"] == (
+        "shared_asset_semantic_candidates_v1"
+    )
+    assert captured_sidecar["embedded_pool_size"] == 51
+    assert captured_sidecar["reduced_pool_size"] == 30
+    shared_retrieval = captured_sidecar["shared_asset_retrieval"]
+    assert shared_retrieval["retrieval_active"] is True
+    assert shared_retrieval["candidate_count"] < shared_retrieval["download_pool_count"]
+    assert shared_retrieval["download_pool_count"] == 30
+    assert shared_retrieval["download_asset_ids"] == downloaded_asset_ids

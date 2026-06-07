@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 def test_build_run_manifest_local_mode_keeps_shared_ids_null():
     from promo.core.pipeline.run_manifest import build_run_manifest
@@ -33,6 +35,13 @@ def test_build_run_manifest_local_mode_keeps_shared_ids_null():
             "format_mode": "long",
             "voice_key": "kore",
             "bgm_path": "/tmp/bgm.mp3",
+            "music": {
+                "music_id": "music_123",
+                "music_label": "Run Away with Me",
+                "music_name": "Run Away with Me",
+                "music_duration_sec": 70.0,
+                "music_drive_file_id": "drive_file_123",
+            },
             "file_size_bytes": 123,
             "timeline_entries": [{
                 "clip_id": "0001",
@@ -74,6 +83,9 @@ def test_build_run_manifest_local_mode_keeps_shared_ids_null():
     assert manifest["asset_snapshot"][0]["source_content_hash"] is None
     assert manifest["asset_snapshot"][0]["scene_description"] == "pool at sunset"
     assert manifest["outputs"][0]["output_path"] == "/tmp/final.mp4"
+    assert manifest["outputs"][0]["music_label"] == "Run Away with Me"
+    assert manifest["outputs"][0]["music_id"] == "music_123"
+    assert manifest["outputs"][0]["music"]["music_drive_file_id"] == "drive_file_123"
     assert manifest["sidecars"]["clip_assignments"].endswith(
         "clip_assignments_test_hotel_65s.json"
     )
@@ -188,6 +200,118 @@ def test_build_run_manifest_snapshots_poi_asset_valid_clips_and_bridge_asset_ids
     assert manifest["timeline_entries"][1]["occurrence_id"] == "occ_0001_000001"
 
 
+def test_build_run_manifest_shared_mode_requires_asset_snapshot_coverage():
+    from promo.core.pipeline.run_manifest import build_run_manifest
+
+    with pytest.raises(ValueError, match="requires asset_id for clip_id=0002"):
+        build_run_manifest(
+            poi_name="Shared Hotel",
+            location="Somewhere",
+            target_duration_sec=60.0,
+            n_variants=1,
+            script_candidates=1,
+            format_selector="single",
+            embedding_cache_active=False,
+            poi_id="poi_123",
+            clip_paths={
+                "0001": "/tmp/clip_0001.mp4",
+                "0002": "/tmp/clip_0002.mp4",
+            },
+            clips_metadata=[],
+            clip_durations={},
+            shared_assets=[{
+                "asset_id": "asset_abc",
+                "clip_id": "0001",
+                "source_storage_bucket": "poi-assets",
+                "source_storage_path": "poi_123/clips/asset_abc.mp4",
+                "source_content_hash": "sha256:" + "a" * 64,
+                "duration_sec": 5.0,
+            }],
+            rendered_outputs=[],
+            sidecar_paths={},
+        )
+
+
+def test_build_run_manifest_shared_mode_requires_timeline_asset_ids():
+    from promo.core.pipeline.run_manifest import build_run_manifest
+
+    with pytest.raises(ValueError, match="timeline entries require asset_id"):
+        build_run_manifest(
+            poi_name="Shared Hotel",
+            location="Somewhere",
+            target_duration_sec=60.0,
+            n_variants=1,
+            script_candidates=1,
+            format_selector="single",
+            embedding_cache_active=False,
+            poi_id="poi_123",
+            clip_paths={"0001": "/tmp/clip_0001.mp4"},
+            clips_metadata=[],
+            clip_durations={},
+            shared_assets=[{
+                "asset_id": "asset_abc",
+                "clip_id": "0001",
+                "source_storage_bucket": "poi-assets",
+                "source_storage_path": "poi_123/clips/asset_abc.mp4",
+                "source_content_hash": "sha256:" + "a" * 64,
+                "duration_sec": 5.0,
+            }],
+            rendered_outputs=[{
+                "variant_index": 1,
+                "render_output_path": "/tmp/render.mp4",
+                "final_output_path": "/tmp/final.mp4",
+                "target_duration_sec": 60.0,
+                "timeline_entries": [{
+                    "clip_id": "0002",
+                    "usage_role": "bridge_tail",
+                    "trim_start_sec": 0.0,
+                    "trim_end_sec": 1.0,
+                    "display_start_sec": 0.0,
+                    "display_end_sec": 1.0,
+                    "source_duration_sec": 5.0,
+                }],
+            }],
+            sidecar_paths={},
+        )
+
+
+def test_build_run_manifest_empty_shared_assets_keeps_local_compatibility():
+    from promo.core.pipeline.run_manifest import build_run_manifest
+
+    manifest = build_run_manifest(
+        poi_name="Local Compatibility Hotel",
+        location="Somewhere",
+        target_duration_sec=60.0,
+        n_variants=1,
+        script_candidates=1,
+        format_selector="single",
+        embedding_cache_active=False,
+        clip_paths={"0001": "/tmp/clip_0001.mp4"},
+        clips_metadata=[],
+        clip_durations={"0001": 5.0},
+        shared_assets=[],
+        rendered_outputs=[{
+            "variant_index": 1,
+            "render_output_path": "/tmp/render.mp4",
+            "final_output_path": "/tmp/final.mp4",
+            "target_duration_sec": 60.0,
+            "timeline_entries": [{
+                "clip_id": "0001",
+                "usage_role": "assigned_phrase",
+                "trim_start_sec": 0.0,
+                "trim_end_sec": 1.0,
+                "display_start_sec": 0.0,
+                "display_end_sec": 1.0,
+                "source_duration_sec": 5.0,
+            }],
+        }],
+        sidecar_paths={},
+    )
+
+    assert manifest["asset_snapshot"][0]["asset_id"] is None
+    assert manifest["timeline_entries"][0]["asset_id"] is None
+
+
 def test_usage_event_ids_use_occurrence_id_not_float_seconds():
     from promo.core.pipeline.run_manifest import (
         build_run_manifest,
@@ -242,7 +366,11 @@ def test_usage_event_ids_use_occurrence_id_not_float_seconds():
         created_at="2026-05-26T00:00:00Z",
     )
 
-    events = build_usage_events_from_manifest(manifest)
+    events = build_usage_events_from_manifest(
+        manifest,
+        retrieval_contract="shared_asset_semantic_candidates_v1",
+        retrieval_fallback_reason=None,
+    )
     changed_seconds = deepcopy(manifest)
     changed_seconds["timeline_entries"][0]["trim_start_sec"] = 0.123456
     changed_seconds["timeline_entries"][0]["display_start_sec"] = 0.234567
@@ -255,6 +383,8 @@ def test_usage_event_ids_use_occurrence_id_not_float_seconds():
     assert events[0]["trim_start_sec"] == 0.1
     assert events[0]["display_start_sec"] == 0.2
     assert events[0]["asset_id"] == "asset_abc"
+    assert events[0]["retrieval_contract"] == "shared_asset_semantic_candidates_v1"
+    assert events[0]["retrieval_fallback_reason"] is None
     assert events[0]["clip_assignments_sidecar_path"] == "/tmp/clip_assignments.json"
 
 
@@ -407,3 +537,39 @@ def test_full_pipeline_emits_local_run_manifest(tmp_path):
         path.name.startswith("batch_manifest_")
         for path in tmp_path.iterdir()
     )
+
+
+def test_full_pipeline_shared_asset_preflight_fails_before_variant_loop(tmp_path):
+    from promo.core.pipeline.pipeline import full_pipeline
+
+    backend = MagicMock()
+    backend.shared_assets.return_value = [{
+        "clip_id": "0001",
+        "asset_id": "asset_abc",
+    }]
+
+    with patch(
+        "promo.core.pipeline.pipeline._step_prepare_clips",
+        return_value=(
+            {
+                "0001": str(tmp_path / "clip_0001.mp4"),
+                "0002": str(tmp_path / "clip_0002.mp4"),
+            },
+            [],
+            {},
+        ),
+    ), patch(
+        "promo.core.pipeline.pipeline._run_variant_loop",
+    ) as run_variant_loop:
+        ok = full_pipeline(
+            poi_name="Shared Hotel",
+            location="Somewhere",
+            output_path=str(tmp_path / "promo_shared.mp4"),
+            backend=backend,
+            target_duration_sec=65,
+            n_variants=1,
+            script_candidates=1,
+        )
+
+    assert ok is False
+    run_variant_loop.assert_not_called()

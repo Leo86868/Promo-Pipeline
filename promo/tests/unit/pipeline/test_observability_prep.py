@@ -62,6 +62,13 @@ def test_run_variant_loop_accumulates_rendered_output_facts(tmp_path):
     final_path = str(tmp_path / "final" / "promo_test.mp4")
     backend = MagicMock()
     backend.save_output.return_value = final_path
+    backend.music_metadata_for_path.return_value = {
+        "music_id": "music_123",
+        "music_label": "Davis Brothers Band",
+        "music_name": "Davis Brothers Band",
+        "music_duration_sec": 79.647,
+        "music_drive_file_id": "drive_file_123",
+    }
     rendered_outputs: list[dict] = []
     props = {
         "meta": {"poiName": "Test Hotel", "location": "Nowhere", "fps": 30},
@@ -178,6 +185,14 @@ def test_run_variant_loop_accumulates_rendered_output_facts(tmp_path):
         "format_mode": "long",
         "voice_key": "kore",
         "bgm_path": str(tmp_path / "bgm.mp3"),
+        "music": {
+            "music_id": "music_123",
+            "music_label": "Davis Brothers Band",
+            "music_name": "Davis Brothers Band",
+            "music_duration_sec": 79.647,
+            "music_drive_file_id": "drive_file_123",
+        },
+        "music_label": "Davis Brothers Band",
         "file_size_bytes": 5,
         "timeline_entries": [{
             "clip_id": "0001",

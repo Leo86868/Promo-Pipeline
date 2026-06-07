@@ -119,6 +119,7 @@ def _resolve_bgm_paths(
     backend: PromoBackend,
     tmp_dir: str,
     target_duration_sec: float,
+    count: int = 1,
 ) -> list[str]:
     """Resolve the final BGM path list for a promo run.
 
@@ -126,8 +127,9 @@ def _resolve_bgm_paths(
     order (unchanged):
     1. Explicit ``bgm_paths`` (from CLI --bgm-dir rotation) — use verbatim.
     2. Explicit ``bgm_path`` (from CLI --bgm) — single-track list.
-    3. Backend-supplied BGM (``backend.fetch_bgm``).
-    4. Fallback to default ``promo/remotion/public/*.mp3`` filtered by
+    3. Backend-supplied BGM list (``backend.fetch_bgms``) when available.
+    4. Backend-supplied BGM (``backend.fetch_bgm``).
+    5. Fallback to default ``promo/remotion/public/*.mp3`` filtered by
        ``target_duration_sec`` (Sprint 08.5 filter).
 
     Raises NoSuitableBGMError if the fallback discovery step runs and
@@ -138,6 +140,15 @@ def _resolve_bgm_paths(
         return list(bgm_paths)
     if bgm_path is not None:
         return [bgm_path]
+    fetch_bgms = (
+        getattr(backend, "fetch_bgms", None)
+        if "fetch_bgms" in type(backend).__dict__
+        else None
+    )
+    if callable(fetch_bgms):
+        fetched_many = fetch_bgms(poi_name, tmp_dir, count=count)
+        if fetched_many:
+            return list(fetched_many)
     fetched = backend.fetch_bgm(poi_name, tmp_dir)
     if fetched:
         return [fetched]

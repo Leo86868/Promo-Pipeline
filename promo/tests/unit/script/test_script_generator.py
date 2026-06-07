@@ -782,6 +782,46 @@ class TestSprint10C1PromptSchema:
         assert "VIDEO CLIP INVENTORY" in prompt
         assert "do NOT reference clip IDs in your output" in prompt
 
+    def test_asset_visual_brief_replaces_full_inventory_when_supplied(self):
+        from promo.core.script.script_generator import _build_prompt, load_persona, _DEFAULT_PERSONA_PATH
+        from promo.core.format_profiles import get_promo_format_profile
+
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        profile = get_promo_format_profile(65)
+        prompt = _build_prompt(
+            poi_name="Test Hotel",
+            location="Nowhere",
+            clips_metadata=self._clips_metadata(),
+            persona=persona,
+            profile=profile,
+            asset_visual_brief={
+                "eligible_asset_count": 78,
+                "eligible_total_seconds": 555.2,
+                "categories": [
+                    {
+                        "category": "pool",
+                        "asset_count": 12,
+                        "total_seconds": 87.5,
+                        "coverage_motifs": [{"phrase": "ocean-view pool"}],
+                    }
+                ],
+                "core_visuals": [{"phrase": "cliffside resort exterior"}],
+                "grounding_set": [
+                    {
+                        "coverage_role": "secondary",
+                        "category": "beach",
+                        "visual_detail": "paddleboarders near a rocky coastline",
+                    }
+                ],
+                "summary_note": "No item is a specific clip assignment.",
+            },
+        )
+
+        assert "ASSET VISUAL BRIEF" in prompt
+        assert "pool: 12 clips, 87.5s" in prompt
+        assert "[secondary] beach: paddleboarders near a rocky coastline" in prompt
+        assert "Clip 0001:" not in prompt
+
     def test_output_template_has_no_clips_array(self):
         """The JSON output block shown to Gemini #1 must NOT contain
         literal 'clips' / 'clip_id' / 'cut_after' fields. VIDEO CLIP
