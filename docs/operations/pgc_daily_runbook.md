@@ -110,6 +110,15 @@ Manifest audit checks things like:
 - whether music label is present;
 - whether usage events can be created safely.
 
+Current repo support:
+
+```bash
+python3 -m promo.cli.audit_run_manifest run_manifest_*.json
+```
+
+`promo.cli.usage_events_writeback --execute` runs this audit before it calls
+Supabase. If the audit fails, usage is not written.
+
 ## POI Selection
 
 Default selection is random among eligible POIs. Random means equal chance, not
@@ -263,8 +272,12 @@ selection, 3-day cooldown, and dynamic active asset thresholds.
 Current `promo.cli.prepare_drive_staging` already builds manifest-backed Drive
 staging inventory and handoff items from raw Drive file IDs.
 
+Current `promo.cli.audit_run_manifest` already checks production manifest
+requirements before usage writeback or handoff.
+
 Current `promo.cli.usage_events_writeback --execute` writes manifest-derived
-usage events and verifies the rows by `event_id` after the RPC.
+usage events after manifest audit and verifies the rows by `event_id` after the
+RPC.
 
 Current `promo.cli.register_release_candidates --execute` inserts approved
 handoff rows into `release_candidates` and verifies the rows by

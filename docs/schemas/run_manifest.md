@@ -322,6 +322,14 @@ python3 -m promo.cli.usage_events_preview \
   --output path/to/usage_events_preview.json
 ```
 
+Current production audit CLI:
+
+```bash
+python3 -m promo.cli.audit_run_manifest \
+  path/to/run_manifest_*.json \
+  --output path/to/manifest_audit.json
+```
+
 The preview CLI reads local manifests and, when available, the referenced
 `clip_assignments` sidecar to attach retrieval provenance such as
 `retrieval_contract` and `retrieval_fallback_reason`.
@@ -336,10 +344,11 @@ python3 -m promo.cli.usage_events_writeback \
 
 Without `--execute`, the writeback CLI prints the same manifest-derived
 summary without calling Supabase. With `--execute`, it sends one JSON
-array per manifest to `rpc_record_poi_asset_usage_events(p_payload jsonb)`,
-then queries `poi_asset_usage_events` by `event_id` to verify that the expected
-rows exist with matching identity fields. Use `--no-verify` only for manual
-debugging.
+array per manifest to `rpc_record_poi_asset_usage_events(p_payload jsonb)`
+only after production manifest audit passes, then queries
+`poi_asset_usage_events` by `event_id` to verify that the expected rows exist
+with matching identity fields. Use `--no-verify` only for manual debugging
+after the audit has passed.
 
 Freshness is not a manifest responsibility. The manifest records actual
 asset usage; the shared asset library should use usage events to update

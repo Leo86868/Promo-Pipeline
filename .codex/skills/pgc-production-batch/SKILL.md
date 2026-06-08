@@ -32,10 +32,10 @@ to Leo in non-code terms.
 ## Current Implementation Boundary
 
 This repo currently has local manifests, usage preview/writeback helpers with
-post-write verification, a local release handoff exporter,
-`release_candidates` registration with post-insert verification, read-only
-random POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive
-staging inventory via `promo.cli.prepare_drive_staging`, and render-only
+manifest audit and post-write verification, a local release handoff exporter,
+`release_candidates` registration with post-insert verification, read-only random
+POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
+inventory via `promo.cli.prepare_drive_staging`, and render-only
 `RUN_RECEIPT.json` emission from `promo.cli.run_batch`. The future autopilot path
 still needs repo/runtime support for real Drive API upload, per-video writeback
 orchestration, POI quarantine, and receipt-based resume/top-up.
@@ -161,6 +161,16 @@ Before trusting a rendered video, verify:
 - every used `asset_id` exists in `asset_snapshot`;
 - `bridge_tail` entries also carry `asset_id`;
 - usage events can be derived and event IDs are unique.
+
+Current repo support:
+
+```bash
+python3 -m promo.cli.audit_run_manifest "$manifest_path"
+```
+
+`promo.cli.usage_events_writeback --execute` runs this production audit before
+calling Supabase. If audit fails, it prints the audit JSON and does not write
+usage.
 
 ## Failure Policy
 

@@ -1,4 +1,7 @@
+import json
 from types import SimpleNamespace
+
+import pytest
 
 
 class _RpcCall:
@@ -145,4 +148,70 @@ def test_verify_usage_events_reports_field_mismatches():
             "expected": "asset-1",
             "observed": "asset-2",
         }],
+    }]
+
+
+def test_main_execute_stops_before_supabase_when_manifest_audit_fails(
+    tmp_path,
+    capsys,
+):
+    from promo.cli import usage_events_writeback
+
+    manifest = {
+        "schema_version": 1,
+        "manifest_id": "manifest-1",
+        "run_id": "run-1",
+        "poi": {
+            "poi_id": "poi-1",
+            "display_name": "Test Resort",
+        },
+        "asset_snapshot": [{
+            "clip_id": "clip-1",
+            "asset_id": "asset-1",
+        }],
+        "outputs": [{
+            "variant_index": 1,
+            "output_path": "/tmp/final.mp4",
+        }],
+        "timeline_entries": [{
+            "variant_index": 1,
+            "occurrence_index": 0,
+            "occurrence_id": "occ_0001_000000",
+            "usage_role": "assigned_phrase",
+            "clip_id": "clip-1",
+            "asset_id": "asset-1",
+            "segment": 1,
+            "trim_start_sec": 0.0,
+            "display_start_sec": 0.0,
+            "display_end_sec": 2.0,
+            "source_duration_sec": 5.0,
+        }],
+    }
+    manifest_path = tmp_path / "run_manifest_test.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    def fail_client():
+        raise AssertionError("Supabase client should not be created")
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            usage_events_writeback,
+            "_create_supabase_client_from_env",
+            fail_client,
+        )
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "usage_events_writeback",
+                str(manifest_path),
+                "--execute",
+            ],
+        )
+        assert usage_events_writeback.main() == 1
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["manifest_audit"]["summary"]["failed_count"] == 1
+    assert payload["manifest_audit"]["manifests"][0]["errors"] == [{
+        "field": "outputs[0].music_label",
+        "message": "music_label is required",
     }]

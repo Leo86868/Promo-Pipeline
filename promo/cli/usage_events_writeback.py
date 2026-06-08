@@ -13,6 +13,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from promo.cli.usage_events_preview import build_preview
+from promo.core.manifest_audit import audit_manifest_paths
 
 
 RPC_NAME = "rpc_record_poi_asset_usage_events"
@@ -224,6 +225,18 @@ def main() -> int:
     if missing:
         parser.error("manifest path does not exist: " + ", ".join(missing))
 
+    manifest_audit: dict[str, Any] | None = None
+    if args.execute:
+        manifest_audit = audit_manifest_paths(manifest_paths)
+        if manifest_audit["summary"]["failed_count"]:
+            result = {
+                "execute": True,
+                "rpc_name": RPC_NAME,
+                "manifest_audit": manifest_audit,
+            }
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return 1
+
     try:
         preview = build_preview(manifest_paths)
     except ValueError as exc:
@@ -235,6 +248,8 @@ def main() -> int:
         "summary": preview["summary"],
         "manifests": preview["manifests"],
     }
+    if manifest_audit is not None:
+        result["manifest_audit"] = manifest_audit
     exit_code = 0
     if args.execute:
         try:
