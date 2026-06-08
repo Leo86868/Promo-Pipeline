@@ -73,6 +73,7 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 | `python3 -m promo.cli.compile_promo` | End-to-end: clips → narration → assignment → MP4. Primary entry point. |
 | `python3 -m promo.cli.select_batch_pois` | Read-only Supabase POI selector: random eligible POIs, cooldown, active-asset threshold, batch JSON output. |
 | `python3 -m promo.cli.prepare_drive_staging` | Builds manifest-backed Drive staging inventory and handoff items from raw Drive file IDs. Does not upload. |
+| `python3 -m promo.cli.usage_events_writeback` | Explicit usage-event dry run/writeback. With `--execute`, verifies rows in `poi_asset_usage_events` after the RPC. |
 | `python3 -m promo.cli.smoke_local_render` | Minimal local-render smoke (no vendor calls). `--dry-run` skips `ffmpeg`. |
 | `python3 -m promo.cli.build_embedding_index` | Optional warm-up: pre-compute per-POI embedding sidecar so retrieval narrows Gemini #2's clip pool. Skip on first run — the pipeline degrades gracefully to full-pool. |
 | `python3 -m promo.cli.render_architecture` | Re-renders `architecture.md` to a local `architecture.html` with Mermaid diagrams (gitignored). |

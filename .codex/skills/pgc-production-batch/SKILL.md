@@ -31,14 +31,14 @@ to Leo in non-code terms.
 
 ## Current Implementation Boundary
 
-This repo currently has local manifests, usage preview/writeback helpers, a
-local release handoff exporter, read-only random POI selection via
-`promo.cli.select_batch_pois`, manifest-backed Drive staging inventory via
-`promo.cli.prepare_drive_staging`, and render-only `RUN_RECEIPT.json` emission
-from `promo.cli.run_batch`. The future autopilot path still needs repo/runtime
-support for real Drive API upload, per-video writeback orchestration,
-`release_candidates` insertion, verification, POI quarantine, and receipt-based
-resume/top-up.
+This repo currently has local manifests, usage preview/writeback helpers with
+post-write verification, a local release handoff exporter, read-only random POI
+selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
+inventory via `promo.cli.prepare_drive_staging`, and render-only
+`RUN_RECEIPT.json` emission from `promo.cli.run_batch`. The future autopilot path
+still needs repo/runtime support for real Drive API upload, per-video writeback
+orchestration, `release_candidates` insertion, POI quarantine, and
+receipt-based resume/top-up.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.

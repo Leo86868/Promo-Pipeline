@@ -336,7 +336,10 @@ python3 -m promo.cli.usage_events_writeback \
 
 Without `--execute`, the writeback CLI prints the same manifest-derived
 summary without calling Supabase. With `--execute`, it sends one JSON
-array per manifest to `rpc_record_poi_asset_usage_events(p_payload jsonb)`.
+array per manifest to `rpc_record_poi_asset_usage_events(p_payload jsonb)`,
+then queries `poi_asset_usage_events` by `event_id` to verify that the expected
+rows exist with matching identity fields. Use `--no-verify` only for manual
+debugging.
 
 Freshness is not a manifest responsibility. The manifest records actual
 asset usage; the shared asset library should use usage events to update

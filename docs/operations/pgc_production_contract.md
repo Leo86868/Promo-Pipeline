@@ -128,6 +128,10 @@ drive:<file_id>
 
 Reject local and temporary paths as candidate output URIs.
 
+Current repo support: `promo.cli.usage_events_writeback --execute` calls the
+usage RPC and verifies the resulting rows by `event_id`. It is still an explicit
+CLI, not yet wired into the full per-video autopilot sequence.
+
 ## Manifest Audit Gate
 
 Usage writeback is derived from the manifest. The manifest must pass audit

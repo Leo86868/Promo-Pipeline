@@ -249,6 +249,9 @@ selection, 3-day cooldown, and dynamic active asset thresholds.
 Current `promo.cli.prepare_drive_staging` already builds manifest-backed Drive
 staging inventory and handoff items from raw Drive file IDs.
 
+Current `promo.cli.usage_events_writeback --execute` writes manifest-derived
+usage events and verifies the rows by `event_id` after the RPC.
+
 Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
 work needs to extend that receipt through Drive, usage, release-candidate, and
 resume/top-up states.
