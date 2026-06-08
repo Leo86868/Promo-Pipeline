@@ -127,13 +127,14 @@ Drive file IDs are known:
 
 ```bash
 python3 -m promo.cli.prepare_drive_staging \
-  "$manifest_path" \
+  --receipt "$run_receipt_json" \
   --drive-file-map "$drive_file_map_json" \
   --output "$inventory_json" \
   --handoff-items-output "$handoff_items_json"
 ```
 
-This does not upload to Drive.
+This uses only manifest-audit-passed videos from the receipt. It does not upload
+to Drive.
 
 Once usage has been written and verified, current repo support can explicitly
 register approved handoff rows:

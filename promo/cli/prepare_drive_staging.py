@@ -13,6 +13,7 @@ from promo.core.drive_staging import (
     build_staging_inventory,
     handoff_items_from_inventory,
     load_drive_file_map,
+    manifest_paths_from_receipt,
     write_json,
 )
 
@@ -23,8 +24,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "manifest",
-        nargs="+",
+        nargs="*",
         help="Path to one or more run_manifest_*.json files",
+    )
+    parser.add_argument(
+        "--receipt",
+        help=(
+            "Optional RUN_RECEIPT.json. Uses only manifest-audit-passed videos. "
+            "Do not combine with positional manifest paths."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -53,12 +61,18 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _parser()
     args = parser.parse_args()
-    manifest_paths = [Path(path) for path in args.manifest]
-    missing = [str(path) for path in manifest_paths if not path.exists()]
-    if missing:
-        parser.error("manifest path does not exist: " + ", ".join(missing))
+    if bool(args.manifest) == bool(args.receipt):
+        parser.error("provide either manifest paths or --receipt, but not both")
 
     try:
+        manifest_paths = (
+            manifest_paths_from_receipt(Path(args.receipt))
+            if args.receipt
+            else [Path(path) for path in args.manifest]
+        )
+        missing = [str(path) for path in manifest_paths if not path.exists()]
+        if missing:
+            parser.error("manifest path does not exist: " + ", ".join(missing))
         inventory = build_staging_inventory(
             manifest_paths,
             require_source_exists=not args.allow_missing_source,

@@ -137,6 +137,37 @@ def build_staging_inventory(
     }
 
 
+def manifest_paths_from_receipt(receipt_path: Path) -> list[Path]:
+    payload = _load_json(receipt_path)
+    if not isinstance(payload, dict):
+        raise DriveStagingError("receipt JSON must be an object")
+    videos = payload.get("videos")
+    if not isinstance(videos, list):
+        raise DriveStagingError("receipt videos must be a list")
+
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for index, video in enumerate(videos, start=1):
+        if not isinstance(video, dict):
+            raise DriveStagingError(f"receipt videos[{index}] must be an object")
+        manifest = video.get("manifest") or {}
+        manifest_audit = video.get("manifest_audit") or {}
+        if manifest.get("status") != "found":
+            continue
+        if manifest_audit.get("status") != "passed":
+            continue
+        manifest_path = Path(_required_text(manifest.get("path"), "manifest.path"))
+        key = str(manifest_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(manifest_path)
+
+    if not paths:
+        raise DriveStagingError("receipt contains no audit-passed manifest paths")
+    return paths
+
+
 def load_drive_file_map(path: Path) -> dict[str, str]:
     payload = _load_json(path)
     if isinstance(payload, dict) and "items" in payload:

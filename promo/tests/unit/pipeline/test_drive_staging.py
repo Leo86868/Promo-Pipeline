@@ -141,3 +141,93 @@ def test_prepare_drive_staging_cli_writes_inventory_and_handoff_items(tmp_path):
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     assert inventory["summary"]["drive_uri_ready"] == 1
     assert handoff["items"][0]["source_output_uri"].startswith("drive:")
+
+
+def test_manifest_paths_from_receipt_uses_only_audit_passed_manifests(tmp_path):
+    from promo.core.drive_staging import manifest_paths_from_receipt
+
+    passed_manifest = _write_manifest(tmp_path)
+    failed_manifest = tmp_path / "run_manifest_failed.json"
+    failed_manifest.write_text("{}", encoding="utf-8")
+    receipt_path = tmp_path / "RUN_RECEIPT.json"
+    receipt_path.write_text(
+        json.dumps({
+            "videos": [
+                {
+                    "manifest": {
+                        "status": "found",
+                        "path": str(passed_manifest),
+                    },
+                    "manifest_audit": {"status": "passed"},
+                },
+                {
+                    "manifest": {
+                        "status": "found",
+                        "path": str(failed_manifest),
+                    },
+                    "manifest_audit": {"status": "failed"},
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    assert manifest_paths_from_receipt(receipt_path) == [passed_manifest]
+
+
+def test_prepare_drive_staging_cli_accepts_receipt(tmp_path):
+    from promo.cli.prepare_drive_staging import main
+
+    manifest_path = _write_manifest(tmp_path)
+    receipt_path = tmp_path / "RUN_RECEIPT.json"
+    inventory_path = tmp_path / "inventory.json"
+    receipt_path.write_text(
+        json.dumps({
+            "videos": [{
+                "manifest": {
+                    "status": "found",
+                    "path": str(manifest_path),
+                },
+                "manifest_audit": {"status": "passed"},
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "prepare_drive_staging",
+                "--receipt",
+                str(receipt_path),
+                "--output",
+                str(inventory_path),
+            ],
+        )
+        assert main() == 0
+
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    assert inventory["summary"]["item_count"] == 1
+    assert inventory["items"][0]["run_manifest_path"] == str(manifest_path)
+
+
+def test_manifest_paths_from_receipt_rejects_without_audit_passed_manifest(tmp_path):
+    from promo.core.drive_staging import DriveStagingError, manifest_paths_from_receipt
+
+    receipt_path = tmp_path / "RUN_RECEIPT.json"
+    receipt_path.write_text(
+        json.dumps({
+            "videos": [{
+                "manifest": {
+                    "status": "found",
+                    "path": str(tmp_path / "run_manifest_failed.json"),
+                },
+                "manifest_audit": {"status": "failed"},
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DriveStagingError, match="no audit-passed"):
+        manifest_paths_from_receipt(receipt_path)

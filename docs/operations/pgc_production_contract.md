@@ -258,7 +258,8 @@ As of this contract, the repo still needs implementation for:
 cooldown enforcement, dynamic active asset thresholds, and batch JSON emission.
 
 `promo.cli.prepare_drive_staging` already builds manifest-backed Drive staging
-inventory and handoff items from raw Drive file IDs. It does not upload files.
+inventory and handoff items from raw Drive file IDs. It can read audit-passed
+manifest paths from `RUN_RECEIPT.json`. It does not upload files.
 
 `promo.cli.audit_run_manifest` already checks production manifest requirements.
 

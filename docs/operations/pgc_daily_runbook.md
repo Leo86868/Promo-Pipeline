@@ -218,14 +218,15 @@ IDs are known:
 
 ```bash
 python3 -m promo.cli.prepare_drive_staging \
-  run_manifest_*.json \
+  --receipt RUN_RECEIPT.json \
   --drive-file-map drive_file_map.json \
   --output drive_staging_inventory.json \
   --handoff-items-output handoff_items.json
 ```
 
-This command does not upload files to Drive. It checks manifests, local MP4
-paths, raw Drive IDs, and writes the handoff items needed by the next step.
+This command does not upload files to Drive. From a receipt, it uses only videos
+whose manifest audit passed. It checks manifests, local MP4 paths, raw Drive IDs,
+and writes the handoff items needed by the next step.
 
 After that, build and optionally register the release handoff:
 
