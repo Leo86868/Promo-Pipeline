@@ -204,6 +204,20 @@ Downloads
 temporary local paths
 ```
 
+Current repo support can prepare the Drive staging paperwork once raw Drive file
+IDs are known:
+
+```bash
+python3 -m promo.cli.prepare_drive_staging \
+  run_manifest_*.json \
+  --drive-file-map drive_file_map.json \
+  --output drive_staging_inventory.json \
+  --handoff-items-output handoff_items.json
+```
+
+This command does not upload files to Drive. It checks manifests, local MP4
+paths, raw Drive IDs, and writes the handoff items needed by the next step.
+
 ## What To Expect In The Final Report
 
 The final report should say:
@@ -223,7 +237,7 @@ The final report should say:
 The target contract is ahead of the current repo implementation. The repo still
 needs dedicated support for:
 
-- Drive upload;
+- real Drive API upload;
 - per-video usage writeback orchestration;
 - release candidate insertion and verification;
 - POI quarantine;
@@ -231,6 +245,9 @@ needs dedicated support for:
 
 Current `promo.cli.select_batch_pois` already does read-only random POI
 selection, 3-day cooldown, and dynamic active asset thresholds.
+
+Current `promo.cli.prepare_drive_staging` already builds manifest-backed Drive
+staging inventory and handoff items from raw Drive file IDs.
 
 Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
 work needs to extend that receipt through Drive, usage, release-candidate, and

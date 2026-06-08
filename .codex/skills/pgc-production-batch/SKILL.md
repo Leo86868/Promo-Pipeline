@@ -33,9 +33,10 @@ to Leo in non-code terms.
 
 This repo currently has local manifests, usage preview/writeback helpers, a
 local release handoff exporter, read-only random POI selection via
-`promo.cli.select_batch_pois`, and render-only `RUN_RECEIPT.json` emission from
-`promo.cli.run_batch`. The future autopilot path still needs repo/runtime
-support for Drive upload, per-video writeback orchestration,
+`promo.cli.select_batch_pois`, manifest-backed Drive staging inventory via
+`promo.cli.prepare_drive_staging`, and render-only `RUN_RECEIPT.json` emission
+from `promo.cli.run_batch`. The future autopilot path still needs repo/runtime
+support for real Drive API upload, per-video writeback orchestration,
 `release_candidates` insertion, verification, POI quarantine, and receipt-based
 resume/top-up.
 
@@ -120,6 +121,19 @@ paths. `source_output_uri` must be durable, currently `drive:<file_id>`.
 
 Do not write usage before durable upload succeeds. If upload fails, no usage was
 spent and no release candidate exists.
+
+Current repo support can prepare/audit the Drive staging inventory after raw
+Drive file IDs are known:
+
+```bash
+python3 -m promo.cli.prepare_drive_staging \
+  "$manifest_path" \
+  --drive-file-map "$drive_file_map_json" \
+  --output "$inventory_json" \
+  --handoff-items-output "$handoff_items_json"
+```
+
+This does not upload to Drive.
 
 ## Manifest Audit
 
