@@ -75,6 +75,18 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 | `python3 -m promo.cli.build_embedding_index` | Optional warm-up: pre-compute per-POI embedding sidecar so retrieval narrows Gemini #2's clip pool. Skip on first run — the pipeline degrades gracefully to full-pool. |
 | `python3 -m promo.cli.render_architecture` | Re-renders `architecture.md` to a local `architecture.html` with Mermaid diagrams (gitignored). |
 
+## Production operations
+
+Daily Supabase-backed PGC batch work is governed by the repo-local skill at
+`.codex/skills/pgc-production-batch/SKILL.md` and the human runbook at
+`docs/operations/pgc_daily_runbook.md`.
+
+After changing the skill, refresh the installed Codex copy with:
+
+```bash
+scripts/install_repo_skills.sh
+```
+
 ## POI material convention
 
 Operator-supplied clip pools live under `material/<slug>/clips/` and are gitignored (only `material/README.md` + `material/.gitkeep` are tracked).
