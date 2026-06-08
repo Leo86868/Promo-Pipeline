@@ -245,5 +245,7 @@ As of this contract, the repo still needs implementation for:
 - per-video production orchestration;
 - release candidate insertion and verification;
 - POI quarantine;
-- `RUN_RECEIPT.json`;
 - receipt-based resume/top-up.
+
+`promo.cli.run_batch` already emits a render-only `RUN_RECEIPT.json`; future
+work should extend it through the full production state machine.

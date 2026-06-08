@@ -24,6 +24,13 @@ from dotenv import load_dotenv
 from promo.core import config
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.music_library import SupabaseMusicLibrary
+from promo.core.run_receipt import (
+    build_run_receipt,
+    build_video_record,
+    mark_render_result,
+    mark_rendering,
+    write_run_receipt,
+)
 
 load_dotenv()
 
@@ -244,6 +251,7 @@ def run_batch(
     tts_speed: float = 0.95,
     seed: int | None = None,
     jobs: int = 1,
+    receipt_path: str | None = None,
     command_runner: Callable[[Sequence[str]], int] = run_compile_command,
     music_id_resolver: Callable[..., list[str]] = resolve_music_ids,
 ) -> int:
@@ -283,9 +291,38 @@ def run_batch(
         music_ids=music_ids,
         base_seed=seed,
     )
+    item_commands = [
+        build_compile_command(
+            item=item,
+            target_duration_sec=resolved_target_duration,
+            use_music_library=use_music_library,
+            script_candidates=script_candidates,
+            tts_speed=tts_speed,
+        )
+        for item in items
+    ]
+    videos = [
+        build_video_record(item=item, command=list(command))
+        for item, command in zip(items, item_commands, strict=True)
+    ]
+    resolved_receipt_path = receipt_path or os.path.join(output_root, "RUN_RECEIPT.json")
+    receipt = build_run_receipt(
+        batch_path=batch_path,
+        output_root=output_root,
+        pois=list(pois),
+        videos=videos,
+        videos_per_poi=resolved_videos_per_poi,
+        target_duration_sec=resolved_target_duration,
+        voices=list(resolved_voices),
+        use_music_library=use_music_library,
+        script_candidates=script_candidates,
+        tts_speed=tts_speed,
+        seed=seed,
+    )
+    write_run_receipt(resolved_receipt_path, receipt)
 
     failures = 0
-    for item in items:
+    for item, command, video in zip(items, item_commands, videos, strict=True):
         os.makedirs(item.output_dir, exist_ok=True)
         logger.info(
             "Batch item: poi=%s video=%d voice=%s music_id=%s output=%s",
@@ -295,14 +332,11 @@ def run_batch(
             item.music_id,
             item.output_path,
         )
-        command = build_compile_command(
-            item=item,
-            target_duration_sec=resolved_target_duration,
-            use_music_library=use_music_library,
-            script_candidates=script_candidates,
-            tts_speed=tts_speed,
-        )
+        mark_rendering(video)
+        write_run_receipt(resolved_receipt_path, receipt)
         return_code = command_runner(command)
+        mark_render_result(video, return_code=return_code)
+        write_run_receipt(resolved_receipt_path, receipt)
         if return_code != 0:
             failures += 1
             logger.error(
@@ -340,6 +374,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Parallel jobs. Currently only 1 is supported.",
     )
+    parser.add_argument(
+        "--receipt-path",
+        default=None,
+        help="Optional RUN_RECEIPT.json path. Defaults to output-dir/RUN_RECEIPT.json.",
+    )
     return parser
 
 
@@ -361,6 +400,7 @@ def main() -> None:
             tts_speed=args.tts_speed,
             seed=args.seed,
             jobs=args.jobs,
+            receipt_path=args.receipt_path,
         )
     except ValueError as exc:
         parser.error(str(exc))

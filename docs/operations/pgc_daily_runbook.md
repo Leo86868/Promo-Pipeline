@@ -230,5 +230,8 @@ needs dedicated support for:
 - per-video usage writeback orchestration;
 - release candidate insertion and verification;
 - POI quarantine;
-- `RUN_RECEIPT.json`;
 - resume/top-up from receipt.
+
+Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
+work needs to extend that receipt through Drive, usage, release-candidate, and
+resume/top-up states.

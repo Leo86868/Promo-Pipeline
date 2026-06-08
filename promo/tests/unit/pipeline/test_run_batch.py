@@ -94,6 +94,22 @@ def test_run_batch_executes_independent_one_video_runs(tmp_path):
     assert commands[0][commands[0].index("--output") + 1] != commands[1][
         commands[1].index("--output") + 1
     ]
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["receipt_kind"] == "pgc_batch_run_receipt"
+    assert receipt["paradigm"] == "pgc_65s"
+    assert receipt["request"]["mode"] == "render_only_current_implementation"
+    assert receipt["request"]["filters"]["required_active_assets"] == 60
+    assert receipt["summary"]["requested_videos"] == 2
+    assert receipt["summary"]["rendered_videos"] == 2
+    assert receipt["summary"]["usage_written_videos"] == 0
+    assert receipt["summary"]["release_candidates_created"] == 0
+    assert [video["state"] for video in receipt["videos"]] == [
+        "rendered_manifest_missing",
+        "rendered_manifest_missing",
+    ]
+    assert {
+        video["drive_upload"]["status"] for video in receipt["videos"]
+    } == {"not_implemented"}
 
 
 def test_run_batch_returns_failure_when_any_item_fails(tmp_path):
@@ -117,6 +133,58 @@ def test_run_batch_returns_failure_when_any_item_fails(tmp_path):
     )
 
     assert exit_code == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["summary"]["requested_videos"] == 2
+    assert receipt["summary"]["rendered_videos"] == 1
+    assert receipt["summary"]["failed_videos"] == 1
+    assert [video["state"] for video in receipt["videos"]] == [
+        "rendered_manifest_missing",
+        "render_failed",
+    ]
+    assert receipt["videos"][1]["error"] == "compile_promo exited with code 1"
+
+
+def test_run_batch_receipt_records_manifest_identity_when_present(tmp_path):
+    from promo.cli.run_batch import run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+        }),
+        encoding="utf-8",
+    )
+
+    def command_runner(command):
+        output_path = command[command.index("--output") + 1]
+        output_dir = tmp_path / "out" / "terranea_resort" / "video_001"
+        assert str(output_dir) in output_path
+        manifest_path = output_dir / "run_manifest_terranea_resort_65s.json"
+        manifest_path.write_text(
+            json.dumps({
+                "manifest_id": "manifest_123",
+                "run_id": "pgc_run_123",
+            }),
+            encoding="utf-8",
+        )
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+    )
+
+    assert exit_code == 0
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["summary"]["manifest_found_videos"] == 1
+    video = receipt["videos"][0]
+    assert video["state"] == "rendered"
+    assert video["manifest"]["status"] == "found"
+    assert video["manifest"]["manifest_id"] == "manifest_123"
+    assert video["manifest"]["run_id"] == "pgc_run_123"
 
 
 def test_run_batch_rejects_parallel_jobs_until_safe(tmp_path):
