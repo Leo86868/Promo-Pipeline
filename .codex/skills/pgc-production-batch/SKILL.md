@@ -36,9 +36,10 @@ manifest audit and post-write verification, a local release handoff exporter,
 `release_candidates` registration with post-insert verification, read-only random
 POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
 inventory via `promo.cli.prepare_drive_staging`, and render plus manifest-audit
-`RUN_RECEIPT.json` emission from `promo.cli.run_batch`. The future autopilot path
-still needs repo/runtime support for real Drive API upload, per-video writeback
-orchestration, POI quarantine, and receipt-based resume/top-up.
+`RUN_RECEIPT.json` emission from `promo.cli.run_batch`. It also has explicit
+OAuth Drive upload via `promo.cli.upload_drive_staging`; uploads are private by
+default. The future autopilot path still needs repo/runtime support for
+per-video writeback orchestration, POI quarantine, and receipt-based resume/top-up.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -122,19 +123,28 @@ paths. `source_output_uri` must be durable, currently `drive:<file_id>`.
 Do not write usage before durable upload succeeds. If upload fails, no usage was
 spent and no release candidate exists.
 
-Current repo support can prepare/audit the Drive staging inventory after raw
-Drive file IDs are known:
+Current repo support can prepare/audit the Drive staging inventory:
 
 ```bash
 python3 -m promo.cli.prepare_drive_staging \
   --receipt "$run_receipt_json" \
-  --drive-file-map "$drive_file_map_json" \
   --output "$inventory_json" \
+```
+
+Then upload staged MP4s to Drive with the same OAuth credential shape as AIGC
+Main:
+
+```bash
+python3 -m promo.cli.upload_drive_staging \
+  --inventory "$inventory_json" \
+  --output "$uploaded_inventory_json" \
   --handoff-items-output "$handoff_items_json"
 ```
 
-This uses only manifest-audit-passed videos from the receipt. It does not upload
-to Drive.
+This uses only manifest-audit-passed videos from the receipt. It uploads into
+`AIGC Production Masters/<paradigm>/<date>/<batch_id>/` unless a parent folder
+id/name override is provided. Do not use AIGC's public-share upload helper for
+PGC final masters.
 
 Once usage has been written and verified, current repo support can explicitly
 register approved handoff rows:

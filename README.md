@@ -56,13 +56,19 @@ pip install -e .
 
 ## Vendor credentials
 
-Three keys are required (`.env` or shell exports). See `.env.example` for the canonical list and optional knobs.
+Three vendor keys are required for rendering (`.env` or shell exports). Drive
+upload additionally needs Google OAuth credentials. See `.env.example` for the
+canonical list and optional knobs.
 
 | Variable | Used by |
 |---|---|
 | `OPENROUTER_API_KEY` | MiMo clip analysis + OpenAI text-embedding-3-small |
 | `GEMINI_API_KEY` | Gemini #1 (script) + Gemini #2 (clip assignment) + Gemini TTS path |
 | `ELEVENLABS_API_KEY` | ElevenLabs TTS path (only required if a configured voice routes there) |
+| `GOOGLE_CREDENTIALS_FILE` | Google OAuth client secret JSON for Drive uploads |
+| `PGC_GOOGLE_TOKEN_FILE` | Optional token.pickle path. Defaults next to `GOOGLE_CREDENTIALS_FILE`. |
+| `PGC_DRIVE_PARENT_FOLDER_ID` | Optional existing Drive folder id for `AIGC Production Masters`. |
+| `PGC_DRIVE_PARENT_FOLDER_NAME` | Optional top-level Drive folder name. Defaults to `AIGC Production Masters`. |
 
 Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO_FORMAT_SELECTOR`, `PROMO_DEFAULT_DURATION_SEC`, `PROMO_DEFAULT_VARIANTS`, `PROMO_DEFAULT_SCRIPT_CANDIDATES`.
 
@@ -73,7 +79,8 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 | `python3 -m promo.cli.compile_promo` | End-to-end: clips → narration → assignment → MP4. Primary entry point. |
 | `python3 -m promo.cli.select_batch_pois` | Read-only Supabase POI selector: random eligible POIs, cooldown, active-asset threshold, batch JSON output. |
 | `python3 -m promo.cli.audit_run_manifest` | Strict local production audit for run manifests before usage writeback or handoff. |
-| `python3 -m promo.cli.prepare_drive_staging` | Builds manifest-backed Drive staging inventory and handoff items from raw Drive file IDs. Does not upload. |
+| `python3 -m promo.cli.prepare_drive_staging` | Builds manifest-backed Drive staging inventory from manifests or a run receipt. Does not upload. |
+| `python3 -m promo.cli.upload_drive_staging` | Uploads staged final MP4s to Google Drive via OAuth and verifies Drive metadata. Keeps files private. |
 | `python3 -m promo.cli.usage_events_writeback` | Explicit usage-event dry run/writeback. With `--execute`, verifies rows in `poi_asset_usage_events` after the RPC. |
 | `python3 -m promo.cli.register_release_candidates` | Explicit release-candidate dry run/insert. With `--execute`, verifies rows in `release_candidates` after insert. |
 | `python3 -m promo.cli.smoke_local_render` | Minimal local-render smoke (no vendor calls). `--dry-run` skips `ffmpeg`. |

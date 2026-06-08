@@ -1,7 +1,7 @@
 """Manifest-backed final-video Drive staging helpers.
 
 This module does not upload to Drive. It prepares and validates the durable
-URI inventory that a manual or future API uploader can fill in.
+URI inventory that the Drive uploader or a manual file-id map can fill in.
 """
 
 from __future__ import annotations
@@ -168,6 +168,17 @@ def manifest_paths_from_receipt(receipt_path: Path) -> list[Path]:
     return paths
 
 
+def staging_context_from_receipt(receipt_path: Path) -> dict[str, Any]:
+    payload = _load_json(receipt_path)
+    if not isinstance(payload, dict):
+        raise DriveStagingError("receipt JSON must be an object")
+    context: dict[str, Any] = {"source_receipt_path": str(receipt_path)}
+    for field in ("batch_id", "paradigm", "created_at"):
+        if payload.get(field):
+            context[field] = payload[field]
+    return context
+
+
 def load_drive_file_map(path: Path) -> dict[str, str]:
     payload = _load_json(path)
     if isinstance(payload, dict) and "items" in payload:
@@ -217,6 +228,9 @@ def summarize_inventory(items: list[dict[str, Any]]) -> dict[str, int]:
         ),
         "drive_uri_ready": sum(
             1 for item in items if item.get("staging_status") == "drive_uri_ready"
+        ),
+        "drive_upload_failed": sum(
+            1 for item in items if item.get("staging_status") == "drive_upload_failed"
         ),
         "missing_source_outputs": sum(
             1 for item in items if not item.get("local_output_exists")

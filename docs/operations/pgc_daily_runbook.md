@@ -213,20 +213,23 @@ Downloads
 temporary local paths
 ```
 
-Current repo support can prepare the Drive staging paperwork once raw Drive file
-IDs are known:
+Current repo support can prepare and upload the Drive staging paperwork:
 
 ```bash
 python3 -m promo.cli.prepare_drive_staging \
   --receipt RUN_RECEIPT.json \
-  --drive-file-map drive_file_map.json \
-  --output drive_staging_inventory.json \
+  --output drive_staging_inventory.json
+
+python3 -m promo.cli.upload_drive_staging \
+  --inventory drive_staging_inventory.json \
+  --output drive_staging_uploaded.json \
   --handoff-items-output handoff_items.json
 ```
 
-This command does not upload files to Drive. From a receipt, it uses only videos
-whose manifest audit passed. It checks manifests, local MP4 paths, raw Drive IDs,
-and writes the handoff items needed by the next step.
+The first command does not upload files to Drive. From a receipt, it uses only
+videos whose manifest audit passed. The second command uploads those MP4s to
+Drive with OAuth, keeps files private, verifies Drive metadata, and writes the
+handoff items needed by the next step.
 
 After that, build and optionally register the release handoff:
 
@@ -261,7 +264,6 @@ The final report should say:
 The target contract is ahead of the current repo implementation. The repo still
 needs dedicated support for:
 
-- real Drive API upload;
 - per-video usage writeback orchestration;
 - per-video release candidate orchestration;
 - POI quarantine;
@@ -271,7 +273,10 @@ Current `promo.cli.select_batch_pois` already does read-only random POI
 selection, 3-day cooldown, and dynamic active asset thresholds.
 
 Current `promo.cli.prepare_drive_staging` already builds manifest-backed Drive
-staging inventory and handoff items from raw Drive file IDs.
+staging inventory from manifests or audit-passed receipt entries.
+
+Current `promo.cli.upload_drive_staging` already uploads staged final MP4s to
+Drive using OAuth credentials and keeps files private.
 
 Current `promo.cli.audit_run_manifest` already checks production manifest
 requirements before usage writeback or handoff.

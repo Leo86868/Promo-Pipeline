@@ -14,6 +14,7 @@ from promo.core.drive_staging import (
     handoff_items_from_inventory,
     load_drive_file_map,
     manifest_paths_from_receipt,
+    staging_context_from_receipt,
     write_json,
 )
 
@@ -77,6 +78,8 @@ def main() -> int:
             manifest_paths,
             require_source_exists=not args.allow_missing_source,
         )
+        if args.receipt:
+            inventory.update(staging_context_from_receipt(Path(args.receipt)))
         if args.drive_file_map:
             inventory = apply_drive_file_map(
                 inventory,

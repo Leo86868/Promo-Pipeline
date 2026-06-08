@@ -248,7 +248,6 @@ ledger with batch registry responsibilities.
 
 As of this contract, the repo still needs implementation for:
 
-- real Drive API upload and verification;
 - per-video production orchestration;
 - per-video release candidate orchestration;
 - POI quarantine;
@@ -258,8 +257,12 @@ As of this contract, the repo still needs implementation for:
 cooldown enforcement, dynamic active asset thresholds, and batch JSON emission.
 
 `promo.cli.prepare_drive_staging` already builds manifest-backed Drive staging
-inventory and handoff items from raw Drive file IDs. It can read audit-passed
-manifest paths from `RUN_RECEIPT.json`. It does not upload files.
+inventory from manifests or audit-passed manifest paths in `RUN_RECEIPT.json`.
+It can also apply raw Drive file IDs when a manual map is supplied. It does not
+upload files.
+
+`promo.cli.upload_drive_staging` already uploads staged final MP4s to Drive via
+OAuth, keeps files private, and verifies Drive metadata.
 
 `promo.cli.audit_run_manifest` already checks production manifest requirements.
 

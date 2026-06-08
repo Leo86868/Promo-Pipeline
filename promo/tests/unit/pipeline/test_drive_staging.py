@@ -40,6 +40,7 @@ def test_build_staging_inventory_reads_manifest_and_local_output(tmp_path):
         "item_count": 1,
         "pending_drive_upload": 1,
         "drive_uri_ready": 0,
+        "drive_upload_failed": 0,
         "missing_source_outputs": 0,
     }
     item = inventory["items"][0]
@@ -183,6 +184,9 @@ def test_prepare_drive_staging_cli_accepts_receipt(tmp_path):
     inventory_path = tmp_path / "inventory.json"
     receipt_path.write_text(
         json.dumps({
+            "batch_id": "pgc_batch_test",
+            "paradigm": "pgc_65s",
+            "created_at": "2026-06-08T00:00:00Z",
             "videos": [{
                 "manifest": {
                     "status": "found",
@@ -210,6 +214,8 @@ def test_prepare_drive_staging_cli_accepts_receipt(tmp_path):
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     assert inventory["summary"]["item_count"] == 1
     assert inventory["items"][0]["run_manifest_path"] == str(manifest_path)
+    assert inventory["batch_id"] == "pgc_batch_test"
+    assert inventory["paradigm"] == "pgc_65s"
 
 
 def test_manifest_paths_from_receipt_rejects_without_audit_passed_manifest(tmp_path):
@@ -218,6 +224,9 @@ def test_manifest_paths_from_receipt_rejects_without_audit_passed_manifest(tmp_p
     receipt_path = tmp_path / "RUN_RECEIPT.json"
     receipt_path.write_text(
         json.dumps({
+            "batch_id": "pgc_batch_test",
+            "paradigm": "pgc_65s",
+            "created_at": "2026-06-08T00:00:00Z",
             "videos": [{
                 "manifest": {
                     "status": "found",

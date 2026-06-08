@@ -169,6 +169,28 @@ def default_script_candidates() -> int:
     return _require_int("PROMO_DEFAULT_SCRIPT_CANDIDATES", default=1)
 
 
+def google_credentials_file() -> str:
+    """OAuth client secret JSON used for Google Drive uploads.
+
+    PGC intentionally shares AIGC's OAuth-style Drive auth for now:
+    ``client_secret.json`` plus a sibling ``token.pickle`` unless
+    ``PGC_GOOGLE_TOKEN_FILE`` is set.
+    """
+    return _require("GOOGLE_CREDENTIALS_FILE")
+
+
+def pgc_google_token_file() -> str:
+    return os.getenv("PGC_GOOGLE_TOKEN_FILE", "").strip()
+
+
+def pgc_drive_parent_folder_id() -> str:
+    return os.getenv("PGC_DRIVE_PARENT_FOLDER_ID", "").strip()
+
+
+def pgc_drive_parent_folder_name() -> str:
+    return os.getenv("PGC_DRIVE_PARENT_FOLDER_NAME", "").strip() or "AIGC Production Masters"
+
+
 # ------------------------------------------------------------------ #
 #  Sprint 16 — selector seam resolver
 # ------------------------------------------------------------------ #

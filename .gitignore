@@ -7,6 +7,9 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+credentials/
+token.pickle
+*.pickle.lock
 .pytest_cache/
 .mypy_cache/
 promo/remotion/node_modules/
