@@ -139,6 +139,7 @@ def build_release_candidate_record(
         "poi_name": poi_name,
         "source_output_uri": _normalize_drive_uri(item),
         "source_run_id": run_id,
+        "status": _optional_text(item.get("status")) or "approved",
         "approved_at": _required_text(
             item.get("approved_at") or default_approved_at or _utc_now_iso(),
             "approved_at",

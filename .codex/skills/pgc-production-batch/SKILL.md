@@ -32,13 +32,13 @@ to Leo in non-code terms.
 ## Current Implementation Boundary
 
 This repo currently has local manifests, usage preview/writeback helpers with
-post-write verification, a local release handoff exporter, read-only random POI
-selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
-inventory via `promo.cli.prepare_drive_staging`, and render-only
+post-write verification, a local release handoff exporter,
+`release_candidates` registration with post-insert verification, read-only
+random POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive
+staging inventory via `promo.cli.prepare_drive_staging`, and render-only
 `RUN_RECEIPT.json` emission from `promo.cli.run_batch`. The future autopilot path
 still needs repo/runtime support for real Drive API upload, per-video writeback
-orchestration, `release_candidates` insertion, POI quarantine, and
-receipt-based resume/top-up.
+orchestration, POI quarantine, and receipt-based resume/top-up.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -134,6 +134,18 @@ python3 -m promo.cli.prepare_drive_staging \
 ```
 
 This does not upload to Drive.
+
+Once usage has been written and verified, current repo support can explicitly
+register approved handoff rows:
+
+```bash
+python3 -m promo.cli.register_release_candidates \
+  --handoff "$release_handoff_json" \
+  --execute
+```
+
+Without `--execute`, this command is a dry run. Do not run `--execute` in review
+mode unless Leo explicitly approved release registration.
 
 ## Manifest Audit
 

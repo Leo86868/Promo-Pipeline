@@ -218,6 +218,20 @@ python3 -m promo.cli.prepare_drive_staging \
 This command does not upload files to Drive. It checks manifests, local MP4
 paths, raw Drive IDs, and writes the handoff items needed by the next step.
 
+After that, build and optionally register the release handoff:
+
+```bash
+python3 -m promo.cli.export_release_handoff \
+  --items handoff_items.json \
+  --output release_handoff.json
+
+python3 -m promo.cli.register_release_candidates \
+  --handoff release_handoff.json \
+  --execute
+```
+
+Without `--execute`, `register_release_candidates` is a dry run.
+
 ## What To Expect In The Final Report
 
 The final report should say:
@@ -239,7 +253,7 @@ needs dedicated support for:
 
 - real Drive API upload;
 - per-video usage writeback orchestration;
-- release candidate insertion and verification;
+- per-video release candidate orchestration;
 - POI quarantine;
 - resume/top-up from receipt.
 
@@ -251,6 +265,10 @@ staging inventory and handoff items from raw Drive file IDs.
 
 Current `promo.cli.usage_events_writeback --execute` writes manifest-derived
 usage events and verifies the rows by `event_id` after the RPC.
+
+Current `promo.cli.register_release_candidates --execute` inserts approved
+handoff rows into `release_candidates` and verifies the rows by
+`source_video_key` after insert.
 
 Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
 work needs to extend that receipt through Drive, usage, release-candidate, and

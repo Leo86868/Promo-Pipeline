@@ -132,6 +132,11 @@ Current repo support: `promo.cli.usage_events_writeback --execute` calls the
 usage RPC and verifies the resulting rows by `event_id`. It is still an explicit
 CLI, not yet wired into the full per-video autopilot sequence.
 
+Current repo support: `promo.cli.register_release_candidates --execute` inserts
+approved handoff rows into `release_candidates` and verifies the resulting rows
+by `source_video_key`. It is still an explicit CLI, not yet wired into the full
+per-video autopilot sequence.
+
 ## Manifest Audit Gate
 
 Usage writeback is derived from the manifest. The manifest must pass audit
@@ -244,7 +249,7 @@ As of this contract, the repo still needs implementation for:
 
 - real Drive API upload and verification;
 - per-video production orchestration;
-- release candidate insertion and verification;
+- per-video release candidate orchestration;
 - POI quarantine;
 - receipt-based resume/top-up.
 
@@ -253,6 +258,12 @@ cooldown enforcement, dynamic active asset thresholds, and batch JSON emission.
 
 `promo.cli.prepare_drive_staging` already builds manifest-backed Drive staging
 inventory and handoff items from raw Drive file IDs. It does not upload files.
+
+`promo.cli.usage_events_writeback --execute` already writes usage events and
+verifies the rows by `event_id`.
+
+`promo.cli.register_release_candidates --execute` already inserts approved
+handoff rows and verifies the rows by `source_video_key`.
 
 `promo.cli.run_batch` already emits a render-only `RUN_RECEIPT.json`; future
 work should extend it through the full production state machine.
