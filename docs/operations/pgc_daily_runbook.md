@@ -1,125 +1,234 @@
 # PGC Daily Production Runbook
 
 This is the human version of the PGC production workflow. The matching agent
-skill lives at `.codex/skills/pgc-production-batch/SKILL.md`.
+skill lives at `.codex/skills/pgc-production-batch/SKILL.md`. The technical
+contract lives at `docs/operations/pgc_production_contract.md`.
 
-## What This Repo Is
+## Grandma Version
 
-Think of this repo as a preview-video assembly line with receipts.
-
-It can render 65s PGC videos, produce manifests that explain which Supabase
-assets were used, preview usage events, and export a local release handoff JSON.
-It is not yet a fully automated final distribution system.
-
-The skill is the checklist. The repo CLIs are the machinery. Supabase, Drive,
-VPS, and AIGC distribution are outside systems.
-
-## Boundaries Grandma Should Know
-
-Preview render output is not live. You can delete it, reject it, or rerun it.
-
-Usage writeback is live. Once usage is written, Supabase asset counts change and
-future selection sees those clips as more used. Do not write usage until the
-exact manifests are approved.
-
-Final-master approval is separate from preview approval. If a rendered MP4 is
-upscaled, the upscaled file becomes the master. Drive handoff must use the
-upscaled master file ID, not the original preview MP4 file ID.
-
-PGC does not publish to accounts. PGC exports handoff JSON; AIGC owns
-`release_candidates` and distribution.
-
-Downloads and VPS folders are inspection areas. They are not durable storage
-after final masters are staged.
-
-## Daily Flow
-
-1. Pick POIs and target counts.
-2. Run read-only preflight:
-   - ready assets from `public.poi_asset_valid_clips`;
-   - near-exhausted assets;
-   - ready embeddings;
-   - Music Library tracks long enough for the target duration;
-   - current usage state when needed.
-3. Stop and review the plan before rendering.
-4. Render previews on VPS with `promo.cli.run_batch --jobs 1`.
-5. Copy review artifacts to a local `Downloads` package:
-   - MP4s;
-   - `run_manifest_*.json`;
-   - `clip_assignments_*.json`;
-   - `tts_metrics_*.json`;
-   - `match_quality_*.json`;
-   - `batch_run.log`;
-   - usage preview JSON;
-   - review audit JSON.
-6. Audit the review package before asking for human review.
-7. Review videos manually.
-8. If the videos need final upscaling, upscale approved masters and audit the
-   upscaled files.
-9. Stage approved final masters to Drive and record raw Drive file IDs.
-10. Export release handoff JSON with `drive:<file_id>` URIs.
-11. Write usage only after explicit approval.
-12. Verify Supabase usage rows and affected asset usage counts.
-
-## Approval Language
-
-These are enough to write usage when the manifest list is clear:
+The future default is simple:
 
 ```text
-approve all
-write usage
-write usage for video_001 and video_003
+Use PGC skill. Make 15 POIs, 3 videos each.
 ```
 
-These are not enough:
+That means real production. The system should pick eligible POIs, make videos,
+put finished videos somewhere durable, write the asset usage ledger, register
+finished videos for zhongtai, and give you a final receipt.
+
+If you want to watch the videos first, say so explicitly:
 
 ```text
-looks good
-continue
-ship it
+Make 15 POIs, 3 each, review first.
 ```
 
-When language is ambiguous, stop and ask which manifests are approved.
+Review mode is the exception, not the default.
 
-## Quality Notes
+## The Three Cabinets
 
-A final MP4 can be `1080x1920` even when many source clips are `720x1280` or
-`704x1248`. That is a 1080p container, not necessarily native 1080p detail.
-For distribution quality, either use higher-resolution source assets or run and
-audit a final-master upscale pass.
+PGC does not need one big database table for the whole batch right now. It uses
+three existing places plus one JSON receipt:
 
-Music labels must come from the manifest, not filenames or memory. Downstream
-distribution uses the formal handoff field.
+- `poi_asset_usage_events`: which assets were used where;
+- `release_candidates`: which finished videos are ready for zhongtai;
+- `distribution_status`: which account/distribution work happened later;
+- `RUN_RECEIPT.json`: the batch order summary.
 
-## Do Not Do
+Grandma translation:
 
-- Do not write usage for preview-only or test renders.
-- Do not bypass `public.poi_asset_valid_clips` for production selection.
-- Do not keep rendering after usage writeback fails.
-- Do not use original preview MP4 Drive IDs after approving upscaled masters.
-- Do not manually subtract usage counts when reverting; recompute from the usage
-  ledger.
-- Do not assume the VPS worktree matches local code. Check it before production
-  runs.
+```text
+Asset usage goes in one cabinet.
+Finished videos go in one cabinet.
+Distribution goes in one cabinet.
+This batch order lives in a JSON receipt for now.
+```
 
-## Where Things Live
+## What PGC Owns
 
-- Repo skill: `.codex/skills/pgc-production-batch/SKILL.md`
-- Skill installer: `scripts/install_repo_skills.sh`
-- Main batch CLI: `python3 -m promo.cli.run_batch`
-- Usage preview: `python3 -m promo.cli.usage_events_preview`
-- Usage writeback: `python3 -m promo.cli.usage_events_writeback --execute`
-- Release handoff export: `python3 -m promo.cli.export_release_handoff`
-- Review packages: usually under `/Users/leowu/Downloads/`
+PGC owns making the video and registering that a finished video exists.
+
+PGC should:
+
+- render the MP4;
+- make and check the manifest;
+- upload the final MP4 to durable storage, currently Drive;
+- write asset usage;
+- verify usage;
+- create a `release_candidates` row;
+- write `RUN_RECEIPT.json`.
+
+PGC should not:
+
+- assign videos to accounts;
+- publish videos;
+- write distribution state.
+
+Zhongtai/AIGC owns distribution after `release_candidates`.
+
+## Normal Production Flow
+
+For each video, the safe order is:
+
+```text
+1. make the video
+2. check the manifest
+3. upload the final MP4 to Drive
+4. write asset usage
+5. verify asset usage
+6. register the finished video in release_candidates
+7. verify the registration
+8. update RUN_RECEIPT.json
+```
+
+Grandma version:
+
+```text
+Make the video.
+Check the receipt.
+Put the final MP4 in the Drive safe.
+Write the asset ledger.
+Register that zhongtai can use this finished video.
+Update the batch order JSON.
+```
+
+## Why Manifest Audit Matters
+
+The manifest is the receipt for one video. Usage writeback is created from this
+receipt.
+
+If the manifest is wrong, usage writeback would also be wrong. So the rule is:
+
+```text
+No valid manifest = no usage writeback.
+```
+
+Manifest audit checks things like:
+
+- which POI this video belongs to;
+- which source assets appeared in the timeline;
+- whether every timeline usage has an asset id;
+- whether music label is present;
+- whether usage events can be created safely.
+
+## POI Selection
+
+Default selection is random among eligible POIs. Random means equal chance, not
+weighted by asset count. This gives broader coverage.
+
+Default cooldown is global 3 days. If a POI had successful PGC production in
+the last 3 days, do not pick it again unless Leo changes the cooldown.
+
+Future filters can include things like:
+
+```text
+EU POIs
+gold POIs
+US POIs
+hotel POIs
+```
+
+If the asset platform does not yet provide the requested classification, the
+system should fail clearly instead of quietly using all POIs.
+
+## Active Asset Rule
+
+Zhongtai owns which assets are active and eligible. PGC owns how many active
+assets are enough for this video format.
+
+For current 65s PGC:
+
+```text
+required_active_assets = 50 + 10 * extra_variations
+```
+
+Examples:
+
+- 1 video per POI needs 50 active assets;
+- 2 videos per POI needs 60 active assets;
+- 3 videos per POI needs 70 active assets;
+- 4 videos per POI needs 80 active assets.
+
+If not enough POIs pass the filters, the system should stop before production
+and ask whether to run fewer or wait for zhongtai to add more assets.
+
+## Failure Rules
+
+If one video render fails, continue and report it later.
+
+If the manifest is broken, keep the MP4 if it exists, but do not write usage and
+do not register it as a finished candidate.
+
+If Drive upload fails, retry. If it still fails, do not write usage. The asset
+ledger has not been touched yet.
+
+If usage writeback fails or cannot be verified, quarantine that POI. Do not make
+more videos for that POI. Other POIs may continue if asset usage is POI-local.
+
+If release candidate registration fails after Drive upload and usage writeback,
+report it as retryable. The video exists and the asset ledger is correct.
+
+If the batch asked for 45 videos and 43 succeeded, stop and report 43/45. Do not
+auto-spend more compute to top up. Leo can ask for a top-up batch.
+
+## Review Mode
+
+Review mode is explicit. Use it when Leo asks to inspect videos first.
+
+In review mode:
+
+- videos can be copied to Downloads;
+- usage preview can be generated;
+- no usage is written automatically;
+- no release candidate is created automatically.
+
+Ambiguous phrases like "looks good" are not enough for live state changes in
+review mode. Ask for a clear command such as `write usage` or `register release
+candidates`.
+
+## Durable Paths
+
+VPS run folders are scratch/output areas. Downloads is a human review area.
+
+The durable media URI for release candidates should be:
+
+```text
+drive:<file_id>
+```
+
+Do not register a release candidate pointing to:
+
+```text
+/home/deploy/...
+/Users/leowu/...
+Downloads
+temporary local paths
+```
+
+## What To Expect In The Final Report
+
+The final report should say:
+
+- how many videos were requested;
+- how many succeeded;
+- how many failed;
+- which POIs were selected;
+- which POIs were skipped or quarantined;
+- where `RUN_RECEIPT.json` is;
+- whether usage was written and verified;
+- whether release candidates were created;
+- whether a review package was downloaded.
 
 ## Current Gaps
 
-These are still operator or ad hoc steps unless/until the repo grows dedicated
-CLIs:
+The target contract is ahead of the current repo implementation. The repo still
+needs dedicated support for:
 
-- production preflight over many candidate POIs;
-- review package audit command;
-- final-master upscale runner;
-- final-master audit command;
-- Drive staging uploader;
-- post-write Supabase verification command.
+- random eligible POI selection;
+- 3-day cooldown;
+- dynamic active asset thresholds;
+- Drive upload;
+- per-video usage writeback orchestration;
+- release candidate insertion and verification;
+- POI quarantine;
+- `RUN_RECEIPT.json`;
+- resume/top-up from receipt.

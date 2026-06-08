@@ -78,8 +78,9 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 ## Production operations
 
 Daily Supabase-backed PGC batch work is governed by the repo-local skill at
-`.codex/skills/pgc-production-batch/SKILL.md` and the human runbook at
-`docs/operations/pgc_daily_runbook.md`.
+`.codex/skills/pgc-production-batch/SKILL.md`, the human runbook at
+`docs/operations/pgc_daily_runbook.md`, and the production contract at
+`docs/operations/pgc_production_contract.md`.
 
 After changing the skill, refresh the installed Codex copy with:
 

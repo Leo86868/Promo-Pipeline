@@ -1,302 +1,227 @@
 ---
 name: pgc-production-batch
-description: Use when running, auditing, approving, upscaling, staging, writing usage for, reverting usage for, enforcing freshness in, or handing off PGC production-style 65s+ batch videos backed by Supabase POI assets, Supabase Music Library, run_manifest JSON, and usage events. Triggers on requests like "run 3 POIs", "batch PGC videos", "write usage", "approve videos", "revert manifest usage", "freshness", "production PGC run", "upscale PGC masters", "Drive staging", or "release handoff".
+description: Use for PGC production autopilot, review batches, top-ups, usage writeback/reverts, Drive handoff, release_candidates registration, freshness checks, and RUN_RECEIPT-backed recovery for Supabase POI asset videos. Triggers on "make 15 POIs", "batch PGC videos", "review first", "write usage", "top up", "revert usage", "production PGC run", "Drive staging", or "release candidate".
 ---
 
 # PGC Production Batch
 
-Repo skill version: 2026-06-08. This repo copy is the source of truth for the
-PGC production workflow. The installed copy under `~/.codex/skills` should be a
-symlink or installed copy of this folder; refresh it with
-`scripts/install_repo_skills.sh` after workflow changes.
+Repo skill version: 2026-06-08 production-autopilot contract. This repo copy is
+the source of truth for the PGC production workflow. The installed copy under
+`~/.codex/skills` should be a symlink or installed copy of this folder; refresh
+it with `scripts/install_repo_skills.sh` after workflow changes.
 
-This skill is an operator checklist for PGC batch video production. Keep
-repeatable business logic in repo CLIs; use this skill to avoid skipping review,
-manifest, final-master, and usage-writeback gates.
+Read `docs/operations/pgc_production_contract.md` when implementing or auditing
+behavior. Read `docs/operations/pgc_daily_runbook.md` when explaining the flow
+to Leo in non-code terms.
 
-For human-facing guidance, read `docs/operations/pgc_daily_runbook.md`.
+## Target Default
 
-## Defaults
+- A normal request such as "make 15 POIs, 3 videos each" means production
+  autopilot, not preview-first mode.
+- Do not stop mid-run for routine production. Render, audit, write usage, and
+  register handoff per successful video when the required repo/runtime support
+  exists.
+- Manual review is an explicit override, e.g. "review first" or "put videos in
+  Downloads for review". In review mode, do not write usage or create
+  `release_candidates` until Leo explicitly approves the next step.
+- Do not add arbitrary large-batch confirmation thresholds. Trust the requested
+  batch size unless required inputs are missing or eligibility is insufficient.
+- Do not auto top-up failed videos. Report the shortfall; run a top-up batch
+  only when Leo asks.
 
-- Treat every batch as preview until Leo explicitly approves usage writeback.
-- Do not write usage for test renders by default.
-- Skip weak POIs instead of blocking the whole batch.
-- `eligible ready assets <= 50` means skip that POI for production.
-- Use VPS for real Gemini/TTS/Remotion runs when local Gemini access is blocked.
-- Use `--jobs 1` until Remotion staging is run-scoped and parallel-safe.
-- Never auto-revert usage. Reverts require explicit approval and a preview.
+## Current Implementation Boundary
 
-## STOP Checkpoints
+This repo currently has local manifests, usage preview/writeback helpers, and a
+local release handoff exporter. The future autopilot path also needs repo/runtime
+support for random eligible POI selection, cooldown, Drive upload, per-video
+writeback orchestration, `release_candidates` insertion, verification, POI
+quarantine, and `RUN_RECEIPT.json`.
 
-- STOP before render execution: report eligible, skipped, and near-exhausted POIs.
-- STOP after artifact copy and manifest audit: ask Leo to review the Downloads
-  folder before any usage writeback.
-- STOP after ad hoc upscale/audit when final masters differ from rendered MP4s:
-  ask Leo to approve final masters before Drive staging or usage writeback.
-- STOP before live usage writeback: state manifest IDs, event count, unique
-  assets, and that Supabase usage counts will change.
-- STOP before revert execution: show the revert preview and wait for explicit
-  approval.
+When a target behavior is not implemented yet, say so and do not fake it with
+unsafe ad hoc live writes. Use the safest current workflow and report the gap.
 
-## Boundaries
+## Ownership
 
-- Preview render output is disposable until approved.
-- Usage writeback changes Supabase state. Do not do it from implication.
-- Drive staging changes what downstream AIGC/distribution can import. Use final
-  master IDs, not preview MP4 IDs, when upscaling was approved.
-- PGC exports handoff JSON only. It must not write `release_candidates` or
-  `distribution_status` directly.
-- Local Downloads and VPS run folders are review/staging surfaces, not durable
-  storage after final masters are staged.
+PGC owns:
 
-## Freshness Protocol
+- video generation;
+- manifest receipt and manifest audit;
+- usage writeback to `public.poi_asset_usage_events`;
+- durable finished-video registration in `public.release_candidates` once a
+  durable `drive:<file_id>` URI exists;
+- `RUN_RECEIPT.json` as the batch-level order record.
 
-- Production clip selection must read from `public.poi_asset_valid_clips`.
-- Do not query `public.poi_asset_assets` directly for production selection unless
-  Leo explicitly asks to bypass freshness.
-- The asset library hides clips once `usage_count >= 3`.
-- Treat `usage_freshness_status = "warning"` or `usage_remaining = 1` as
-  near-exhausted, but still selectable.
-- Report near-exhausted counts during preflight when those fields are available.
-- Avoid large preview batches without usage writeback. Supabase cannot count
-  preview-only usage until approved manifests are written.
-- Default production rhythm: run a small batch, copy/audit, ask for approval,
-  write usage for approved manifests, then continue.
-- For large batches before writeback, either split into smaller writeback cycles
-  or require a run-local reserved-usage guard.
-- If usage writeback fails, stop the production loop and report the affected
-  manifests. Do not keep producing as if counts were updated.
+AIGC/zhongtai owns:
 
-## Useful Commands
+- account assignment;
+- distribution and publishing;
+- `public.distribution_status`;
+- platform metrics.
 
-Semantic retrieval preflight for one POI:
+PGC must not write account distribution state.
 
-```bash
-python3 -m promo.cli.retrieval_dry_run \
-  --poi-id "$poi_id" \
-  --json
-```
+## Selection Defaults
 
-Usage preview before any writeback:
+- Select POIs randomly with equal weight among eligible POIs. Do not weight by
+  active asset count; coverage is the goal.
+- Default cooldown is global 3 days by POI, configurable when Leo asks.
+- If Leo requests a classification such as EU or gold POIs and the asset
+  platform does not expose that field, fail clearly. Do not silently fall back
+  to all POIs.
+- If not enough POIs pass filters, stop before production and ask Leo whether to
+  run the smaller count or wait for zhongtai to add assets.
 
-```bash
-python3 -m promo.cli.usage_events_preview \
-  "$manifest_path" \
-  --output "$preview_json"
-```
+## Active Asset Rule
 
-Production batch render:
+The asset platform owns which assets are active/eligible and the usage cap.
+The PGC paradigm owns how many active assets are enough for the requested video
+format.
 
-```bash
-PROMO_RENDER_CONCURRENCY=4 python3 -m promo.cli.run_batch \
-  --batch "$batch_file" \
-  --output-dir "$run_dir" \
-  --supabase-music-library \
-  --jobs 1
-```
-
-Approved usage writeback:
-
-```bash
-python3 -m promo.cli.usage_events_writeback \
-  "$manifest_path" \
-  --execute
-```
-
-Approved release-candidate handoff export:
-
-```bash
-python3 -m promo.cli.export_release_handoff \
-  --items "$approved_items_json" \
-  --output "$handoff_json" \
-  --source-batch-id "$source_batch_id" \
-  --approved-at "$approved_at"
-```
-
-## Batch Flow
-
-1. Clarify requested POIs and videos per POI. Accept `poi_id` when available.
-2. Preflight each POI with read-only checks:
-   - ready active assets from `public.poi_asset_valid_clips` only;
-   - near-exhausted assets using `usage_freshness_status` / `usage_remaining`
-     when available;
-   - ready embeddings for those assets;
-   - Music Library tracks with `duration_sec >= target_duration_sec`;
-   - existing usage state only if needed for the decision.
-3. Report skipped POIs before running:
-   - POI name / `poi_id`;
-   - ready asset count;
-   - reason, usually `eligible_assets <= 50`.
-4. STOP before render execution and report the production plan.
-5. Run only eligible POIs with the batch CLI.
-6. After completion, copy only final artifacts to local Downloads:
-   - `promo_*_65s.mp4`;
-   - `run_manifest_*_65s.json`;
-   - `clip_assignments_*_65s.json`;
-   - `tts_metrics_*_65s.json`;
-   - `match_quality_*_65s.json`;
-   - `batch_run.log`.
-7. Audit manifests before asking Leo to review:
-   - MP4 duration is near target;
-   - every `timeline_entry` has `asset_id`;
-   - every `timeline_entry` has `occurrence_id`;
-   - every timeline `asset_id` exists in `asset_snapshot`;
-   - every `bridge_tail` has `asset_id`;
-   - every `outputs[]` entry has `music_label` when Supabase Music Library is
-     used;
-   - usage preview can be generated;
-   - report candidate-only download count and fallback reason.
-8. STOP and ask Leo to review the local Downloads folder. Do not write usage yet.
-
-## Approved Master Staging
-
-After Leo approves a batch, keep the manifest as the receipt. Do not rely on MP4
-filenames alone.
-
-If the batch needs ad hoc final-video upscale:
-
-1. Build or read a manifest-backed inventory that maps each approved MP4 to:
-   - `manifest_id`;
-   - `source_video_key = manifest:<manifest_id>:variant:<variant_index>`;
-   - POI name / `poi_id`;
-   - `music_label`;
-   - local MP4 path and run manifest path;
-   - eventual upscaled local path and Drive file id.
-2. Run upscale as an ad hoc post-process only. This is not normal PGC pipeline
-   behavior; future production should consume already-upscaled source assets
-   from the asset library.
-3. Audit final masters before staging:
-   - expected count;
-   - `1080x1920`;
-   - duration near target;
-   - audio stream present;
-   - no missing manifest mapping.
-4. Update the local inventory with final master paths.
-5. STOP and ask Leo to approve final masters before staging.
-
-Drive staging is currently not productized in this repo. Until a real uploader
-exists, use a controlled manual/ad hoc upload to the neutral PGC staging folder,
-then record each resulting raw Drive file id in the inventory/items JSON.
-
-Recommended order after final-master approval:
+For `pgc_65s`, use:
 
 ```text
-final masters audited
--> upload to neutral PGC Drive staging
--> export release handoff JSON with drive:<file_id>
--> write approved usage from manifests
--> AIGC imports release_candidates
--> AIGC distribution assigns/deploys to accounts
+required_active_assets = base_min_assets_for_format + 10 * extra_variations
+base_min_assets_for_format = 50
+extra_variations = max(videos_per_poi - 1, 0)
 ```
 
-## Release Candidate Handoff
-
-PGC owns final-video production metadata. AIGC owns `release_candidates` storage
-and distribution. When exporting approved masters for AIGC import, each handoff
-row must include:
-
-- `source_pipeline = "pgc_65s"`;
-- `source_video_key = "manifest:<manifest_id>:variant:<variant_index>"`;
-- `poi_id` and `poi_name`;
-- `source_output_uri = "drive:<file_id>"`;
-- `source_run_id` and optional `source_batch_id`;
-- `approved_at`;
-- `music_label` copied from `run_manifest.outputs[].music_label`.
-
-Use `promo.cli.export_release_handoff` to build this JSON from approved
-`run_manifest` files plus Drive file IDs. The exporter is local-only: it does
-not write Supabase, deploy Drive files, or change usage counts.
-
-If final masters were upscaled after render, the Drive file id must point to the
-upscaled master, not the original rendered MP4.
-
-## Approval And Writeback
-
-Only write usage after clear approval, such as:
+Examples:
 
 ```text
-approve all
+1 video per POI -> 50 active assets
+2 videos per POI -> 60 active assets
+3 videos per POI -> 70 active assets
+4 videos per POI -> 80 active assets
+```
+
+Future paradigms such as `pgc_120s` may define different base requirements.
+
+## Per-Video Production Order
+
+Target order for each production video:
+
+```text
+render MP4
+-> audit manifest
+-> upload final MP4 to durable storage, currently Drive
+-> write usage from manifest
+-> verify usage writeback
+-> insert release_candidates row
+-> verify release_candidates row
+-> update RUN_RECEIPT.json
+```
+
+Do not create `release_candidates` for local paths, VPS temp paths, or Downloads
+paths. `source_output_uri` must be durable, currently `drive:<file_id>`.
+
+Do not write usage before durable upload succeeds. If upload fails, no usage was
+spent and no release candidate exists.
+
+## Manifest Audit
+
+Usage writeback is derived from the manifest. No valid manifest means no usage
+writeback and no release candidate.
+
+Before trusting a rendered video, verify:
+
+- manifest exists and has `manifest_id`, `run_id`, POI id/name;
+- exactly one rendered output exists for the video slot;
+- output has `music_label`;
+- every timeline entry has `asset_id` and `occurrence_id`;
+- every used `asset_id` exists in `asset_snapshot`;
+- `bridge_tail` entries also carry `asset_id`;
+- usage events can be derived and event IDs are unique.
+
+## Failure Policy
+
+| Failure | Required behavior |
+| --- | --- |
+| Render/vendor/transient failure | Retry in code when safe; after retry budget, mark video failed and continue. |
+| Manifest audit failure | Do not write usage; do not create release candidate; mark video unsafe and continue. |
+| Drive upload failure | Retry in code; after retry budget, do not write usage or release candidate; mark failed handoff and continue. |
+| Usage writeback/verification failure | Retry in code; if still failed or unclear, quarantine that POI and do not produce more videos for it. Continue other POIs only if asset usage is POI-isolated; otherwise stop the batch. |
+| `release_candidates` insert/verification failure | Retry in code; if still failed, mark handoff failed/retryable and continue. Usage is already correct. |
+| Not enough eligible POIs | Stop before production and ask Leo whether to run fewer or wait. |
+
+Retries belong in repo/runtime code, not improvised agent loops. The skill sets
+policy; CLIs should implement bounded retries and verification.
+
+## RUN_RECEIPT.json
+
+Every production run must write a batch receipt. Future sessions resume from
+the receipt, not chat history.
+
+Minimum fields:
+
+- `batch_id`;
+- `paradigm`, e.g. `pgc_65s`;
+- request config: requested POIs, videos per POI, filters, cooldown,
+  active-asset formula;
+- selected/skipped POIs;
+- per-video state: render, manifest, Drive upload, usage, release candidate;
+- manifest IDs and output URIs;
+- usage event counts and verification status;
+- release candidate IDs/status when created;
+- quarantined POIs;
+- summary counts and top-up recommendation.
+
+Do not add a Supabase batch registry now. Use JSON receipts for the batch-level
+"order"; keep asset truth in `poi_asset_usage_events`, finished-video truth in
+`release_candidates`, and distribution truth in `distribution_status`.
+
+## Review Mode
+
+Review mode is explicit. In review mode:
+
+- produce MP4s/manifests/sidecars;
+- copy review artifacts to Downloads if requested;
+- generate usage preview and audit summary;
+- do not write usage;
+- do not upload/register release candidates unless Leo later approves that step.
+
+Clear approval examples:
+
+```text
 write usage
-write usage for video_001 and video_003
+approve these for production
+register these release candidates
+top up the missing videos
 ```
 
-Support partial approval. Write usage only for approved manifests.
-
-Before writeback:
-
-1. Generate/read usage preview.
-2. Report event count, unique assets, role counts, and manifest IDs.
-3. State that live Supabase will be changed.
-4. STOP and execute only after explicit approval.
-
-For multiple approved manifests, pass all approved manifest paths. The writeback
-is batched by manifest/RPC payload and idempotent by `event_id`.
-
-After writeback, verify the approved manifest rows exist in
-`public.poi_asset_usage_events` and affected assets have updated `usage_count` /
-`last_used_at`. For production batches, write approved usage before starting the
-next batch unless Leo explicitly keeps the run preview-only.
+Ambiguous phrases like "looks good" or "continue" are not enough for live state
+changes in review mode.
 
 ## Reverting Usage
 
-If Leo asks to revert past usage counts:
+If Leo asks to revert past usage:
 
-1. First check whether the target manifests were actually written:
-   - query `public.poi_asset_usage_events` by `manifest_id`;
-   - if there are zero rows, say no revert is needed.
-2. If rows exist, show a revert preview:
-   - manifest IDs;
-   - event count;
-   - affected asset count;
-   - current usage_count min/max for affected assets.
-3. STOP and wait for explicit approval.
-4. Use the controlled Supabase/AIGC-side revert flow that, in one transaction:
-   - removes or marks only the target manifest events;
-   - recomputes `poi_asset_assets.usage_count` from the remaining usage ledger;
-   - recomputes `last_used_at` from remaining events.
-5. Do not blindly subtract counts if other events may also reference the same
-   assets. Recompute from ledger when reverting.
-
-## Failure Handling
-
-| If this happens | Do this |
-| --- | --- |
-| POI has `eligible_assets <= 50` | Skip that POI and continue with eligible POIs. |
-| Music Library has no track with `duration_sec >= target_duration_sec` | Skip that POI and report no eligible music. |
-| Retrieval dry run fails or has too few ready embeddings | Skip the POI; do not fall back to direct asset-table selection. |
-| Batch CLI exits non-zero | Stop, preserve logs, and report failed POIs/videos. |
-| Expected MP4 or manifest sidecar is missing | Stop before review; do not write usage. |
-| Manifest audit fails | Stop before review; report the exact failed invariant. |
-| Upscale final-master audit fails | Stop before Drive staging; do not export handoff or write usage. |
-| Drive staging lacks file IDs | Stop before release handoff; `export_release_handoff` needs `drive:<file_id>`. |
-| VPS disconnects or local copy fails | Reconnect and verify files before review; do not infer success from logs alone. |
-| Usage preview fails | Stop; do not call the writeback CLI. |
-| Usage writeback verification does not match preview | Stop production and report affected manifests. |
+1. Query `public.poi_asset_usage_events` by manifest ID.
+2. If zero rows exist, say no revert is needed.
+3. If rows exist, show a revert preview: manifest IDs, event count, affected
+   asset count, current usage_count min/max.
+4. STOP and wait for explicit approval.
+5. Recompute usage counts from the ledger; do not blindly subtract counts.
 
 ## Danger List
 
-- Do not write usage for preview or test renders.
-- Do not bypass `public.poi_asset_valid_clips` for production selection.
-- Do not keep producing after usage writeback fails.
-- Do not write usage when manifest audit fails.
-- Do not revert by manually deleting rows or subtracting `usage_count`.
-- Do not auto-approve partial batches; ask which manifests Leo accepts.
-- Do not infer release-candidate music from filenames. The handoff must carry
-  `music_label`.
-- Do not run large preview batches without writeback cycles or a run-local
-  reserved-usage guard.
-- Do not hand off original rendered MP4 Drive IDs when Leo approved upscaled
-  masters.
+- Do not write usage from an invalid manifest.
+- Do not register `release_candidates` without a durable `drive:<file_id>`.
+- Do not write `distribution_status` from PGC.
+- Do not silently relax POI filters or classification requirements.
+- Do not auto top-up unless Leo asks.
+- Do not use local Downloads or VPS temp paths as final media URIs.
+- Do not continue producing a quarantined POI.
+- Do not revert by manual row deletion or count subtraction.
 
 ## Final Report
 
 Always finish with:
 
-- rendered/failed/skipped counts;
-- local Downloads path;
-- manifest audit summary;
-- usage preview summary;
-- whether Supabase usage was written;
-- any POIs skipped for asset-count or embedding readiness;
-- final-master/upscale/Drive state when relevant;
-- next recommended action.
+- requested/succeeded/failed video counts;
+- selected/skipped POIs and shortage if any;
+- quarantined POIs;
+- receipt path;
+- usage writeback summary;
+- release candidate summary;
+- review package path only when review/download was requested;
+- exact next action if top-up, revert, or handoff repair is needed.
