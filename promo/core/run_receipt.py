@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from promo.core.manifest_audit import audit_manifest_path
+
 
 SCHEMA_VERSION = 1
 DEFAULT_COOLDOWN_DAYS = 3
@@ -81,6 +83,11 @@ def build_video_record(
             "path": None,
             "manifest_id": None,
             "run_id": None,
+        },
+        "manifest_audit": {
+            "status": "pending",
+            "passed": None,
+            "error_count": None,
         },
         "drive_upload": {
             "status": "not_implemented",
@@ -187,6 +194,23 @@ def discover_manifest(output_dir: str) -> dict[str, Any]:
     }
 
 
+def audit_discovered_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
+    if manifest.get("status") != "found" or not manifest.get("path"):
+        return {
+            "status": "not_run",
+            "passed": None,
+            "error_count": None,
+        }
+    audit = audit_manifest_path(Path(str(manifest["path"])))
+    return {
+        "status": "passed" if audit["passed"] else "failed",
+        "passed": bool(audit["passed"]),
+        "error_count": int(audit["error_count"]),
+        "summary": audit["summary"],
+        "errors": audit["errors"],
+    }
+
+
 def mark_rendering(video: dict[str, Any]) -> None:
     video["state"] = "rendering"
     video["error"] = None
@@ -199,6 +223,36 @@ def mark_render_result(video: dict[str, Any], *, return_code: int) -> None:
         video["manifest"] = discover_manifest(video["render"]["output_dir"])
         if video["manifest"]["status"] == "missing":
             video["state"] = "rendered_manifest_missing"
+            video["manifest_audit"] = {
+                "status": "not_run",
+                "passed": None,
+                "error_count": None,
+            }
+        elif video["manifest"]["status"] == "found":
+            try:
+                video["manifest_audit"] = audit_discovered_manifest(video["manifest"])
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                video["state"] = "rendered_manifest_audit_error"
+                video["manifest_audit"] = {
+                    "status": "error",
+                    "passed": False,
+                    "error_count": None,
+                    "error": str(exc),
+                }
+                video["error"] = f"manifest audit error: {exc}"
+            else:
+                if video["manifest_audit"]["passed"]:
+                    video["state"] = "rendered_manifest_audited"
+                else:
+                    video["state"] = "rendered_manifest_audit_failed"
+                    video["error"] = "manifest audit failed"
+        else:
+            video["state"] = f"rendered_manifest_{video['manifest']['status']}"
+            video["manifest_audit"] = {
+                "status": "not_run",
+                "passed": None,
+                "error_count": None,
+            }
     else:
         video["state"] = "render_failed"
         video["manifest"] = {
@@ -206,6 +260,11 @@ def mark_render_result(video: dict[str, Any], *, return_code: int) -> None:
             "path": None,
             "manifest_id": None,
             "run_id": None,
+        }
+        video["manifest_audit"] = {
+            "status": "not_run",
+            "passed": None,
+            "error_count": None,
         }
         video["error"] = f"compile_promo exited with code {return_code}"
 
@@ -221,6 +280,14 @@ def summarize_videos(videos: list[dict[str, Any]]) -> dict[str, int]:
         "manifest_found_videos": sum(
             1 for video in videos
             if (video.get("manifest") or {}).get("status") == "found"
+        ),
+        "manifest_audited_videos": sum(
+            1 for video in videos
+            if (video.get("manifest_audit") or {}).get("status") == "passed"
+        ),
+        "manifest_audit_failed_videos": sum(
+            1 for video in videos
+            if (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}
         ),
         "usage_written_videos": sum(
             1 for video in videos

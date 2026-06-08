@@ -146,6 +146,7 @@ def test_run_batch_returns_failure_when_any_item_fails(tmp_path):
 
 def test_run_batch_receipt_records_manifest_identity_when_present(tmp_path):
     from promo.cli.run_batch import run_batch
+    from promo.core.pipeline.run_manifest import build_run_manifest
 
     batch_path = tmp_path / "batch.json"
     batch_path.write_text(
@@ -161,13 +162,48 @@ def test_run_batch_receipt_records_manifest_identity_when_present(tmp_path):
         output_dir = tmp_path / "out" / "terranea_resort" / "video_001"
         assert str(output_dir) in output_path
         manifest_path = output_dir / "run_manifest_terranea_resort_65s.json"
-        manifest_path.write_text(
-            json.dumps({
-                "manifest_id": "manifest_123",
-                "run_id": "pgc_run_123",
-            }),
-            encoding="utf-8",
+        manifest = build_run_manifest(
+            poi_name="Terranea Resort",
+            location="",
+            target_duration_sec=65,
+            n_variants=1,
+            script_candidates=1,
+            format_selector="single",
+            embedding_cache_active=False,
+            poi_id="poi_123",
+            clip_paths={"0001": "/tmp/clip_0001.mp4"},
+            clips_metadata=[],
+            clip_durations={},
+            shared_assets=[{
+                "asset_id": "asset_abc",
+                "clip_id": "0001",
+                "source_storage_bucket": "poi-assets",
+                "source_storage_path": "poi_123/clips/asset_abc.mp4",
+                "source_content_hash": "sha256:" + "a" * 64,
+                "duration_sec": 5.0,
+            }],
+            rendered_outputs=[{
+                "variant_index": 1,
+                "render_output_path": output_path,
+                "final_output_path": output_path,
+                "target_duration_sec": 65,
+                "music_label": "Run Away with Me",
+                "timeline_entries": [{
+                    "clip_id": "0001",
+                    "usage_role": "assigned_phrase",
+                    "segment": 1,
+                    "trim_start_sec": 0.0,
+                    "trim_end_sec": 2.0,
+                    "display_start_sec": 0.0,
+                    "display_end_sec": 2.0,
+                    "source_duration_sec": 5.0,
+                }],
+            }],
+            sidecar_paths={},
+            run_id="pgc_run_123",
+            manifest_id="manifest_123",
         )
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         return 0
 
     exit_code = run_batch(
@@ -180,11 +216,69 @@ def test_run_batch_receipt_records_manifest_identity_when_present(tmp_path):
     assert exit_code == 0
     receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
     assert receipt["summary"]["manifest_found_videos"] == 1
+    assert receipt["summary"]["manifest_audited_videos"] == 1
+    assert receipt["summary"]["manifest_audit_failed_videos"] == 0
     video = receipt["videos"][0]
-    assert video["state"] == "rendered"
+    assert video["state"] == "rendered_manifest_audited"
     assert video["manifest"]["status"] == "found"
     assert video["manifest"]["manifest_id"] == "manifest_123"
     assert video["manifest"]["run_id"] == "pgc_run_123"
+    assert video["manifest_audit"]["status"] == "passed"
+    assert video["manifest_audit"]["summary"]["usage_event_count"] == 1
+
+
+def test_run_batch_receipt_records_manifest_audit_failure(tmp_path):
+    from promo.cli.run_batch import run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+        }),
+        encoding="utf-8",
+    )
+
+    def command_runner(command):
+        output_dir = tmp_path / "out" / "terranea_resort" / "video_001"
+        manifest_path = output_dir / "run_manifest_terranea_resort_65s.json"
+        manifest_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "manifest_id": "manifest_123",
+                "run_id": "pgc_run_123",
+                "poi": {
+                    "poi_id": "poi_123",
+                    "display_name": "Terranea Resort",
+                },
+                "asset_snapshot": [{
+                    "clip_id": "0001",
+                    "asset_id": "asset_abc",
+                }],
+                "outputs": [{
+                    "variant_index": 1,
+                    "output_path": command[command.index("--output") + 1],
+                }],
+                "timeline_entries": [],
+            }),
+            encoding="utf-8",
+        )
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+    )
+
+    assert exit_code == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    video = receipt["videos"][0]
+    assert video["state"] == "rendered_manifest_audit_failed"
+    assert video["manifest_audit"]["status"] == "failed"
+    assert video["error"] == "manifest audit failed"
+    assert receipt["summary"]["manifest_audit_failed_videos"] == 1
 
 
 def test_run_batch_rejects_parallel_jobs_until_safe(tmp_path):

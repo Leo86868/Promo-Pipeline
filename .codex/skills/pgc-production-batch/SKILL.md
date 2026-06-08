@@ -35,7 +35,7 @@ This repo currently has local manifests, usage preview/writeback helpers with
 manifest audit and post-write verification, a local release handoff exporter,
 `release_candidates` registration with post-insert verification, read-only random
 POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
-inventory via `promo.cli.prepare_drive_staging`, and render-only
+inventory via `promo.cli.prepare_drive_staging`, and render plus manifest-audit
 `RUN_RECEIPT.json` emission from `promo.cli.run_batch`. The future autopilot path
 still needs repo/runtime support for real Drive API upload, per-video writeback
 orchestration, POI quarantine, and receipt-based resume/top-up.

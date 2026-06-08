@@ -345,6 +345,13 @@ def run_batch(
                 item.video_index,
                 return_code,
             )
+        elif (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
+            failures += 1
+            logger.error(
+                "Batch item manifest audit failed: poi=%s video=%d",
+                item.poi.name,
+                item.video_index,
+            )
 
     return 1 if failures else 0
 

@@ -268,5 +268,6 @@ manifest audit and verifies the rows by `event_id`.
 `promo.cli.register_release_candidates --execute` already inserts approved
 handoff rows and verifies the rows by `source_video_key`.
 
-`promo.cli.run_batch` already emits a render-only `RUN_RECEIPT.json`; future
-work should extend it through the full production state machine.
+`promo.cli.run_batch` already emits `RUN_RECEIPT.json` through render and
+manifest-audit states; future work should extend it through the full production
+state machine.

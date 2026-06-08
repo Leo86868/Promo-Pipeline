@@ -283,6 +283,6 @@ Current `promo.cli.register_release_candidates --execute` inserts approved
 handoff rows into `release_candidates` and verifies the rows by
 `source_video_key` after insert.
 
-Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
-work needs to extend that receipt through Drive, usage, release-candidate, and
-resume/top-up states.
+Current `promo.cli.run_batch` writes `RUN_RECEIPT.json` through render and
+manifest-audit states. Future work needs to extend that receipt through Drive,
+usage, release-candidate, and resume/top-up states.
