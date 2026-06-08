@@ -223,14 +223,14 @@ The final report should say:
 The target contract is ahead of the current repo implementation. The repo still
 needs dedicated support for:
 
-- random eligible POI selection;
-- 3-day cooldown;
-- dynamic active asset thresholds;
 - Drive upload;
 - per-video usage writeback orchestration;
 - release candidate insertion and verification;
 - POI quarantine;
 - resume/top-up from receipt.
+
+Current `promo.cli.select_batch_pois` already does read-only random POI
+selection, 3-day cooldown, and dynamic active asset thresholds.
 
 Current `promo.cli.run_batch` writes a render-only `RUN_RECEIPT.json`. Future
 work needs to extend that receipt through Drive, usage, release-candidate, and

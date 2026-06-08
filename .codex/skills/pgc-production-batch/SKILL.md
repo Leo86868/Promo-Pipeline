@@ -32,11 +32,12 @@ to Leo in non-code terms.
 ## Current Implementation Boundary
 
 This repo currently has local manifests, usage preview/writeback helpers, a
-local release handoff exporter, and render-only `RUN_RECEIPT.json` emission from
-`promo.cli.run_batch`. The future autopilot path also needs repo/runtime support
-for random eligible POI selection, cooldown, Drive upload, per-video writeback
-orchestration, `release_candidates` insertion, verification, POI quarantine,
-and receipt-based resume/top-up.
+local release handoff exporter, read-only random POI selection via
+`promo.cli.select_batch_pois`, and render-only `RUN_RECEIPT.json` emission from
+`promo.cli.run_batch`. The future autopilot path still needs repo/runtime
+support for Drive upload, per-video writeback orchestration,
+`release_candidates` insertion, verification, POI quarantine, and receipt-based
+resume/top-up.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -71,6 +72,8 @@ PGC must not write account distribution state.
   to all POIs.
 - If not enough POIs pass filters, stop before production and ask Leo whether to
   run the smaller count or wait for zhongtai to add assets.
+- Use `python3 -m promo.cli.select_batch_pois` for the current read-only
+  selector/preflight and batch JSON generation.
 
 ## Active Asset Rule
 
