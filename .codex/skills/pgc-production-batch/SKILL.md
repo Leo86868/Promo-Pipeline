@@ -177,6 +177,39 @@ captions, CTA, audio mix, timeline entries, and manifest/usage semantics.
 For repair/debug against a known POI list, `run_batch --batch "$batch_json"` is
 still supported.
 
+## Approved Existing Masters Handoff
+
+When Leo says something like "continue the approved batch handoff" for existing
+PGC masters, do not require him to recite the workflow. Ask only for the missing
+artifact path if it was not provided. The normal artifact is an inventory JSON.
+
+Supported inventory shapes:
+
+- `pgc_drive_staging_inventory`: already normalized for Drive upload.
+- `final_masters_inventory`: approved/upscaled masters with
+  `upscaled_mp4_path`, `run_manifest_path`, `manifest_id`, `run_id`,
+  `source_video_key`, POI fields, and music fields. Normalize this into a
+  `pgc_drive_staging_inventory` before upload; use `upscaled_mp4_path` as the
+  final `local_output_path`, not the pre-upscale render.
+
+Safe order for approved existing masters:
+
+```text
+preflight inventory and MP4 paths
+-> audit every run_manifest_path
+-> check Supabase for existing usage/release candidate duplicates
+-> upload approved masters to private neutral Drive staging
+-> generate handoff items / release handoff JSON with drive:<file_id> URIs
+-> write usage from manifests and verify
+-> register release_candidates and verify
+-> stop before distribution_status
+```
+
+Do not write usage or `release_candidates` for local Downloads paths or VPS temp
+paths. Durable media must be `drive:<file_id>`. Do not write
+`distribution_status`; AIGC/zhongtai owns distribution after
+`release_candidates`.
+
 The manual repair/debug path can prepare/audit the Drive staging inventory:
 
 ```bash
