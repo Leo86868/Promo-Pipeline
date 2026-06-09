@@ -14,6 +14,7 @@ decomposition). Behavior byte-identical to the pre-extraction site.
 
 import logging
 import os
+import re
 from typing import TYPE_CHECKING
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
@@ -44,6 +45,10 @@ logger = logging.getLogger(__name__)
 # the closure's log line, the union_of_top_k call, and any future analytical
 # consumer in lockstep.
 RETRIEVAL_TOP_K = 6
+TTS_ASSEMBLY_DRIFT_MAX_ATTEMPTS = 2
+TTS_ASSEMBLY_DRIFT_RETRY_MAX_SEC = 1.0
+_TTS_ASSEMBLY_DRIFT_MARKER = "Narration assembly drift too large"
+_TTS_ASSEMBLY_DRIFT_RE = re.compile(r"drift=([0-9]+(?:\.[0-9]+)?)s")
 
 
 # ---------------------------------------------------------------------------
@@ -223,12 +228,38 @@ def _step_tts_narration(
         variant_index,
         [s.get("pause_after_ms") for s in script["segments"]],
     )
-    return generate_narration(  # type: ignore[return-value]
-        segments=script["segments"],
-        voice_key=voice_key,
-        output_dir=tmp_dir,
-        speed=speed,
-    )
+    for attempt in range(1, TTS_ASSEMBLY_DRIFT_MAX_ATTEMPTS + 1):
+        try:
+            return generate_narration(  # type: ignore[return-value]
+                segments=script["segments"],
+                voice_key=voice_key,
+                output_dir=tmp_dir,
+                speed=speed,
+            )
+        except RuntimeError as exc:
+            drift_sec = _retryable_tts_assembly_drift_sec(exc)
+            if drift_sec is None or attempt >= TTS_ASSEMBLY_DRIFT_MAX_ATTEMPTS:
+                raise
+            logger.warning(
+                "TTS assembly drift %.3fs on attempt %d/%d; retrying narration once",
+                drift_sec,
+                attempt,
+                TTS_ASSEMBLY_DRIFT_MAX_ATTEMPTS,
+            )
+    raise RuntimeError("TTS narration retry loop exhausted unexpectedly")
+
+
+def _retryable_tts_assembly_drift_sec(exc: RuntimeError) -> float | None:
+    message = str(exc)
+    if _TTS_ASSEMBLY_DRIFT_MARKER not in message:
+        return None
+    match = _TTS_ASSEMBLY_DRIFT_RE.search(message)
+    if not match:
+        return None
+    drift_sec = float(match.group(1))
+    if drift_sec > TTS_ASSEMBLY_DRIFT_RETRY_MAX_SEC:
+        return None
+    return drift_sec
 
 
 def _step_prepare_clips(

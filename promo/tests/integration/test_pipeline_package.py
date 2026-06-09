@@ -38,6 +38,7 @@ EXPECTED_MODULES = frozenset({
     "bgm_voice_resolver.py",
     "pipeline.py",
     "poi_asset_valid_clips.py",
+    "release_handoff.py",
     "run_manifest.py",
     "sidecar_writer.py",
     "steps.py",

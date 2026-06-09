@@ -53,6 +53,7 @@ def test_build_release_handoff_normalizes_drive_id_and_preserves_music_label(tmp
         "poi_name": "Test Resort",
         "source_output_uri": "drive:1AbCdEfGhIjKlMnOpQrStUvWxYz",
         "source_run_id": "pgc_run_abc",
+        "status": "approved",
         "approved_at": "2026-06-07T00:00:00Z",
         "music_label": "Run Away with Me",
         "source_batch_id": "pgc_batch_test",

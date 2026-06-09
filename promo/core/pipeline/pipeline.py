@@ -39,6 +39,7 @@ from promo.core.pipeline.steps import (
 )
 from promo.core.pipeline.variant_loop import _run_variant_loop
 from promo.core.render.remotion_renderer import REMOTION_DIR
+from promo.core.source_resolution_policy import source_resolution_summary
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,13 @@ def _retrieve_shared_asset_candidates_from_ready_assets(
         "retrieval_contract": "shared_asset_semantic_candidates_v1",
         "fallback_reason": None,
         "eligible_asset_pool_size": len(ready_assets),
+        "source_resolution_summary": source_resolution_summary([
+            {
+                "width": getattr(asset, "width", None),
+                "height": getattr(asset, "height", None),
+            }
+            for asset in ready_assets
+        ]),
         "query_count": len(queries),
         "top_k_per_query": DEFAULT_TOP_K_PER_QUERY,
         "max_candidates": DEFAULT_MAX_CANDIDATES,

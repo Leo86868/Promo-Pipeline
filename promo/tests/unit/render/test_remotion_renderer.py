@@ -32,12 +32,15 @@ def test_render_promo_uses_configured_timeout(monkeypatch, tmp_path):
     captured = {}
 
     def fake_run(*args, **kwargs):
+        captured["cmd"] = args[0]
         captured["timeout"] = kwargs["timeout"]
         output_path.write_bytes(b"x" * 200_000)
         return MagicMock(returncode=0, stdout="", stderr="")
 
     monkeypatch.setenv("PROMO_RENDER_CONCURRENCY", "1")
     monkeypatch.setenv("PROMO_RENDER_TIMEOUT_SEC", "901")
+    monkeypatch.setenv("PROMO_RENDER_X264_PRESET", "ultrafast")
+    monkeypatch.setenv("PROMO_RENDER_CRF", "26")
     monkeypatch.setattr(rr, "validate_props", lambda props: [])
     monkeypatch.setattr(rr.subprocess, "run", fake_run)
 
@@ -46,6 +49,9 @@ def test_render_promo_uses_configured_timeout(monkeypatch, tmp_path):
         str(output_path),
     )
     assert captured["timeout"] == 901
+    assert captured["cmd"][captured["cmd"].index("--concurrency") + 1] == "1"
+    assert captured["cmd"][captured["cmd"].index("--x264-preset") + 1] == "ultrafast"
+    assert captured["cmd"][captured["cmd"].index("--crf") + 1] == "26"
 
 
 class TestSprint07PauseWindows:

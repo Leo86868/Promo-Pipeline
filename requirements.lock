@@ -26,16 +26,21 @@ google-api-core[grpc]==2.30.3
     #   google-api-python-client
     #   google-generativeai
 google-api-python-client==2.194.0
-    # via google-generativeai
+    # via
+    #   -r requirements.txt
+    #   google-generativeai
 google-auth==2.49.2
     # via
     #   google-ai-generativelanguage
     #   google-api-core
     #   google-api-python-client
     #   google-auth-httplib2
+    #   google-auth-oauthlib
     #   google-generativeai
 google-auth-httplib2==0.3.1
     # via google-api-python-client
+google-auth-oauthlib==1.4.0
+    # via -r requirements.txt
 google-generativeai==0.8.6
     # via -r requirements.txt
 googleapis-common-protos==1.74.0
@@ -64,6 +69,8 @@ networkx==3.6.1
     # via torch
 numpy==2.4.4
     # via -r requirements.txt
+oauthlib==3.3.1
+    # via requests-oauthlib
 proto-plus==1.27.2
     # via
     #   google-ai-generativelanguage
@@ -96,6 +103,9 @@ requests==2.33.1
     # via
     #   -r requirements.txt
     #   google-api-core
+    #   requests-oauthlib
+requests-oauthlib==2.0.0
+    # via google-auth-oauthlib
 sympy==1.14.0
     # via torch
 torch==2.11.0

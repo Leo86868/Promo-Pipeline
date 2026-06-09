@@ -406,3 +406,60 @@ evidence:
    - investigate Remotion speed and VPS throughput;
    - decide how batch jobs are activated, e.g. CLI command, batch runner,
      scheduler, or API.
+
+## 2026-06-09 Closeout - Preview12 Upscaled Masters
+
+Current approved batch:
+
+```text
+review package:
+  /Users/leowu/Downloads/pgc_preview12_36_20260607T074902Z
+final masters:
+  /Users/leowu/Downloads/pgc_preview12_36_20260607T074902Z/wavespeed_upscaled_masters
+inventory:
+  final_masters_inventory.json
+audit:
+  upscaled_audit.json
+```
+
+Status:
+
+- Leo approved the 36-video preview batch.
+- The 36 final masters were ad hoc upscaled with WaveSpeed.
+- Final master audit passed:
+  - 36 / 36 MP4 files;
+  - 12 POIs;
+  - 1080x1920 for all outputs;
+  - audio present for all outputs;
+  - duration range: 65.002667s to 65.301333s;
+  - audit problems: 0.
+- This WaveSpeed step is temporary/ad hoc. It should not become the normal PGC
+  pipeline path; future asset-library ingest should upscale source clips before
+  PGC consumes them.
+- No Drive staging upload has been performed in this session.
+- No usage writeback has been performed for this 36-video batch in this session.
+- No release handoff JSON has been generated from Drive file IDs yet.
+
+2026-06-09 update from Leo:
+
+- Neutral Drive staging upload, Drive file ID capture, release handoff JSON,
+  Supabase usage writeback, AIGC release candidate import, and AIGC
+  distribution/deploy were reported complete after this local closeout.
+- A fresh PGC session should verify live Drive/Supabase/AIGC state before using
+  that as database evidence, but these steps should no longer be treated as
+  locally pending.
+
+Next sequence:
+
+1. Verify the reported live Drive/Supabase/AIGC state if another session needs
+   hard evidence.
+2. Start committing and PRing the production-autopilot, final-upscale,
+   source-resolution, skill, and operations-doc changes so the repo returns to a
+   clean baseline.
+3. Keep PGC writes scoped to usage/release-candidate handoff; PGC must not write
+   `distribution_status`.
+
+Skill note:
+
+- `pgc-production-batch` now documents this approved-master staging flow, but
+  real Drive upload is still not productized inside this repo.

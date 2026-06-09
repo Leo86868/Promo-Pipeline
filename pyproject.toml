@@ -9,6 +9,8 @@ description = "Standalone narrated promo-video pipeline (MiMo + Gemini + ElevenL
 requires-python = ">=3.11"
 dependencies = [
   "google-generativeai",
+  "google-api-python-client",
+  "google-auth-oauthlib",
   "requests",
   "python-dotenv",
   "supabase>=2.0",

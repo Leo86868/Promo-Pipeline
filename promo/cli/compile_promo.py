@@ -112,14 +112,23 @@ def _build_backend(args) -> PromoBackend:
             output_dir=args.output_dir,
         )
     if args.supabase_poi_id or args.supabase_canonical_key:
-        return PoiAssetSupabaseBackend.from_env(
-            poi_id=args.supabase_poi_id,
-            canonical_key=args.supabase_canonical_key,
-            output_dir=args.output_dir,
-            use_music_library=args.supabase_music_library or bool(args.supabase_music_id),
-            music_id=args.supabase_music_id,
-            music_min_duration_sec=args.target_duration_sec,
-        )
+        kwargs = {
+            "poi_id": args.supabase_poi_id,
+            "canonical_key": args.supabase_canonical_key,
+            "output_dir": args.output_dir,
+            "use_music_library": args.supabase_music_library or bool(args.supabase_music_id),
+            "music_id": args.supabase_music_id,
+            "music_min_duration_sec": args.target_duration_sec,
+        }
+        if args.source_resolution_policy_mode != "best_available":
+            kwargs["source_resolution_policy"] = {
+                "mode": args.source_resolution_policy_mode,
+                "target_width": args.source_target_width,
+                "tolerance_px": args.source_width_tolerance_px,
+                "aspect_ratio_min": args.source_aspect_ratio_min,
+                "aspect_ratio_max": args.source_aspect_ratio_max,
+            }
+        return PoiAssetSupabaseBackend.from_env(**kwargs)
     if args.supabase_music_library or args.supabase_music_id:
         raise ValueError("Supabase Music Library requires a Supabase POI lookup")
     raise ValueError(
@@ -220,6 +229,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Directory to save output")
+    parser.add_argument("--source-resolution-policy-mode",
+                        choices=["best_available", "transition_low_res_only", "width_band"],
+                        default="best_available")
+    parser.add_argument("--source-target-width", type=int, default=720)
+    parser.add_argument("--source-width-tolerance-px", type=int, default=40)
+    parser.add_argument("--source-aspect-ratio-min", type=float, default=1.70)
+    parser.add_argument("--source-aspect-ratio-max", type=float, default=1.86)
 
     # Sprint 16 — selector seam reproducibility flag. Landed here (inside
     # `_build_parser()` after the promo-handoff-readiness Sprint 1 parser
