@@ -21,6 +21,11 @@ from promo.core.pipeline.poi_asset_valid_clips import (
     POI_ASSET_VALID_CLIPS_VIEW,
     build_poi_asset_valid_clip_snapshot,
 )
+from promo.core.source_resolution_policy import (
+    SourceResolutionPolicy,
+    normalize_source_resolution_policy,
+    source_resolution_matches,
+)
 
 logger = logging.getLogger(__name__)
 _DOWNLOAD_ATTEMPTS = 3
@@ -77,6 +82,7 @@ class PoiAssetSupabaseBackend:
         music_min_duration_sec: float | None = None,
         max_clips: int | None = None,
         verify_hash: bool = True,
+        source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
     ) -> None:
         if not poi_id and not canonical_key:
             raise PoiAssetBackendError("poi_id or canonical_key is required")
@@ -96,6 +102,9 @@ class PoiAssetSupabaseBackend:
         )
         self._max_clips = max_clips
         self._verify_hash = verify_hash
+        self._source_resolution_policy = normalize_source_resolution_policy(
+            source_resolution_policy
+        )
         self._shared_assets: list[dict[str, Any]] = []
         self._local_output = LocalBackend(
             clips_dir="",
@@ -147,6 +156,14 @@ class PoiAssetSupabaseBackend:
             return {}
 
         snapshot = build_poi_asset_valid_clip_snapshot(rows, poi_id=self._poi_id)
+        snapshot = [
+            row for row in snapshot
+            if source_resolution_matches(row, self._source_resolution_policy)
+        ]
+        if not snapshot:
+            raise PoiAssetBackendError(
+                "poi_asset_valid_clips rows did not match source_resolution_policy"
+            )
         poi_ids = {row["poi_id"] for row in snapshot}
         if len(poi_ids) != 1:
             raise PoiAssetBackendError("poi_asset_valid_clips rows span multiple poi_id values")
@@ -220,6 +237,15 @@ class PoiAssetSupabaseBackend:
             )
         ordered_rows = [rows_by_asset_id[asset_id] for asset_id in requested_asset_ids]
         snapshot = build_poi_asset_valid_clip_snapshot(ordered_rows, poi_id=self._poi_id)
+        rejected = [
+            row["asset_id"] for row in snapshot
+            if not source_resolution_matches(row, self._source_resolution_policy)
+        ]
+        if rejected:
+            raise PoiAssetBackendError(
+                "candidate asset_ids violate source_resolution_policy: "
+                + ", ".join(rejected[:5])
+            )
         poi_ids = {row["poi_id"] for row in snapshot}
         if len(poi_ids) != 1:
             raise PoiAssetBackendError("candidate asset rows span multiple poi_id values")
@@ -277,7 +303,11 @@ class PoiAssetSupabaseBackend:
             raise PoiAssetBackendError("poi_id is required for semantic retrieval")
         from promo.core.assets.retrieval import fetch_ready_assets
 
-        return fetch_ready_assets(self._client, poi_id=self._poi_id)
+        return fetch_ready_assets(
+            self._client,
+            poi_id=self._poi_id,
+            source_resolution_policy=self._source_resolution_policy,
+        )
 
     def shared_poi_id(self) -> str | None:
         return self._poi_id

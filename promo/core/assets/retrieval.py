@@ -13,6 +13,11 @@ from typing import Any
 import numpy as np
 
 from promo.core.pipeline.poi_asset_valid_clips import build_poi_asset_valid_clip_snapshot
+from promo.core.source_resolution_policy import (
+    SourceResolutionPolicy,
+    normalize_source_resolution_policy,
+    source_resolution_matches,
+)
 
 
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -57,6 +62,8 @@ class ReadyAsset:
     source_storage_path: str
     source_content_hash: str
     embedding_vector: tuple[float, ...]
+    width: int | None = None
+    height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -128,8 +135,10 @@ def fetch_ready_assets(
     dim: int = EMBEDDING_DIM,
     composition_version: int = EMBEDDING_COMPOSITION_VERSION,
     chunk_size: int = 100,
+    source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
 ) -> list[ReadyAsset]:
     """Fetch ready shared assets and vectors for one POI from Supabase."""
+    resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     valid_rows = _response_data(
         client.table("poi_asset_valid_clips")
         .select("*")
@@ -142,6 +151,15 @@ def fetch_ready_assets(
     snapshot = build_poi_asset_valid_clip_snapshot(valid_rows, poi_id=poi_id)
     if not snapshot:
         raise AssetRetrievalError(f"no valid shared assets found for poi_id={poi_id}")
+    snapshot = [
+        row for row in snapshot
+        if source_resolution_matches(row, resolved_source_policy)
+    ]
+    if not snapshot:
+        raise AssetRetrievalError(
+            "no valid shared assets matched source_resolution_policy="
+            f"{resolved_source_policy.to_dict()} for poi_id={poi_id}"
+        )
 
     asset_ids = [row["asset_id"] for row in snapshot]
     embedding_rows: list[dict[str, Any]] = []
@@ -194,6 +212,8 @@ def fetch_ready_assets(
                 source_storage_path=row["source_storage_path"],
                 source_content_hash=row["source_content_hash"],
                 embedding_vector=parse_embedding_vector(embedding["embedding_vector"], expected_dim=dim),
+                width=row.get("width"),
+                height=row.get("height"),
             )
         )
     return sorted(ready_assets, key=lambda asset: asset.clip_id)
@@ -211,6 +231,8 @@ def clip_metadata_from_ready_assets(assets: list[ReadyAsset]) -> list[dict[str, 
             "main_subject": asset.main_subject,
             "camera_motion": asset.camera_motion,
             "source_duration_sec": asset.duration_sec,
+            "width": asset.width,
+            "height": asset.height,
         }
         for asset in sorted(assets, key=lambda item: item.clip_id)
     ]

@@ -55,6 +55,16 @@ def _parser() -> argparse.ArgumentParser:
         help="Write a batch for all eligible POIs when fewer than requested pass filters.",
     )
     parser.add_argument(
+        "--source-resolution-policy-mode",
+        choices=["best_available", "transition_low_res_only", "width_band"],
+        default="best_available",
+        help="Shared asset source-width policy. Default uses all eligible assets.",
+    )
+    parser.add_argument("--source-target-width", type=int, default=720)
+    parser.add_argument("--source-width-tolerance-px", type=int, default=40)
+    parser.add_argument("--source-aspect-ratio-min", type=float, default=1.70)
+    parser.add_argument("--source-aspect-ratio-max", type=float, default=1.86)
+    parser.add_argument(
         "--batch-output",
         help="Path to write the run_batch-compatible batch JSON.",
     )
@@ -84,6 +94,15 @@ def main() -> int:
             client,
             cooldown_days=args.cooldown_days,
         )
+        source_resolution_policy = None
+        if args.source_resolution_policy_mode != "best_available":
+            source_resolution_policy = {
+                "mode": args.source_resolution_policy_mode,
+                "target_width": args.source_target_width,
+                "tolerance_px": args.source_width_tolerance_px,
+                "aspect_ratio_min": args.source_aspect_ratio_min,
+                "aspect_ratio_max": args.source_aspect_ratio_max,
+            }
         payload = build_selection_payload(
             rows=rows,
             poi_count=args.poi_count,
@@ -96,6 +115,7 @@ def main() -> int:
             classification_field=args.classification_field,
             classification_value=args.classification_value,
             allow_shortage=args.allow_shortage,
+            source_resolution_policy=source_resolution_policy,
         )
     except BatchSelectionError as exc:
         parser.error(str(exc))

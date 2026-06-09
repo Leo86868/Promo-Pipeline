@@ -95,6 +95,58 @@ def test_build_selection_payload_requires_candidate_ready_assets_when_provided()
     assert skipped["poi_bbb"]["candidate_ready_asset_count"] == 28
 
 
+def test_build_selection_payload_applies_source_width_policy_to_candidate_ready_assets():
+    from promo.core.batch_selection import build_selection_payload
+
+    low_res_rows = _rows_for_poi("poi_aaa", count=70, name="Low Res Hotel")
+    mixed_rows = [
+        _row(
+            "poi_bbb",
+            f"asset_bbb{index:04d}",
+            f"{index:04d}",
+            name="Mixed Hotel",
+        )
+        for index in range(1, 41)
+    ] + [
+        _row(
+            "poi_bbb",
+            f"asset_bbb{index:04d}",
+            f"{index:04d}",
+            name="Mixed Hotel",
+            width=1080,
+            height=1920,
+        )
+        for index in range(41, 81)
+    ]
+    rows = low_res_rows + mixed_rows
+    ready_asset_ids = {row["asset_id"] for row in rows}
+
+    payload = build_selection_payload(
+        rows=rows,
+        poi_count=1,
+        videos_per_poi=3,
+        candidate_ready_asset_ids=ready_asset_ids,
+        source_resolution_policy={
+            "mode": "transition_low_res_only",
+            "target_width": 720,
+            "tolerance_px": 40,
+        },
+    )
+
+    assert [poi["poi_id"] for poi in payload["eligible_pois"]] == ["poi_aaa"]
+    assert payload["request"]["filters"]["required_candidate_ready_assets"] == 70
+    assert payload["request"]["filters"]["source_resolution_policy"]["target_width"] == 720
+    assert payload["batch_spec"]["source_resolution_policy"]["mode"] == (
+        "transition_low_res_only"
+    )
+    skipped = {poi["poi_id"]: poi for poi in payload["skipped_pois"]}
+    assert skipped["poi_bbb"]["reason"] == (
+        "insufficient_source_resolution_assets"
+    )
+    assert skipped["poi_bbb"]["active_asset_count"] == 80
+    assert skipped["poi_bbb"]["source_resolution_asset_count"] == 40
+
+
 def test_build_selection_payload_reports_shortage_unless_allowed():
     from promo.core.batch_selection import BatchSelectionError, build_selection_payload
 

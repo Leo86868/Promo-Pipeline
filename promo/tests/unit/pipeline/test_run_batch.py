@@ -40,6 +40,24 @@ class _FakeUploader:
         }
 
 
+class _FakeUpscaler:
+    def __init__(self):
+        self.calls = []
+
+    def upscale(self, *, input_path, output_path):
+        from pathlib import Path
+
+        self.calls.append({"input_path": input_path, "output_path": output_path})
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(Path(input_path).read_bytes() + b"-upscaled")
+        return {
+            "status": "applied",
+            "provider": "wavespeed",
+            "input_path": input_path,
+            "output_path": output_path,
+        }
+
+
 def _write_valid_manifest_from_command(command, *, video_index=1):
     from promo.core.pipeline.run_manifest import build_run_manifest
     from pathlib import Path
@@ -551,6 +569,160 @@ def test_run_batch_production_autopilot_registers_successful_video(tmp_path):
     assert release_calls[0][0]["source_batch_id"] == receipt["batch_id"]
 
 
+def test_run_batch_final_upscale_required_fails_before_drive_usage_or_release(tmp_path):
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "source_resolution_policy": {
+                "mode": "transition_low_res_only",
+                "target_width": 720,
+                "tolerance_px": 40,
+            },
+        }),
+        encoding="utf-8",
+    )
+    fake_uploader = _FakeUploader()
+
+    def command_runner(command):
+        _write_valid_manifest_from_command(command, video_index=1)
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=fake_uploader,
+            parent_folder_id=None,
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: pytest.fail("usage should not run"),
+        usage_verifier=lambda client, events: pytest.fail("usage verify should not run"),
+        release_registrar=lambda client, records: pytest.fail("release should not run"),
+        final_upscaler_factory=lambda policy: None,
+    )
+
+    assert exit_code == 1
+    assert fake_uploader.uploads == []
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    video = receipt["videos"][0]
+    assert receipt["request"]["filters"]["final_upscale_policy"]["required"] is True
+    assert video["state"] == "final_upscale_failed"
+    assert video["final_upscale"]["status"] == "failed"
+    assert "provider is not configured" in video["final_upscale"]["error"]
+    assert receipt["summary"]["drive_uploaded_videos"] == 0
+    assert receipt["summary"]["usage_written_videos"] == 0
+    assert receipt["summary"]["release_candidates_created"] == 0
+
+
+def test_run_batch_final_upscale_uploads_verified_upscaled_master(tmp_path):
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "source_resolution_policy": {
+                "mode": "transition_low_res_only",
+                "target_width": 720,
+                "tolerance_px": 40,
+            },
+        }),
+        encoding="utf-8",
+    )
+    fake_uploader = _FakeUploader()
+    fake_upscaler = _FakeUpscaler()
+    usage_calls = []
+    release_calls = []
+
+    def command_runner(command):
+        _write_valid_manifest_from_command(command, video_index=1)
+        return 0
+
+    def final_upscale_verifier(*, output_path, policy):
+        from pathlib import Path
+
+        path = Path(output_path)
+        return {
+            "verified": True,
+            "path": output_path,
+            "file_size_bytes": path.stat().st_size,
+            "width": policy.target_width,
+            "height": policy.target_height,
+            "target_width": policy.target_width,
+            "target_height": policy.target_height,
+        }
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=fake_uploader,
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: usage_calls.append(events) or {
+            "inserted_count": len(events),
+            "duplicate_count": 0,
+        },
+        usage_verifier=lambda client, events: {
+            "verified": True,
+            "expected_count": len(events),
+            "observed_count": len(events),
+            "missing_count": 0,
+            "mismatch_count": 0,
+            "duplicate_observed_event_id_count": 0,
+            "missing_event_ids": [],
+            "mismatches": [],
+            "duplicate_observed_event_ids": [],
+        },
+        release_registrar=lambda client, records: release_calls.append(records) or {
+            "inserted_count": len(records),
+            "already_registered_count": 0,
+            "verification": {
+                "verified": True,
+                "expected_count": len(records),
+                "observed_count": len(records),
+                "missing_count": 0,
+                "mismatch_count": 0,
+                "duplicate_observed_key_count": 0,
+                "missing_source_video_keys": [],
+                "mismatches": [],
+                "duplicate_observed_source_video_keys": [],
+            },
+        },
+        final_upscaler_factory=lambda policy: fake_upscaler,
+        final_upscale_verifier=final_upscale_verifier,
+    )
+
+    assert exit_code == 0
+    assert len(fake_upscaler.calls) == 1
+    assert len(fake_uploader.uploads) == 1
+    assert fake_uploader.uploads[0]["local_path"].endswith("_wavespeed_1080p.mp4")
+    assert len(usage_calls) == 1
+    assert len(release_calls) == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    video = receipt["videos"][0]
+    assert video["state"] == "release_candidate_verified"
+    assert video["final_upscale"]["status"] == "verified"
+    assert video["drive_upload"]["source_output_uri"].startswith("drive:")
+    assert release_calls[0][0]["source_output_uri"].startswith("drive:")
+
+
 def test_run_batch_production_autopilot_quarantines_poi_on_usage_failure(tmp_path):
     from promo.cli.run_batch import DriveUploadTarget, run_batch
 
@@ -675,3 +847,40 @@ def test_build_compile_command_uses_canonical_key_and_music_library(tmp_path):
     assert "--supabase-music-id" not in command
     assert command[command.index("--script-candidates") + 1] == "2"
     assert command[command.index("--tts-speed") + 1] == "0.92"
+
+
+def test_build_compile_command_threads_source_resolution_policy(tmp_path):
+    from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
+
+    item = BatchItem(
+        poi=BatchPoi(
+            name="Hotel Maya",
+            location="Long Beach",
+            poi_id="poi_123",
+            canonical_key=None,
+        ),
+        video_index=1,
+        output_dir=str(tmp_path),
+        output_path=str(tmp_path / "promo.mp4"),
+        voice_key="hope",
+        music_id=None,
+        seed=None,
+    )
+
+    command = build_compile_command(
+        item=item,
+        target_duration_sec=65,
+        use_music_library=True,
+        script_candidates=1,
+        tts_speed=0.95,
+        source_resolution_policy={
+            "mode": "transition_low_res_only",
+            "target_width": 720,
+            "tolerance_px": 40,
+        },
+    )
+
+    assert command[command.index("--source-resolution-policy-mode") + 1] == (
+        "transition_low_res_only"
+    )
+    assert command[command.index("--source-target-width") + 1] == "720"

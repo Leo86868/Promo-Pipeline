@@ -19,6 +19,12 @@ from promo.core.assets.retrieval import (
     EMBEDDING_MODEL,
 )
 from promo.core.run_receipt import required_active_assets
+from promo.core.source_resolution_policy import (
+    SourceResolutionPolicy,
+    normalize_source_resolution_policy,
+    source_resolution_matches,
+    source_resolution_summary,
+)
 
 
 USAGE_EVENTS_TABLE = "poi_asset_usage_events"
@@ -173,6 +179,7 @@ def summarize_pois(
     cooldown_poi_ids: set[str] | None = None,
     classification_field: str | None = None,
     classification_value: str | None = None,
+    source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     if min_active_assets <= 0:
         raise BatchSelectionError("min_active_assets must be positive")
@@ -183,8 +190,11 @@ def summarize_pois(
     _require_classification_field(rows, classification_field=classification_field)
 
     cooldown_poi_ids = cooldown_poi_ids or set()
+    resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     grouped: dict[str, dict[str, Any]] = {}
     asset_ids_by_poi: dict[str, set[str]] = defaultdict(set)
+    source_policy_asset_ids_by_poi: dict[str, set[str]] = defaultdict(set)
+    source_rows_by_poi: dict[str, list[dict[str, Any]]] = defaultdict(list)
     candidate_ready_ids = (
         {str(asset_id) for asset_id in candidate_ready_asset_ids}
         if candidate_ready_asset_ids is not None
@@ -200,6 +210,9 @@ def summarize_pois(
         row = normalize_poi_asset_valid_clip_row(raw_row)
         poi_id = row["poi_id"]
         asset_ids_by_poi[poi_id].add(row["asset_id"])
+        if source_resolution_matches(row, resolved_source_policy):
+            source_policy_asset_ids_by_poi[poi_id].add(row["asset_id"])
+            source_rows_by_poi[poi_id].append(row)
         grouped.setdefault(
             poi_id,
             {
@@ -214,8 +227,15 @@ def summarize_pois(
     skipped: list[dict[str, Any]] = []
     for poi_id, row in grouped.items():
         active_asset_count = len(asset_ids_by_poi[poi_id])
+        source_policy_asset_ids = source_policy_asset_ids_by_poi[poi_id]
+        effective_asset_ids = (
+            asset_ids_by_poi[poi_id]
+            if resolved_source_policy.mode == "best_available"
+            else source_policy_asset_ids
+        )
+        source_policy_asset_count = len(source_policy_asset_ids)
         candidate_ready_asset_count = (
-            len(asset_ids_by_poi[poi_id] & candidate_ready_ids)
+            len(effective_asset_ids & candidate_ready_ids)
             if candidate_ready_ids is not None
             else None
         )
@@ -223,6 +243,11 @@ def summarize_pois(
             **row,
             "active_asset_count": active_asset_count,
             "required_active_assets": int(min_active_assets),
+            "source_resolution_policy": resolved_source_policy.to_dict(),
+            "source_resolution_asset_count": source_policy_asset_count,
+            "source_resolution_summary": source_resolution_summary(
+                source_rows_by_poi[poi_id]
+            ),
         }
         if candidate_ready_asset_count is not None:
             record["candidate_ready_asset_count"] = candidate_ready_asset_count
@@ -231,11 +256,18 @@ def summarize_pois(
             skipped.append({**record, "reason": "cooldown"})
         elif active_asset_count < min_active_assets:
             skipped.append({**record, "reason": "insufficient_active_assets"})
+        elif len(effective_asset_ids) < min_active_assets:
+            skipped.append({**record, "reason": "insufficient_source_resolution_assets"})
         elif (
             candidate_ready_asset_count is not None
             and candidate_ready_asset_count < min_active_assets
         ):
-            skipped.append({**record, "reason": "insufficient_candidate_ready_assets"})
+            reason = (
+                "insufficient_candidate_ready_assets"
+                if resolved_source_policy.mode == "best_available"
+                else "insufficient_source_resolution_candidate_ready_assets"
+            )
+            skipped.append({**record, "reason": reason})
         else:
             eligible.append(record)
 
@@ -269,8 +301,9 @@ def build_batch_spec(
     *,
     videos_per_poi: int,
     target_duration_sec: float = DEFAULT_PGC_TARGET_DURATION_SEC,
+    source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    spec = {
         "pois": [
             {
                 "poi_id": poi["poi_id"],
@@ -283,6 +316,10 @@ def build_batch_spec(
         "videos_per_poi": int(videos_per_poi),
         "target_duration_sec": float(target_duration_sec),
     }
+    resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
+    if resolved_source_policy.mode != "best_available":
+        spec["source_resolution_policy"] = resolved_source_policy.to_dict()
+    return spec
 
 
 def build_selection_payload(
@@ -298,8 +335,10 @@ def build_selection_payload(
     classification_field: str | None = None,
     classification_value: str | None = None,
     allow_shortage: bool = False,
+    source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     min_active_assets = required_active_assets(videos_per_poi)
+    resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     summary = summarize_pois(
         rows,
         min_active_assets=min_active_assets,
@@ -307,6 +346,7 @@ def build_selection_payload(
         cooldown_poi_ids=cooldown_poi_ids or set(),
         classification_field=classification_field,
         classification_value=classification_value,
+        source_resolution_policy=resolved_source_policy,
     )
     selected = select_random_pois(
         summary["eligible_pois"],
@@ -329,6 +369,7 @@ def build_selection_payload(
                 "classification_value": classification_value,
                 "cooldown_days": int(cooldown_days),
                 "required_active_assets": int(min_active_assets),
+                "source_resolution_policy": resolved_source_policy.to_dict(),
                 **(
                     {
                         "required_candidate_ready_assets": int(min_active_assets),
@@ -346,6 +387,7 @@ def build_selection_payload(
             selected,
             videos_per_poi=videos_per_poi,
             target_duration_sec=target_duration_sec,
+            source_resolution_policy=resolved_source_policy,
         ),
     }
 

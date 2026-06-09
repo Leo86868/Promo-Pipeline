@@ -93,6 +93,12 @@ def build_video_record(
             "status": "not_implemented",
             "source_output_uri": None,
         },
+        "final_upscale": {
+            "required": False,
+            "enabled": False,
+            "provider": "disabled",
+            "status": "not_required",
+        },
         "usage": {
             "writeback_status": "not_written",
             "event_count": 0,
@@ -122,6 +128,8 @@ def build_run_receipt(
     created_at: str | None = None,
     production_autopilot: bool = False,
     selection_metadata: dict[str, Any] | None = None,
+    source_resolution_policy: dict[str, Any] | None = None,
+    final_upscale_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     created = created_at or utc_now_iso()
     selection_mode = "provided_list"
@@ -169,6 +177,14 @@ def build_run_receipt(
                 "base_min_assets_for_format": DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT,
                 "extra_variation_asset_buffer": DEFAULT_EXTRA_VARIATION_ASSET_BUFFER,
                 "required_active_assets": required_active_assets(videos_per_poi),
+                "source_resolution_policy": source_resolution_policy or {
+                    "mode": "best_available",
+                },
+                "final_upscale_policy": final_upscale_policy or {
+                    "required": False,
+                    "enabled": False,
+                    "provider": "disabled",
+                },
             },
             "implementation_gaps": implementation_gaps,
         },
@@ -319,6 +335,14 @@ def summarize_videos(videos: list[dict[str, Any]]) -> dict[str, int]:
         "drive_upload_failed_videos": sum(
             1 for video in videos
             if (video.get("drive_upload") or {}).get("status") == "failed"
+        ),
+        "final_upscaled_videos": sum(
+            1 for video in videos
+            if (video.get("final_upscale") or {}).get("status") == "verified"
+        ),
+        "final_upscale_failed_videos": sum(
+            1 for video in videos
+            if (video.get("final_upscale") or {}).get("status") == "failed"
         ),
         "usage_failed_videos": sum(
             1 for video in videos

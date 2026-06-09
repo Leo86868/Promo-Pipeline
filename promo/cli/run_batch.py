@@ -46,6 +46,12 @@ from promo.core.drive_upload import (
     build_drive_upload_config,
     upload_staging_inventory,
 )
+from promo.core.final_upscale import (
+    FinalUpscalePolicy,
+    create_final_video_upscaler_from_env,
+    normalize_final_upscale_policy,
+    verify_final_upscale_output,
+)
 from promo.core.music_library import SupabaseMusicLibrary
 from promo.core.pipeline.release_handoff import build_release_handoff
 from promo.core.release_candidates import register_release_candidates
@@ -56,6 +62,7 @@ from promo.core.run_receipt import (
     mark_rendering,
     write_run_receipt,
 )
+from promo.core.source_resolution_policy import normalize_source_resolution_policy
 
 load_dotenv()
 
@@ -205,6 +212,7 @@ def prepare_selected_batch(
     classification_field: str | None = None,
     classification_value: str | None = None,
     allow_shortage: bool = False,
+    source_resolution_policy: dict[str, Any] | None = None,
     client_factory: Callable[[], Any] = _create_supabase_client_from_env,
     valid_clip_rows_fetcher: Callable[
         [Any], list[dict[str, Any]]
@@ -246,11 +254,21 @@ def prepare_selected_batch(
         classification_field=classification_field,
         classification_value=classification_value,
         allow_shortage=allow_shortage,
+        source_resolution_policy=source_resolution_policy,
     )
 
     selection_summary_path = os.path.join(output_root, "selection_summary.json")
     batch_path = os.path.join(output_root, "batch.json")
     batch_spec = dict(payload["batch_spec"])
+    source_policy = normalize_source_resolution_policy(
+        batch_spec.get("source_resolution_policy")
+    )
+    final_policy = normalize_final_upscale_policy(
+        None,
+        source_policy_mode=source_policy.mode,
+    )
+    if final_policy.required or final_policy.enabled:
+        batch_spec["final_upscale_policy"] = final_policy.to_dict()
     batch_spec["selection"] = {
         "mode": "random_equal",
         "selection_summary_path": selection_summary_path,
@@ -258,6 +276,14 @@ def prepare_selected_batch(
         "shortage_count": payload["shortage_count"],
         "cooldown_days": int(cooldown_days),
     }
+    if batch_spec.get("source_resolution_policy"):
+        batch_spec["selection"]["source_resolution_policy"] = batch_spec[
+            "source_resolution_policy"
+        ]
+    if batch_spec.get("final_upscale_policy"):
+        batch_spec["selection"]["final_upscale_policy"] = batch_spec[
+            "final_upscale_policy"
+        ]
     payload["batch_spec"] = batch_spec
     write_json(Path(selection_summary_path), payload)
     write_json(Path(batch_path), batch_spec)
@@ -327,6 +353,7 @@ def build_compile_command(
     use_music_library: bool,
     script_candidates: int,
     tts_speed: float,
+    source_resolution_policy: dict[str, Any] | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -360,6 +387,20 @@ def build_compile_command(
             command.append("--supabase-music-library")
     if item.seed is not None:
         command.extend(["--seed", str(item.seed)])
+    resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
+    if resolved_source_policy.mode != "best_available":
+        command.extend([
+            "--source-resolution-policy-mode",
+            resolved_source_policy.mode,
+            "--source-target-width",
+            str(resolved_source_policy.target_width),
+            "--source-width-tolerance-px",
+            str(resolved_source_policy.tolerance_px),
+            "--source-aspect-ratio-min",
+            str(resolved_source_policy.aspect_ratio_min),
+            "--source-aspect-ratio-max",
+            str(resolved_source_policy.aspect_ratio_max),
+        ])
     return command
 
 
@@ -448,6 +489,97 @@ def _retry_autopilot_step(operation: Callable[[], Any], description: str) -> Any
     raise RuntimeError(f"{description} failed after retries: {last_error}") from last_error
 
 
+def _upscaled_output_path(*, handoff_dir: str, video: dict[str, Any]) -> str:
+    source_output = Path(str(video["render"]["output_path"]))
+    token = _artifact_token(video)
+    return str(
+        Path(handoff_dir)
+        / "final_upscaled"
+        / f"{token}_{source_output.stem}_wavespeed_1080p.mp4"
+    )
+
+
+def _apply_final_upscale_to_inventory(
+    *,
+    video: dict[str, Any],
+    handoff_dir: str,
+    inventory: dict[str, Any],
+    policy: FinalUpscalePolicy,
+    upscaler_factory: Callable[[FinalUpscalePolicy], Any | None],
+    verifier: Callable[..., dict[str, Any]],
+) -> bool:
+    video["final_upscale"] = {
+        "required": policy.required,
+        "enabled": policy.enabled,
+        "provider": policy.provider,
+        "reason": policy.reason,
+        "status": "not_required" if not policy.required and not policy.enabled else "pending",
+    }
+    if not policy.required and not policy.enabled:
+        return True
+    if not policy.enabled:
+        video["final_upscale"]["status"] = "failed"
+        video["final_upscale"]["error"] = "final upscale is required but disabled"
+        video["state"] = "final_upscale_failed"
+        video["error"] = "final upscale is required but disabled"
+        return False
+
+    items = inventory.get("items") or []
+    if len(items) != 1:
+        video["final_upscale"]["status"] = "failed"
+        video["final_upscale"]["error"] = "expected exactly one staging item"
+        video["state"] = "final_upscale_failed"
+        video["error"] = "final upscale expected exactly one staging item"
+        return False
+    item = items[0]
+    input_path = str(item["local_output_path"])
+    output_path = _upscaled_output_path(handoff_dir=handoff_dir, video=video)
+
+    try:
+        upscaler = upscaler_factory(policy)
+        if upscaler is None:
+            raise RuntimeError("final upscale provider is not configured")
+        result = _retry_autopilot_step(
+            lambda: upscaler.upscale(input_path=input_path, output_path=output_path),
+            "final video upscale",
+        )
+        verified = verifier(output_path=output_path, policy=policy)
+        if not verified.get("verified"):
+            raise RuntimeError(
+                "final upscale verification failed: "
+                + str(verified.get("reason") or verified)
+            )
+    except Exception as exc:
+        video["final_upscale"] = {
+            **video["final_upscale"],
+            "status": "failed",
+            "input_path": input_path,
+            "output_path": output_path,
+            "error": str(exc),
+        }
+        video["state"] = "final_upscale_failed"
+        video["error"] = f"final upscale failed: {exc}"
+        return False
+
+    item["pre_upscale_local_output_path"] = input_path
+    item["local_output_path"] = output_path
+    item["final_upscale"] = {
+        "status": "applied",
+        "policy": policy.to_dict(),
+        "result": result,
+        "verification": verified,
+    }
+    video["final_upscale"] = {
+        **video["final_upscale"],
+        "status": "verified",
+        "input_path": input_path,
+        "output_path": output_path,
+        "result": result,
+        "verification": verified,
+    }
+    return True
+
+
 def _run_video_production_autopilot(
     *,
     video: dict[str, Any],
@@ -459,6 +591,9 @@ def _run_video_production_autopilot(
     usage_recorder: Callable[[Any, list[dict[str, Any]]], dict[str, int]] = record_usage_events,
     usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = verify_usage_events,
     release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
+    final_upscale_policy: FinalUpscalePolicy | None = None,
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
+    final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
 ) -> bool:
     manifest = video.get("manifest") or {}
     manifest_audit = video.get("manifest_audit") or {}
@@ -474,6 +609,16 @@ def _run_video_production_autopilot(
 
     try:
         inventory = build_staging_inventory([manifest_path], require_source_exists=True)
+        policy = final_upscale_policy or normalize_final_upscale_policy(None)
+        if not _apply_final_upscale_to_inventory(
+            video=video,
+            handoff_dir=handoff_dir,
+            inventory=inventory,
+            policy=policy,
+            upscaler_factory=final_upscaler_factory,
+            verifier=final_upscale_verifier,
+        ):
+            return False
         inventory.update({
             "source_receipt_path": receipt_path,
             "batch_id": receipt["batch_id"],
@@ -615,12 +760,23 @@ def run_batch(
     usage_recorder: Callable[[Any, list[dict[str, Any]]], dict[str, int]] = record_usage_events,
     usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = verify_usage_events,
     release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
+    source_resolution_policy: dict[str, Any] | None = None,
+    final_upscale_policy: dict[str, Any] | None = None,
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
+    final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
 ) -> int:
     if jobs != 1:
         raise ValueError("run_batch currently supports --jobs 1 only")
 
     spec = load_batch_spec(batch_path)
     selection_metadata = spec.get("selection") if isinstance(spec.get("selection"), dict) else None
+    resolved_source_policy = normalize_source_resolution_policy(
+        source_resolution_policy or spec.get("source_resolution_policy")
+    )
+    resolved_final_upscale_policy = normalize_final_upscale_policy(
+        final_upscale_policy or spec.get("final_upscale_policy"),
+        source_policy_mode=resolved_source_policy.mode,
+    )
     pois = parse_batch_pois(spec)
     resolved_videos_per_poi = _positive_int(
         videos_per_poi if videos_per_poi is not None else spec.get("videos_per_poi", 1),
@@ -660,6 +816,7 @@ def run_batch(
             use_music_library=use_music_library,
             script_candidates=script_candidates,
             tts_speed=tts_speed,
+            source_resolution_policy=resolved_source_policy.to_dict(),
         )
         for item in items
     ]
@@ -682,6 +839,8 @@ def run_batch(
         seed=seed,
         production_autopilot=production_autopilot,
         selection_metadata=selection_metadata,
+        source_resolution_policy=resolved_source_policy.to_dict(),
+        final_upscale_policy=resolved_final_upscale_policy.to_dict(),
     )
     write_run_receipt(resolved_receipt_path, receipt)
 
@@ -739,6 +898,9 @@ def run_batch(
                 usage_recorder=usage_recorder,
                 usage_verifier=usage_verifier,
                 release_registrar=release_registrar,
+                final_upscale_policy=resolved_final_upscale_policy,
+                final_upscaler_factory=final_upscaler_factory,
+                final_upscale_verifier=final_upscale_verifier,
             )
             write_run_receipt(resolved_receipt_path, receipt)
             if not ok:
@@ -781,6 +943,10 @@ def run_selected_batch(
         [Any, list[str]], set[str]
     ] = fetch_ready_embedding_asset_ids,
     recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
+    source_resolution_policy: dict[str, Any] | None = None,
+    final_upscale_policy: dict[str, Any] | None = None,
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
+    final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -792,6 +958,7 @@ def run_selected_batch(
         classification_field=classification_field,
         classification_value=classification_value,
         allow_shortage=allow_shortage,
+        source_resolution_policy=source_resolution_policy,
         client_factory=selection_client_factory,
         valid_clip_rows_fetcher=valid_clip_rows_fetcher,
         ready_embedding_asset_ids_fetcher=ready_embedding_asset_ids_fetcher,
@@ -818,6 +985,10 @@ def run_selected_batch(
         usage_recorder=usage_recorder,
         usage_verifier=usage_verifier,
         release_registrar=release_registrar,
+        source_resolution_policy=source_resolution_policy,
+        final_upscale_policy=final_upscale_policy,
+        final_upscaler_factory=final_upscaler_factory,
+        final_upscale_verifier=final_upscale_verifier,
     )
 
 
@@ -846,6 +1017,36 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-shortage",
         action="store_true",
         help="With --select-random-pois, run all eligible POIs if fewer than requested pass.",
+    )
+    parser.add_argument(
+        "--source-resolution-policy-mode",
+        choices=["best_available", "transition_low_res_only", "width_band"],
+        default="best_available",
+        help="Shared asset source-width policy. Default uses all eligible assets.",
+    )
+    parser.add_argument(
+        "--source-target-width",
+        type=int,
+        default=720,
+        help="Target source width for width-band policies.",
+    )
+    parser.add_argument(
+        "--source-width-tolerance-px",
+        type=int,
+        default=40,
+        help="Allowed +/- width tolerance for width-band policies.",
+    )
+    parser.add_argument(
+        "--source-aspect-ratio-min",
+        type=float,
+        default=1.70,
+        help="Minimum height/width sanity ratio for vertical source assets.",
+    )
+    parser.add_argument(
+        "--source-aspect-ratio-max",
+        type=float,
+        default=1.86,
+        help="Maximum height/width sanity ratio for vertical source assets.",
     )
     parser.add_argument(
         "--voices",
@@ -884,6 +1085,20 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Directory for Drive inventory and release handoff JSON. Defaults to output-dir/handoff.",
     )
+    parser.add_argument(
+        "--final-upscale-provider",
+        choices=["disabled", "wavespeed"],
+        default=None,
+        help=(
+            "Optional final-video upscale provider. Omit to derive from source "
+            "resolution policy."
+        ),
+    )
+    parser.add_argument(
+        "--final-upscale-required",
+        action="store_true",
+        help="Require final-video upscale before Drive upload and release handoff.",
+    )
     return parser
 
 
@@ -895,6 +1110,23 @@ def main() -> None:
     args = parser.parse_args()
     try:
         voices = parse_voice_keys(args.voices) if args.voices is not None else None
+        source_resolution_policy = None
+        if args.source_resolution_policy_mode != "best_available":
+            source_resolution_policy = {
+                "mode": args.source_resolution_policy_mode,
+                "target_width": args.source_target_width,
+                "tolerance_px": args.source_width_tolerance_px,
+                "aspect_ratio_min": args.source_aspect_ratio_min,
+                "aspect_ratio_max": args.source_aspect_ratio_max,
+            }
+        final_upscale_policy = None
+        if args.final_upscale_provider is not None or args.final_upscale_required:
+            provider = args.final_upscale_provider or "wavespeed"
+            final_upscale_policy = {
+                "required": bool(args.final_upscale_required),
+                "enabled": provider != "disabled",
+                "provider": provider,
+            }
         if args.select_random_pois:
             if args.poi_count is None:
                 parser.error("--poi-count is required with --select-random-pois")
@@ -924,6 +1156,8 @@ def main() -> None:
                 receipt_path=args.receipt_path,
                 production_autopilot=args.production_autopilot,
                 handoff_dir=args.handoff_dir,
+                source_resolution_policy=source_resolution_policy,
+                final_upscale_policy=final_upscale_policy,
             )
         else:
             exit_code = run_batch(
@@ -940,6 +1174,8 @@ def main() -> None:
                 receipt_path=args.receipt_path,
                 production_autopilot=args.production_autopilot,
                 handoff_dir=args.handoff_dir,
+                source_resolution_policy=source_resolution_policy,
+                final_upscale_policy=final_upscale_policy,
             )
     except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))

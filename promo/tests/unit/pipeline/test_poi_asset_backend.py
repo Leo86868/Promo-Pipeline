@@ -225,6 +225,67 @@ def test_poi_asset_supabase_backend_downloads_only_candidate_assets(tmp_path):
     assert not (tmp_path / "clip_0001_asset_a1.mp4").exists()
 
 
+def test_poi_asset_supabase_backend_rejects_candidate_outside_source_policy(tmp_path):
+    from promo.core.poi_asset_backend import PoiAssetBackendError, PoiAssetSupabaseBackend
+
+    first = b"clip-one"
+    second = b"clip-two"
+    rows = [
+        _row(clip_id="0001", asset_id="asset_a1", data=first),
+        _row(
+            clip_id="0002",
+            asset_id="asset_b2",
+            data=second,
+            width=1080,
+            height=1920,
+        ),
+    ]
+    blobs = {
+        "poi_123/clips/asset_a1.mp4": first,
+        "poi_123/clips/asset_b2.mp4": second,
+    }
+    backend = PoiAssetSupabaseBackend(
+        _FakeSupabase(rows, blobs),
+        poi_id="poi_123",
+        source_resolution_policy={
+            "mode": "transition_low_res_only",
+            "target_width": 720,
+            "tolerance_px": 40,
+        },
+    )
+
+    with pytest.raises(PoiAssetBackendError, match="source_resolution_policy"):
+        backend.fetch_candidate_clips("Hotel Maya", str(tmp_path), ["asset_b2"])
+
+
+def test_poi_asset_supabase_backend_threads_source_policy_to_ready_assets(monkeypatch):
+    from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
+
+    captured = {}
+
+    def fake_fetch_ready_assets(client, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(
+        "promo.core.assets.retrieval.fetch_ready_assets",
+        fake_fetch_ready_assets,
+    )
+    backend = PoiAssetSupabaseBackend(
+        _FakeSupabase([], {}),
+        poi_id="poi_123",
+        source_resolution_policy={
+            "mode": "transition_low_res_only",
+            "target_width": 720,
+            "tolerance_px": 40,
+        },
+    )
+
+    assert backend.ready_assets_for_retrieval() == []
+    assert captured["poi_id"] == "poi_123"
+    assert captured["source_resolution_policy"].target_width == 720
+
+
 def test_poi_asset_supabase_backend_rejects_mixed_canonical_keys(tmp_path):
     from promo.core.poi_asset_backend import PoiAssetBackendError, PoiAssetSupabaseBackend
 
@@ -325,6 +386,43 @@ def test_compile_promo_build_backend_passes_supabase_music_flags(monkeypatch, tm
     assert captured["use_music_library"] is True
     assert captured["music_id"] == "11111111-1111-1111-1111-111111111111"
     assert captured["music_min_duration_sec"] == 65
+
+
+def test_compile_promo_build_backend_passes_source_resolution_policy(monkeypatch, tmp_path):
+    from promo.cli import compile_promo
+
+    parser = compile_promo._build_parser()
+    args = parser.parse_args([
+        "--poi",
+        "Hotel Maya",
+        "--supabase-poi-id",
+        "poi_123",
+        "--output-dir",
+        str(tmp_path),
+        "--source-resolution-policy-mode",
+        "transition_low_res_only",
+        "--source-target-width",
+        "720",
+        "--source-width-tolerance-px",
+        "40",
+    ])
+    captured = {}
+    sentinel = object()
+
+    def fake_from_env(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        compile_promo.PoiAssetSupabaseBackend,
+        "from_env",
+        fake_from_env,
+    )
+
+    assert compile_promo._build_backend(args) is sentinel
+    assert captured["source_resolution_policy"]["mode"] == "transition_low_res_only"
+    assert captured["source_resolution_policy"]["target_width"] == 720
+    assert captured["source_resolution_policy"]["tolerance_px"] == 40
 
 
 def test_compile_promo_build_backend_rejects_mixed_clip_sources(tmp_path):
