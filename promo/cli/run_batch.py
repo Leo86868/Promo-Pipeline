@@ -28,8 +28,10 @@ from promo.cli.usage_events_writeback import record_usage_events, verify_usage_e
 from promo.core.batch_selection import (
     DEFAULT_PGC_TARGET_DURATION_SEC,
     BatchSelectionError,
+    asset_ids_from_valid_clip_rows,
     build_selection_payload,
     fetch_recent_usage_poi_ids,
+    fetch_ready_embedding_asset_ids,
     fetch_valid_clip_rows,
 )
 from promo.core import config
@@ -204,7 +206,12 @@ def prepare_selected_batch(
     classification_value: str | None = None,
     allow_shortage: bool = False,
     client_factory: Callable[[], Any] = _create_supabase_client_from_env,
-    valid_clip_rows_fetcher: Callable[[Any], list[dict[str, Any]]] = fetch_valid_clip_rows,
+    valid_clip_rows_fetcher: Callable[
+        [Any], list[dict[str, Any]]
+    ] = fetch_valid_clip_rows,
+    ready_embedding_asset_ids_fetcher: Callable[
+        [Any, list[str]], set[str]
+    ] = fetch_ready_embedding_asset_ids,
     recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
 ) -> PreparedSelectionBatch:
     if bool(classification_field) != bool(classification_value):
@@ -219,6 +226,10 @@ def prepare_selected_batch(
 
     client = client_factory()
     rows = valid_clip_rows_fetcher(client)
+    ready_embedding_asset_ids = ready_embedding_asset_ids_fetcher(
+        client,
+        asset_ids_from_valid_clip_rows(rows),
+    )
     cooldown_poi_ids = recent_usage_poi_ids_fetcher(
         client,
         cooldown_days=int(cooldown_days),
@@ -227,6 +238,7 @@ def prepare_selected_batch(
         rows=rows,
         poi_count=resolved_poi_count,
         videos_per_poi=resolved_videos_per_poi,
+        candidate_ready_asset_ids=ready_embedding_asset_ids,
         cooldown_poi_ids=cooldown_poi_ids,
         cooldown_days=int(cooldown_days),
         target_duration_sec=resolved_target_duration,
@@ -762,7 +774,12 @@ def run_selected_batch(
     usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = verify_usage_events,
     release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
     selection_client_factory: Callable[[], Any] = _create_supabase_client_from_env,
-    valid_clip_rows_fetcher: Callable[[Any], list[dict[str, Any]]] = fetch_valid_clip_rows,
+    valid_clip_rows_fetcher: Callable[
+        [Any], list[dict[str, Any]]
+    ] = fetch_valid_clip_rows,
+    ready_embedding_asset_ids_fetcher: Callable[
+        [Any, list[str]], set[str]
+    ] = fetch_ready_embedding_asset_ids,
     recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
 ) -> int:
     prepared = prepare_selected_batch(
@@ -777,6 +794,7 @@ def run_selected_batch(
         allow_shortage=allow_shortage,
         client_factory=selection_client_factory,
         valid_clip_rows_fetcher=valid_clip_rows_fetcher,
+        ready_embedding_asset_ids_fetcher=ready_embedding_asset_ids_fetcher,
         recent_usage_poi_ids_fetcher=recent_usage_poi_ids_fetcher,
     )
     return run_batch(

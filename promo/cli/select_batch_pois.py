@@ -13,8 +13,10 @@ from dotenv import load_dotenv
 from promo.core.batch_selection import (
     DEFAULT_PGC_TARGET_DURATION_SEC,
     BatchSelectionError,
+    asset_ids_from_valid_clip_rows,
     build_selection_payload,
     fetch_recent_usage_poi_ids,
+    fetch_ready_embedding_asset_ids,
     fetch_valid_clip_rows,
     write_json,
 )
@@ -74,6 +76,10 @@ def main() -> int:
     try:
         client = _create_supabase_client()
         rows = fetch_valid_clip_rows(client)
+        ready_embedding_asset_ids = fetch_ready_embedding_asset_ids(
+            client,
+            asset_ids_from_valid_clip_rows(rows),
+        )
         cooldown_poi_ids = fetch_recent_usage_poi_ids(
             client,
             cooldown_days=args.cooldown_days,
@@ -82,6 +88,7 @@ def main() -> int:
             rows=rows,
             poi_count=args.poi_count,
             videos_per_poi=args.videos_per_poi,
+            candidate_ready_asset_ids=ready_embedding_asset_ids,
             cooldown_poi_ids=cooldown_poi_ids,
             cooldown_days=args.cooldown_days,
             target_duration_sec=args.target_duration_sec,

@@ -506,9 +506,9 @@ def retrieve_candidates(
     min_eligible_assets: int = DEFAULT_MIN_ELIGIBLE_ASSETS,
 ) -> list[RankedAsset]:
     """Rank assets for queries and return first-seen deduped candidates."""
-    if len(assets) <= min_eligible_assets:
+    if len(assets) < min_eligible_assets:
         raise AssetRetrievalError(
-            f"eligible asset pool must be > {min_eligible_assets}; got {len(assets)}"
+            f"eligible asset pool must be >= {min_eligible_assets}; got {len(assets)}"
         )
     if not queries:
         raise AssetRetrievalError("at least one retrieval query is required")

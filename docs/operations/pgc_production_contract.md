@@ -76,6 +76,9 @@ choose whether to run fewer or wait for zhongtai to add assets.
 
 The asset platform determines active/eligible assets and usage caps. The PGC
 paradigm determines how many active assets are enough for its format.
+For the current shared-asset path, POI selection applies the threshold to
+candidate-ready assets: active clips with ready embeddings that can enter
+semantic retrieval.
 
 For `pgc_65s`:
 

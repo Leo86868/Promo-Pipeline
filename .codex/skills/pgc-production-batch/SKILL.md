@@ -97,6 +97,10 @@ PGC must not write account distribution state.
 The asset platform owns which assets are active/eligible and the usage cap.
 The PGC paradigm owns how many active assets are enough for the requested video
 format.
+Selection must apply this threshold to candidate-ready assets, not just raw
+active clips. For the current shared-asset path, candidate-ready means the asset
+has a ready `text-embedding-3-small` embedding for the active composition
+version and can enter semantic retrieval.
 
 For `pgc_65s`, use:
 

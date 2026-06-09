@@ -235,6 +235,7 @@ def test_prepare_selected_batch_writes_batch_and_summary(tmp_path):
         seed=7,
         client_factory=lambda: object(),
         valid_clip_rows_fetcher=lambda client: _selection_rows(),
+        ready_embedding_asset_ids_fetcher=lambda client, asset_ids: set(asset_ids),
         recent_usage_poi_ids_fetcher=lambda client, **kwargs: set(),
     )
 
@@ -268,6 +269,7 @@ def test_run_selected_batch_generates_batch_then_runs(tmp_path):
             poi_count=1,
             assets_per_poi=50,
         ),
+        ready_embedding_asset_ids_fetcher=lambda client, asset_ids: set(asset_ids),
         recent_usage_poi_ids_fetcher=lambda client, **kwargs: set(),
     )
 

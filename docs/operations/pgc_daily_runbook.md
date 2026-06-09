@@ -201,6 +201,9 @@ system should fail clearly instead of quietly using all POIs.
 
 Zhongtai owns which assets are active and eligible. PGC owns how many active
 assets are enough for this video format.
+In the current shared-asset path, the production selector checks candidate-ready
+assets: active clips that already have ready embeddings and can enter semantic
+retrieval.
 
 For current 65s PGC:
 

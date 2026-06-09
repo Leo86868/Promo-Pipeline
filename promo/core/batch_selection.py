@@ -13,6 +13,11 @@ from promo.core.pipeline.poi_asset_valid_clips import (
     POI_ASSET_VALID_CLIPS_VIEW,
     normalize_poi_asset_valid_clip_row,
 )
+from promo.core.assets.retrieval import (
+    EMBEDDING_COMPOSITION_VERSION,
+    EMBEDDING_DIM,
+    EMBEDDING_MODEL,
+)
 from promo.core.run_receipt import required_active_assets
 
 
@@ -67,6 +72,46 @@ def fetch_valid_clip_rows(client: Any, *, page_size: int = 1000) -> list[dict[st
         table_name=POI_ASSET_VALID_CLIPS_VIEW,
         page_size=page_size,
     )
+
+
+def asset_ids_from_valid_clip_rows(rows: list[dict[str, Any]]) -> list[str]:
+    return sorted({str(row["asset_id"]) for row in rows if row.get("asset_id")})
+
+
+def fetch_ready_embedding_asset_ids(
+    client: Any,
+    asset_ids: list[str],
+    *,
+    model: str = EMBEDDING_MODEL,
+    dim: int = EMBEDDING_DIM,
+    composition_version: int = EMBEDDING_COMPOSITION_VERSION,
+    chunk_size: int = 100,
+) -> set[str]:
+    if chunk_size <= 0:
+        raise BatchSelectionError("chunk_size must be positive")
+    ready_asset_ids: set[str] = set()
+    normalized_asset_ids = sorted({str(asset_id) for asset_id in asset_ids if asset_id})
+    for start in range(0, len(normalized_asset_ids), chunk_size):
+        chunk = normalized_asset_ids[start:start + chunk_size]
+        rows = _response_data(
+            client.table("poi_asset_embeddings")
+            .select(
+                "asset_id,status,generated_at,embedding_model,embedding_dim,"
+                "embedding_composition_version"
+            )
+            .in_("asset_id", chunk)
+            .eq("embedding_model", model)
+            .eq("embedding_dim", dim)
+            .eq("embedding_composition_version", composition_version)
+            .eq("status", "ready")
+            .not_.is_("embedding_vector", "null")
+            .not_.is_("generated_at", "null")
+            .execute()
+        ) or []
+        if not isinstance(rows, list):
+            raise BatchSelectionError("poi_asset_embeddings query returned non-list data")
+        ready_asset_ids.update(str(row["asset_id"]) for row in rows if row.get("asset_id"))
+    return ready_asset_ids
 
 
 def fetch_recent_usage_poi_ids(
@@ -124,6 +169,7 @@ def summarize_pois(
     rows: list[dict[str, Any]],
     *,
     min_active_assets: int,
+    candidate_ready_asset_ids: set[str] | None = None,
     cooldown_poi_ids: set[str] | None = None,
     classification_field: str | None = None,
     classification_value: str | None = None,
@@ -139,6 +185,11 @@ def summarize_pois(
     cooldown_poi_ids = cooldown_poi_ids or set()
     grouped: dict[str, dict[str, Any]] = {}
     asset_ids_by_poi: dict[str, set[str]] = defaultdict(set)
+    candidate_ready_ids = (
+        {str(asset_id) for asset_id in candidate_ready_asset_ids}
+        if candidate_ready_asset_ids is not None
+        else None
+    )
     for raw_row in rows:
         if not _classification_matches(
             raw_row,
@@ -163,15 +214,28 @@ def summarize_pois(
     skipped: list[dict[str, Any]] = []
     for poi_id, row in grouped.items():
         active_asset_count = len(asset_ids_by_poi[poi_id])
+        candidate_ready_asset_count = (
+            len(asset_ids_by_poi[poi_id] & candidate_ready_ids)
+            if candidate_ready_ids is not None
+            else None
+        )
         record = {
             **row,
             "active_asset_count": active_asset_count,
             "required_active_assets": int(min_active_assets),
         }
+        if candidate_ready_asset_count is not None:
+            record["candidate_ready_asset_count"] = candidate_ready_asset_count
+            record["required_candidate_ready_assets"] = int(min_active_assets)
         if poi_id in cooldown_poi_ids:
             skipped.append({**record, "reason": "cooldown"})
         elif active_asset_count < min_active_assets:
             skipped.append({**record, "reason": "insufficient_active_assets"})
+        elif (
+            candidate_ready_asset_count is not None
+            and candidate_ready_asset_count < min_active_assets
+        ):
+            skipped.append({**record, "reason": "insufficient_candidate_ready_assets"})
         else:
             eligible.append(record)
 
@@ -226,6 +290,7 @@ def build_selection_payload(
     rows: list[dict[str, Any]],
     poi_count: int,
     videos_per_poi: int,
+    candidate_ready_asset_ids: set[str] | None = None,
     cooldown_poi_ids: set[str] | None = None,
     cooldown_days: int = 3,
     target_duration_sec: float = DEFAULT_PGC_TARGET_DURATION_SEC,
@@ -238,6 +303,7 @@ def build_selection_payload(
     summary = summarize_pois(
         rows,
         min_active_assets=min_active_assets,
+        candidate_ready_asset_ids=candidate_ready_asset_ids,
         cooldown_poi_ids=cooldown_poi_ids or set(),
         classification_field=classification_field,
         classification_value=classification_value,
@@ -263,6 +329,13 @@ def build_selection_payload(
                 "classification_value": classification_value,
                 "cooldown_days": int(cooldown_days),
                 "required_active_assets": int(min_active_assets),
+                **(
+                    {
+                        "required_candidate_ready_assets": int(min_active_assets),
+                    }
+                    if candidate_ready_asset_ids is not None
+                    else {}
+                ),
             },
         },
         "selected_pois": selected,

@@ -70,6 +70,31 @@ def test_build_selection_payload_applies_threshold_cooldown_and_equal_random():
     ]
 
 
+def test_build_selection_payload_requires_candidate_ready_assets_when_provided():
+    from promo.core.batch_selection import build_selection_payload
+
+    ready_rows = _rows_for_poi("poi_aaa", count=50, name="Ready Hotel")
+    stale_rows = _rows_for_poi("poi_bbb", count=56, name="Stale Hotel")
+    rows = ready_rows + stale_rows
+    ready_asset_ids = {row["asset_id"] for row in ready_rows}
+    ready_asset_ids.update(row["asset_id"] for row in stale_rows[:28])
+
+    payload = build_selection_payload(
+        rows=rows,
+        poi_count=1,
+        videos_per_poi=1,
+        candidate_ready_asset_ids=ready_asset_ids,
+    )
+
+    assert payload["request"]["filters"]["required_active_assets"] == 50
+    assert payload["request"]["filters"]["required_candidate_ready_assets"] == 50
+    assert [poi["poi_id"] for poi in payload["eligible_pois"]] == ["poi_aaa"]
+    skipped = {poi["poi_id"]: poi for poi in payload["skipped_pois"]}
+    assert skipped["poi_bbb"]["reason"] == "insufficient_candidate_ready_assets"
+    assert skipped["poi_bbb"]["active_asset_count"] == 56
+    assert skipped["poi_bbb"]["candidate_ready_asset_count"] == 28
+
+
 def test_build_selection_payload_reports_shortage_unless_allowed():
     from promo.core.batch_selection import BatchSelectionError, build_selection_payload
 

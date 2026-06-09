@@ -100,7 +100,7 @@ def test_build_asset_visual_brief_summarizes_coverage_without_ids():
     assert "core promises" in brief["summary_note"]
 
 
-def test_retrieve_candidates_requires_pool_above_threshold():
+def test_retrieve_candidates_requires_pool_at_least_threshold():
     from promo.core.assets.retrieval import AssetRetrievalError, retrieve_candidates
 
     with pytest.raises(AssetRetrievalError, match="eligible asset pool"):
@@ -108,7 +108,7 @@ def test_retrieve_candidates_requires_pool_above_threshold():
             assets=[_asset()],
             queries=["pool"],
             query_vectors=[(1.0, 0.0, 0.0)],
-            min_eligible_assets=1,
+            min_eligible_assets=2,
         )
 
 
