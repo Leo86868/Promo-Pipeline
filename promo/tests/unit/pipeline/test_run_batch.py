@@ -93,6 +93,27 @@ def _write_valid_manifest_from_command(command, *, video_index=1):
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def _selection_rows(*, poi_count=2, assets_per_poi=60):
+    rows = []
+    for poi_index in range(1, poi_count + 1):
+        poi_id = f"poi_{poi_index}"
+        for asset_index in range(1, assets_per_poi + 1):
+            asset_id = f"asset_{poi_index}{asset_index:03d}"
+            rows.append({
+                "poi_id": poi_id,
+                "display_name": f"Selection Resort {poi_index}",
+                "canonical_key": f"selection_resort_{poi_index}",
+                "location": "California",
+                "asset_id": asset_id,
+                "clip_id": f"{asset_index:04d}",
+                "source_storage_bucket": "poi-assets",
+                "source_storage_path": f"{poi_id}/clips/{asset_id}.mp4",
+                "source_content_hash": "sha256:" + "a" * 64,
+                "duration_sec": 5.0,
+            })
+    return rows
+
+
 def test_plan_batch_items_isolates_each_video_run(tmp_path):
     from promo.cli.run_batch import BatchPoi, plan_batch_items
 
@@ -200,6 +221,67 @@ def test_run_batch_executes_independent_one_video_runs(tmp_path):
     assert {
         video["drive_upload"]["status"] for video in receipt["videos"]
     } == {"not_implemented"}
+
+
+def test_prepare_selected_batch_writes_batch_and_summary(tmp_path):
+    from promo.cli.run_batch import prepare_selected_batch
+
+    prepared = prepare_selected_batch(
+        output_root=str(tmp_path / "out"),
+        poi_count=1,
+        videos_per_poi=2,
+        target_duration_sec=65,
+        cooldown_days=3,
+        seed=7,
+        client_factory=lambda: object(),
+        valid_clip_rows_fetcher=lambda client: _selection_rows(),
+        recent_usage_poi_ids_fetcher=lambda client, **kwargs: set(),
+    )
+
+    batch = json.loads((tmp_path / "out" / "batch.json").read_text())
+    summary = json.loads((tmp_path / "out" / "selection_summary.json").read_text())
+    assert prepared.batch_path == str(tmp_path / "out" / "batch.json")
+    assert prepared.selection_summary_path == str(tmp_path / "out" / "selection_summary.json")
+    assert batch["videos_per_poi"] == 2
+    assert batch["target_duration_sec"] == 65.0
+    assert batch["selection"]["mode"] == "random_equal"
+    assert batch["selection"]["selection_summary_path"] == prepared.selection_summary_path
+    assert summary["request"]["filters"]["required_active_assets"] == 60
+    assert len(summary["selected_pois"]) == 1
+    assert summary["batch_spec"] == batch
+
+
+def test_run_selected_batch_generates_batch_then_runs(tmp_path):
+    from promo.cli.run_batch import run_selected_batch
+
+    commands = []
+
+    exit_code = run_selected_batch(
+        output_root=str(tmp_path / "out"),
+        poi_count=1,
+        videos_per_poi=1,
+        target_duration_sec=65,
+        seed=9,
+        command_runner=lambda command: commands.append(list(command)) or 0,
+        selection_client_factory=lambda: object(),
+        valid_clip_rows_fetcher=lambda client: _selection_rows(
+            poi_count=1,
+            assets_per_poi=50,
+        ),
+        recent_usage_poi_ids_fetcher=lambda client, **kwargs: set(),
+    )
+
+    assert exit_code == 0
+    assert len(commands) == 1
+    assert "--supabase-poi-id" in commands[0]
+    assert commands[0][commands[0].index("--supabase-poi-id") + 1] == "poi_1"
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["request"]["selection"] == "random_equal"
+    assert receipt["request"]["selection_metadata"]["selection_summary_path"] == str(
+        tmp_path / "out" / "selection_summary.json"
+    )
+    assert receipt["request"]["filters"]["required_active_assets"] == 50
+    assert receipt["selected_pois"][0]["poi_id"] == "poi_1"
 
 
 def test_run_batch_returns_failure_when_any_item_fails(tmp_path):

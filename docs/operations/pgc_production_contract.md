@@ -261,10 +261,11 @@ upload files.
 `promo.cli.upload_drive_staging` already uploads staged final MP4s to Drive via
 OAuth, keeps files private, and verifies Drive metadata.
 
-`promo.cli.run_batch --production-autopilot` already processes audit-passed
-videos through private Drive upload, usage writeback/verification,
-release-candidate registration/verification, and POI quarantine on usage
-writeback failure.
+`promo.cli.run_batch --select-random-pois --production-autopilot` already
+selects eligible POIs, writes `selection_summary.json` and `batch.json`, then
+processes audit-passed videos through private Drive upload, usage
+writeback/verification, release-candidate registration/verification, and POI
+quarantine on usage writeback failure.
 
 `promo.cli.audit_run_manifest` already checks production manifest requirements.
 
@@ -274,6 +275,6 @@ manifest audit and verifies the rows by `event_id`.
 `promo.cli.register_release_candidates --execute` already inserts approved
 handoff rows and verifies the rows by `source_video_key`.
 
-`promo.cli.run_batch` already emits `RUN_RECEIPT.json` through render and
-manifest-audit states; future work should extend it through the full production
-state machine.
+`promo.cli.run_batch` already emits `RUN_RECEIPT.json` through selection
+metadata, render, manifest-audit, Drive, usage, release-candidate, and
+quarantine states. Future work should add receipt-based resume/top-up.

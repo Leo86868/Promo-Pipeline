@@ -38,11 +38,12 @@ POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
 inventory via `promo.cli.prepare_drive_staging`, and render plus manifest-audit
 `RUN_RECEIPT.json` emission from `promo.cli.run_batch`. It also has explicit
 OAuth Drive upload via `promo.cli.upload_drive_staging`; uploads are private by
-default. `promo.cli.run_batch --production-autopilot` can now process each
-audit-passed video through private Drive upload, usage writeback/verification,
-`release_candidates` registration/verification, POI quarantine on usage failure,
-and receipt updates. The remaining future autopilot work is receipt-based
-resume/top-up and live smoke hardening.
+default. `promo.cli.run_batch --select-random-pois --production-autopilot` can
+select eligible POIs, write `selection_summary.json` and `batch.json`, then
+process each audit-passed video through private Drive upload, usage
+writeback/verification, `release_candidates` registration/verification, POI
+quarantine on usage failure, and receipt updates. The remaining future autopilot
+work is receipt-based resume/top-up and live smoke hardening.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -77,8 +78,9 @@ PGC must not write account distribution state.
   to all POIs.
 - If not enough POIs pass filters, stop before production and ask Leo whether to
   run the smaller count or wait for zhongtai to add assets.
-- Use `python3 -m promo.cli.select_batch_pois` for the current read-only
-  selector/preflight and batch JSON generation.
+- Use `python3 -m promo.cli.run_batch --select-random-pois` for normal
+  selection plus production runs. Use `promo.cli.select_batch_pois` only for
+  manual preflight/debug.
 
 ## Active Asset Rule
 
@@ -126,20 +128,25 @@ paths. `source_output_uri` must be durable, currently `drive:<file_id>`.
 Do not write usage before durable upload succeeds. If upload fails, no usage was
 spent and no release candidate exists.
 
-Current repo support can run the per-video production order from an existing
-batch JSON:
+Current repo support can run selection plus the per-video production order:
 
 ```bash
 python3 -m promo.cli.run_batch \
-  --batch "$batch_json" \
+  --select-random-pois \
+  --poi-count "$poi_count" \
+  --videos-per-poi "$videos_per_poi" \
   --output-dir "$output_dir" \
   --supabase-music-library \
   --production-autopilot
 ```
 
-This is the current one-command production path. It uses the explicit
-`--production-autopilot` flag to avoid accidental live Drive/Supabase writes
-from old render-only commands.
+This is the current structured production path. The skill translates Leo's
+natural-language request into these flags; the repo does not parse English.
+The explicit `--production-autopilot` flag avoids accidental live Drive/Supabase
+writes from old render-only commands.
+
+For repair/debug against a known POI list, `run_batch --batch "$batch_json"` is
+still supported.
 
 The manual repair/debug path can prepare/audit the Drive staging inventory:
 

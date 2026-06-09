@@ -77,7 +77,7 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 | Command | Purpose |
 |---|---|
 | `python3 -m promo.cli.compile_promo` | End-to-end: clips → narration → assignment → MP4. Primary entry point. |
-| `python3 -m promo.cli.run_batch` | Batch runner. With `--production-autopilot`, each audit-passed video is uploaded to private Drive, usage is verified, and `release_candidates` is registered. |
+| `python3 -m promo.cli.run_batch` | Batch runner. With `--select-random-pois --production-autopilot`, selects eligible POIs, uploads audit-passed videos to private Drive, verifies usage, and registers `release_candidates`. |
 | `python3 -m promo.cli.select_batch_pois` | Read-only Supabase POI selector: random eligible POIs, cooldown, active-asset threshold, batch JSON output. |
 | `python3 -m promo.cli.audit_run_manifest` | Strict local production audit for run manifests before usage writeback or handoff. |
 | `python3 -m promo.cli.prepare_drive_staging` | Builds manifest-backed Drive staging inventory from manifests or a run receipt. Does not upload. |

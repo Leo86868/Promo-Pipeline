@@ -121,10 +121,13 @@ def build_run_receipt(
     batch_id: str | None = None,
     created_at: str | None = None,
     production_autopilot: bool = False,
+    selection_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     created = created_at or utc_now_iso()
+    selection_mode = "provided_list"
+    if isinstance(selection_metadata, dict):
+        selection_mode = str(selection_metadata.get("mode") or selection_mode)
     implementation_gaps = [
-        "random_eligible_poi_selection",
         "receipt_based_resume_top_up",
     ]
     if not production_autopilot:
@@ -149,7 +152,8 @@ def build_run_receipt(
                 if production_autopilot
                 else "render_only_current_implementation"
             ),
-            "selection": "provided_list",
+            "selection": selection_mode,
+            "selection_metadata": selection_metadata or None,
             "poi_count": len(pois),
             "videos_per_poi": int(videos_per_poi),
             "requested_videos": len(videos),

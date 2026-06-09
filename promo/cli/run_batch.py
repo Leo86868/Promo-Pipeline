@@ -25,6 +25,13 @@ from dotenv import load_dotenv
 
 from promo.cli.usage_events_preview import build_preview
 from promo.cli.usage_events_writeback import record_usage_events, verify_usage_events
+from promo.core.batch_selection import (
+    DEFAULT_PGC_TARGET_DURATION_SEC,
+    BatchSelectionError,
+    build_selection_payload,
+    fetch_recent_usage_poi_ids,
+    fetch_valid_clip_rows,
+)
 from promo.core import config
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.drive_staging import (
@@ -78,6 +85,13 @@ class DriveUploadTarget:
     uploader: Any
     parent_folder_id: str | None
     parent_folder_name: str
+
+
+@dataclass(frozen=True)
+class PreparedSelectionBatch:
+    batch_path: str
+    selection_summary_path: str
+    payload: dict[str, Any]
 
 
 def _positive_int(value: Any, field: str) -> int:
@@ -175,6 +189,70 @@ def _create_drive_upload_target_from_env() -> DriveUploadTarget:
         uploader=OAuthDriveUploader(upload_config),
         parent_folder_id=upload_config.parent_folder_id,
         parent_folder_name=upload_config.parent_folder_name,
+    )
+
+
+def prepare_selected_batch(
+    *,
+    output_root: str,
+    poi_count: int,
+    videos_per_poi: int,
+    target_duration_sec: float = DEFAULT_PGC_TARGET_DURATION_SEC,
+    cooldown_days: int = 3,
+    seed: int | None = None,
+    classification_field: str | None = None,
+    classification_value: str | None = None,
+    allow_shortage: bool = False,
+    client_factory: Callable[[], Any] = _create_supabase_client_from_env,
+    valid_clip_rows_fetcher: Callable[[Any], list[dict[str, Any]]] = fetch_valid_clip_rows,
+    recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
+) -> PreparedSelectionBatch:
+    if bool(classification_field) != bool(classification_value):
+        raise BatchSelectionError(
+            "classification_field and classification_value must be provided together"
+        )
+    resolved_poi_count = _positive_int(poi_count, "poi_count")
+    resolved_videos_per_poi = _positive_int(videos_per_poi, "videos_per_poi")
+    resolved_target_duration = _positive_float(target_duration_sec, "target_duration_sec")
+    if cooldown_days < 0:
+        raise BatchSelectionError("cooldown_days must be >= 0")
+
+    client = client_factory()
+    rows = valid_clip_rows_fetcher(client)
+    cooldown_poi_ids = recent_usage_poi_ids_fetcher(
+        client,
+        cooldown_days=int(cooldown_days),
+    )
+    payload = build_selection_payload(
+        rows=rows,
+        poi_count=resolved_poi_count,
+        videos_per_poi=resolved_videos_per_poi,
+        cooldown_poi_ids=cooldown_poi_ids,
+        cooldown_days=int(cooldown_days),
+        target_duration_sec=resolved_target_duration,
+        seed=seed,
+        classification_field=classification_field,
+        classification_value=classification_value,
+        allow_shortage=allow_shortage,
+    )
+
+    selection_summary_path = os.path.join(output_root, "selection_summary.json")
+    batch_path = os.path.join(output_root, "batch.json")
+    batch_spec = dict(payload["batch_spec"])
+    batch_spec["selection"] = {
+        "mode": "random_equal",
+        "selection_summary_path": selection_summary_path,
+        "status": payload["status"],
+        "shortage_count": payload["shortage_count"],
+        "cooldown_days": int(cooldown_days),
+    }
+    payload["batch_spec"] = batch_spec
+    write_json(Path(selection_summary_path), payload)
+    write_json(Path(batch_path), batch_spec)
+    return PreparedSelectionBatch(
+        batch_path=batch_path,
+        selection_summary_path=selection_summary_path,
+        payload=payload,
     )
 
 
@@ -530,6 +608,7 @@ def run_batch(
         raise ValueError("run_batch currently supports --jobs 1 only")
 
     spec = load_batch_spec(batch_path)
+    selection_metadata = spec.get("selection") if isinstance(spec.get("selection"), dict) else None
     pois = parse_batch_pois(spec)
     resolved_videos_per_poi = _positive_int(
         videos_per_poi if videos_per_poi is not None else spec.get("videos_per_poi", 1),
@@ -590,6 +669,7 @@ def run_batch(
         tts_speed=tts_speed,
         seed=seed,
         production_autopilot=production_autopilot,
+        selection_metadata=selection_metadata,
     )
     write_run_receipt(resolved_receipt_path, receipt)
 
@@ -655,12 +735,100 @@ def run_batch(
     return 1 if failures else 0
 
 
+def run_selected_batch(
+    *,
+    output_root: str,
+    poi_count: int,
+    videos_per_poi: int = 3,
+    target_duration_sec: float = DEFAULT_PGC_TARGET_DURATION_SEC,
+    cooldown_days: int = 3,
+    classification_field: str | None = None,
+    classification_value: str | None = None,
+    allow_shortage: bool = False,
+    voices: Sequence[str] | None = None,
+    use_music_library: bool = False,
+    script_candidates: int = 1,
+    tts_speed: float = 0.95,
+    seed: int | None = None,
+    jobs: int = 1,
+    receipt_path: str | None = None,
+    command_runner: Callable[[Sequence[str]], int] = run_compile_command,
+    music_id_resolver: Callable[..., list[str]] = resolve_music_ids,
+    production_autopilot: bool = False,
+    handoff_dir: str | None = None,
+    drive_upload_target_factory: Callable[[], DriveUploadTarget] = _create_drive_upload_target_from_env,
+    supabase_client_factory: Callable[[], Any] = _create_supabase_client_from_env,
+    usage_recorder: Callable[[Any, list[dict[str, Any]]], dict[str, int]] = record_usage_events,
+    usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = verify_usage_events,
+    release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
+    selection_client_factory: Callable[[], Any] = _create_supabase_client_from_env,
+    valid_clip_rows_fetcher: Callable[[Any], list[dict[str, Any]]] = fetch_valid_clip_rows,
+    recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
+) -> int:
+    prepared = prepare_selected_batch(
+        output_root=output_root,
+        poi_count=poi_count,
+        videos_per_poi=videos_per_poi,
+        target_duration_sec=target_duration_sec,
+        cooldown_days=cooldown_days,
+        seed=seed,
+        classification_field=classification_field,
+        classification_value=classification_value,
+        allow_shortage=allow_shortage,
+        client_factory=selection_client_factory,
+        valid_clip_rows_fetcher=valid_clip_rows_fetcher,
+        recent_usage_poi_ids_fetcher=recent_usage_poi_ids_fetcher,
+    )
+    return run_batch(
+        batch_path=prepared.batch_path,
+        output_root=output_root,
+        videos_per_poi=None,
+        target_duration_sec=None,
+        voices=voices,
+        use_music_library=use_music_library,
+        script_candidates=script_candidates,
+        tts_speed=tts_speed,
+        seed=seed,
+        jobs=jobs,
+        receipt_path=receipt_path,
+        command_runner=command_runner,
+        music_id_resolver=music_id_resolver,
+        production_autopilot=production_autopilot,
+        handoff_dir=handoff_dir,
+        drive_upload_target_factory=drive_upload_target_factory,
+        supabase_client_factory=supabase_client_factory,
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one-video PGC jobs from a batch JSON")
-    parser.add_argument("--batch", required=True, help="Path to batch JSON")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--batch", help="Path to batch JSON")
+    source.add_argument(
+        "--select-random-pois",
+        action="store_true",
+        help="Read Supabase assets, select eligible POIs, and write output-dir/batch.json.",
+    )
     parser.add_argument("--output-dir", required=True, help="Root directory for batch outputs")
+    parser.add_argument(
+        "--poi-count",
+        type=int,
+        default=None,
+        help="Required with --select-random-pois.",
+    )
     parser.add_argument("--videos-per-poi", type=int, default=None)
     parser.add_argument("--target-duration-sec", type=float, default=None)
+    parser.add_argument("--cooldown-days", type=int, default=3)
+    parser.add_argument("--classification-field", default=None)
+    parser.add_argument("--classification-value", default=None)
+    parser.add_argument(
+        "--allow-shortage",
+        action="store_true",
+        help="With --select-random-pois, run all eligible POIs if fewer than requested pass.",
+    )
     parser.add_argument(
         "--voices",
         default=None,
@@ -708,22 +876,54 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
     try:
-        exit_code = run_batch(
-            batch_path=args.batch,
-            output_root=args.output_dir,
-            videos_per_poi=args.videos_per_poi,
-            target_duration_sec=args.target_duration_sec,
-            voices=parse_voice_keys(args.voices) if args.voices is not None else None,
-            use_music_library=args.supabase_music_library,
-            script_candidates=args.script_candidates,
-            tts_speed=args.tts_speed,
-            seed=args.seed,
-            jobs=args.jobs,
-            receipt_path=args.receipt_path,
-            production_autopilot=args.production_autopilot,
-            handoff_dir=args.handoff_dir,
-        )
-    except ValueError as exc:
+        voices = parse_voice_keys(args.voices) if args.voices is not None else None
+        if args.select_random_pois:
+            if args.poi_count is None:
+                parser.error("--poi-count is required with --select-random-pois")
+            if bool(args.classification_field) != bool(args.classification_value):
+                parser.error(
+                    "--classification-field and --classification-value must be passed together"
+                )
+            exit_code = run_selected_batch(
+                output_root=args.output_dir,
+                poi_count=args.poi_count,
+                videos_per_poi=args.videos_per_poi or 3,
+                target_duration_sec=(
+                    args.target_duration_sec
+                    if args.target_duration_sec is not None
+                    else DEFAULT_PGC_TARGET_DURATION_SEC
+                ),
+                cooldown_days=args.cooldown_days,
+                classification_field=args.classification_field,
+                classification_value=args.classification_value,
+                allow_shortage=args.allow_shortage,
+                voices=voices,
+                use_music_library=args.supabase_music_library,
+                script_candidates=args.script_candidates,
+                tts_speed=args.tts_speed,
+                seed=args.seed,
+                jobs=args.jobs,
+                receipt_path=args.receipt_path,
+                production_autopilot=args.production_autopilot,
+                handoff_dir=args.handoff_dir,
+            )
+        else:
+            exit_code = run_batch(
+                batch_path=args.batch,
+                output_root=args.output_dir,
+                videos_per_poi=args.videos_per_poi,
+                target_duration_sec=args.target_duration_sec,
+                voices=voices,
+                use_music_library=args.supabase_music_library,
+                script_candidates=args.script_candidates,
+                tts_speed=args.tts_speed,
+                seed=args.seed,
+                jobs=args.jobs,
+                receipt_path=args.receipt_path,
+                production_autopilot=args.production_autopilot,
+                handoff_dir=args.handoff_dir,
+            )
+    except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))
     sys.exit(exit_code)
 

@@ -95,11 +95,16 @@ Current one-command production path:
 
 ```bash
 python3 -m promo.cli.run_batch \
-  --batch batch.json \
+  --select-random-pois \
+  --poi-count 15 \
+  --videos-per-poi 3 \
   --output-dir out/pgc_batch_xxx \
   --supabase-music-library \
   --production-autopilot
 ```
+
+The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
+`--videos-per-poi 3`. The repo itself does not parse natural language.
 
 The explicit `--production-autopilot` flag is a code-level safety latch. The
 skill can add it for normal production requests; old render-only commands stay
@@ -289,10 +294,11 @@ staging inventory from manifests or audit-passed receipt entries.
 Current `promo.cli.upload_drive_staging` already uploads staged final MP4s to
 Drive using OAuth credentials and keeps files private.
 
-Current `promo.cli.run_batch --production-autopilot` already runs each
-audit-passed video through Drive upload, usage writeback/verification,
-release-candidate registration/verification, and POI quarantine on usage
-writeback failure.
+Current `promo.cli.run_batch --select-random-pois --production-autopilot`
+already selects eligible POIs, writes `selection_summary.json` and `batch.json`,
+then runs each audit-passed video through Drive upload, usage
+writeback/verification, release-candidate registration/verification, and POI
+quarantine on usage writeback failure.
 
 Current `promo.cli.audit_run_manifest` already checks production manifest
 requirements before usage writeback or handoff.
@@ -307,5 +313,6 @@ handoff rows into `release_candidates` and verifies the rows by
 
 Current `promo.cli.run_batch` writes `RUN_RECEIPT.json` through render,
 manifest-audit, Drive, usage, release-candidate, and quarantine states when
-`--production-autopilot` is enabled. Future work needs to add receipt-based
+`--production-autopilot` is enabled, and records selection metadata when
+`--select-random-pois` is used. Future work needs to add receipt-based
 resume/top-up states.
