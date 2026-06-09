@@ -18,6 +18,12 @@ to Leo in non-code terms.
 
 - A normal request such as "make 15 POIs, 3 videos each" means production
   autopilot, not preview-first mode.
+- Actual live production and live smoke runs should execute on the VPS
+  production worktree, not the local Mac worktree. The VPS has the intended
+  compute and production env. Local runs are for code work, dry/read-only
+  preflight, and human review artifact inspection.
+- If a session starts locally and Leo asks for live production, run it on the
+  VPS or stop and report that the active shell is not the production runtime.
 - Do not stop mid-run for routine production. Render, audit, write usage, and
   register handoff per successful video when the required repo/runtime support
   exists.
@@ -131,6 +137,8 @@ spent and no release candidate exists.
 Current repo support can run selection plus the per-video production order:
 
 ```bash
+ssh vps
+cd /home/deploy/pgc_batch_worktrees/main_20260608T000000Z
 python3 -m promo.cli.run_batch \
   --select-random-pois \
   --poi-count "$poi_count" \

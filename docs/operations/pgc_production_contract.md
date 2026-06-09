@@ -20,6 +20,11 @@ means:
 - register finished videos in `release_candidates` after durable upload;
 - write `RUN_RECEIPT.json`.
 
+Live production and live smoke runs execute on the VPS production worktree by
+default. The local Mac worktree is for implementation work, dry/read-only
+preflight, and review inspection. A local session must not quietly run a live
+production batch on the Mac just because the repo is checked out locally.
+
 Review mode is explicit.
 
 ```text

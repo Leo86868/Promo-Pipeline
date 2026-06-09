@@ -94,6 +94,8 @@ Update the batch order JSON.
 Current one-command production path:
 
 ```bash
+ssh vps
+cd /home/deploy/pgc_batch_worktrees/main_20260608T000000Z
 python3 -m promo.cli.run_batch \
   --select-random-pois \
   --poi-count 15 \
@@ -105,6 +107,11 @@ python3 -m promo.cli.run_batch \
 
 The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
 `--videos-per-poi 3`. The repo itself does not parse natural language.
+
+Actual live production and live smoke runs should run on the VPS production
+worktree. The local Mac worktree is for code edits, dry/read-only checks, and
+inspecting review packages. If an operator is in a local shell, they should SSH
+to the VPS before running live production.
 
 The explicit `--production-autopilot` flag is a code-level safety latch. The
 skill can add it for normal production requests; old render-only commands stay
