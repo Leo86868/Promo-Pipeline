@@ -535,6 +535,7 @@ def test_run_batch_production_autopilot_registers_successful_video(tmp_path):
     receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
     video = receipt["videos"][0]
     assert receipt["request"]["mode"] == "production_autopilot"
+    assert receipt["summary"]["rendered_videos"] == 1
     assert receipt["summary"]["drive_uploaded_videos"] == 1
     assert receipt["summary"]["usage_written_videos"] == 1
     assert receipt["summary"]["release_candidates_created"] == 1

@@ -288,6 +288,7 @@ def summarize_videos(videos: list[dict[str, Any]]) -> dict[str, int]:
         "rendered_videos": sum(
             1 for video in videos
             if str(video.get("state", "")).startswith("rendered")
+            or (video.get("render") or {}).get("return_code") == 0
         ),
         "failed_videos": sum(1 for video in videos if video.get("state") == "render_failed"),
         "manifest_found_videos": sum(
