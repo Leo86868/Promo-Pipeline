@@ -72,12 +72,13 @@ For each video, the safe order is:
 ```text
 1. make the video
 2. check the manifest
-3. upload the final MP4 to Drive
-4. write asset usage
-5. verify asset usage
-6. register the finished video in release_candidates
-7. verify the registration
-8. update RUN_RECEIPT.json
+3. if required, upscale the final MP4 and verify it
+4. upload the final MP4 to Drive
+5. write asset usage
+6. verify asset usage
+7. register the finished video in release_candidates
+8. verify the registration
+9. update RUN_RECEIPT.json
 ```
 
 Grandma version:
@@ -85,6 +86,7 @@ Grandma version:
 ```text
 Make the video.
 Check the receipt.
+Upscale the finished video first if this run consumed low-res source assets.
 Put the final MP4 in the Drive safe.
 Write the asset ledger.
 Register that zhongtai can use this finished video.
@@ -96,6 +98,9 @@ Current one-command production path:
 ```bash
 ssh vps
 cd /home/deploy/pgc_batch_worktrees/main_20260608T000000Z
+set -a
+. ./.env
+set +a
 python3 -m promo.cli.run_batch \
   --select-random-pois \
   --poi-count 15 \
@@ -220,6 +225,57 @@ Examples:
 
 If not enough POIs pass the filters, the system should stop before production
 and ask whether to run fewer or wait for zhongtai to add more assets.
+
+## Source Width Transition
+
+For the temporary low-res transition, PGC uses source asset `width` as the main
+resolution field. The current policy is:
+
+```text
+mode = transition_low_res_only
+target_width = 720
+tolerance_px = 40
+aspect ratio sanity = near 9:16
+```
+
+Grandma version:
+
+```text
+This is how PGC intentionally eats the old 720-width vertical clips.
+It is not a forever rule.
+```
+
+The rule applies twice:
+
+- when choosing POIs, the POI must have enough 720-width, active,
+  embedding-ready clips;
+- when retrieval downloads clips, fallback/reserve clips must still come from
+  that same 720-width pool.
+
+If this transition policy is active, final-video upscale is required before
+Drive handoff. In production autopilot, the system must stop before Drive,
+usage, and `release_candidates` if the WaveSpeed final upscale was not applied
+and verified.
+
+Verified means ffprobe reads the finished MP4 and confirms the configured target
+dimensions, currently 1080x1920 by default.
+
+Current repo support expects the WaveSpeed runner to be configured as a runtime
+command:
+
+```text
+PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env'
+```
+
+The env file must provide `WAVESPEED_API_KEY`. The command receives
+`{input_path}` and `{output_path}` placeholders and must write the verified
+upscaled MP4 to `{output_path}`. If this command is missing while final upscale
+is required, production fails closed before handoff.
+
+When the old 720-width pool is drained or zhongtai provides only 1080-width
+assets, switch the source policy back to `best_available` or a future 1080
+policy and disable the final-upscale requirement. PGC should not update
+zhongtai asset quality fields directly.
 
 ## Failure Rules
 

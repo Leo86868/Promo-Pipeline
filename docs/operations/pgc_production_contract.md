@@ -98,6 +98,37 @@ Examples:
 
 Future paradigms can define their own base value and buffer formula.
 
+## Source Resolution Policy
+
+PGC source-resolution policy uses the shared asset `width` field as the main
+selector for vertical videos. Do not key transition logic off `height`.
+
+Current controlled low-res transition policy:
+
+```json
+{
+  "mode": "transition_low_res_only",
+  "target_width": 720,
+  "tolerance_px": 40,
+  "aspect_ratio_min": 1.70,
+  "aspect_ratio_max": 1.86
+}
+```
+
+This means PGC may intentionally consume old 720-width-ish vertical source
+clips such as `704x1248` and `720x1280`. The policy must be applied twice:
+
+- POI eligibility counts only active, embedding-ready, policy-matching assets;
+- retrieval/download uses the same filtered ready-asset pool and must not widen
+  fallback padding back to mixed 720/1080 assets.
+
+For `pgc_65s`, the existing candidate-ready threshold still applies after the
+source policy. For example, `3 videos per POI` requires 70 policy-matching,
+candidate-ready assets.
+
+The asset platform owns quality fields and enrichment. PGC must not mutate
+asset-platform quality/status fields.
+
 ## Per-Video State Machine
 
 Target state progression:
@@ -120,6 +151,7 @@ Safe operation order:
 ```text
 render MP4
 -> audit manifest
+-> if final_upscale_required: apply and verify final-video upscale
 -> upload final MP4 to Drive
 -> write usage from manifest
 -> verify usage writeback
@@ -135,6 +167,25 @@ drive:<file_id>
 ```
 
 Reject local and temporary paths as candidate output URIs.
+
+If `final_upscale_policy.required = true`, production autopilot must fail closed
+before durable upload unless the final-video upscale is applied and verified.
+`release_candidates.source_output_uri` must point to the upscaled Drive URI, not
+the pre-upscale local render. Usage writeback still comes from the original
+manifest because the source asset timeline does not change.
+
+Verified means ffprobe reports the actual final MP4 dimensions match the
+configured target dimensions, currently 1080x1920 by default.
+
+Current repo support treats WaveSpeed as a detachable runtime provider. Before
+live transition production, configure:
+
+```text
+PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env'
+```
+
+The env file must provide `WAVESPEED_API_KEY`. Missing provider configuration
+is a safe failure, not permission to upload the raw render.
 
 Current repo support: `promo.cli.usage_events_writeback --execute` calls the
 manifest audit first, then calls the usage RPC and verifies the resulting rows
@@ -212,7 +263,17 @@ Recommended structure:
       "cooldown_days": 3,
       "base_min_assets_for_format": 50,
       "extra_variation_asset_buffer": 10,
-      "required_active_assets": 70
+      "required_active_assets": 70,
+      "source_resolution_policy": {
+        "mode": "transition_low_res_only",
+        "target_width": 720,
+        "tolerance_px": 40
+      },
+      "final_upscale_policy": {
+        "required": true,
+        "enabled": true,
+        "provider": "wavespeed"
+      }
     }
   },
   "selected_pois": [],
@@ -228,6 +289,11 @@ Recommended structure:
       "manifest_path": "...",
       "source_video_key": "manifest:manifest_example:variant:1",
       "source_output_uri": "drive:file_id",
+      "final_upscale": {
+        "required": true,
+        "status": "verified",
+        "output_path": "..."
+      },
       "usage": {
         "event_count": 18,
         "writeback_status": "verified"
