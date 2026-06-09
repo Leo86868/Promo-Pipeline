@@ -3,6 +3,96 @@ import json
 import pytest
 
 
+class _FakeUploader:
+    def __init__(self):
+        self.uploads = []
+
+    def ensure_batch_folder(
+        self,
+        *,
+        parent_folder_id,
+        parent_folder_name,
+        paradigm,
+        date,
+        batch_id,
+    ):
+        self.folder_context = {
+            "parent_folder_id": parent_folder_id,
+            "parent_folder_name": parent_folder_name,
+            "paradigm": paradigm,
+            "date": date,
+            "batch_id": batch_id,
+        }
+        return {"id": "drive-folder", "name": batch_id}
+
+    def upload_video_once(self, *, local_path, folder_id, filename=None):
+        self.uploads.append({
+            "local_path": local_path,
+            "folder_id": folder_id,
+            "filename": filename,
+        })
+        return {
+            "id": f"drive-{filename}",
+            "name": filename,
+            "size": "3",
+            "mimeType": "video/mp4",
+            "reused_existing": False,
+        }
+
+
+def _write_valid_manifest_from_command(command, *, video_index=1):
+    from promo.core.pipeline.run_manifest import build_run_manifest
+    from pathlib import Path
+
+    output_path = command[command.index("--output") + 1]
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_bytes(b"mp4")
+    manifest_path = output_file.parent / f"run_manifest_terranea_resort_{video_index:03d}.json"
+    manifest = build_run_manifest(
+        poi_name="Terranea Resort",
+        location="Rancho Palos Verdes",
+        target_duration_sec=65,
+        n_variants=1,
+        script_candidates=1,
+        format_selector="single",
+        embedding_cache_active=False,
+        poi_id="poi_123",
+        clip_paths={"0001": "/tmp/clip_0001.mp4"},
+        clips_metadata=[],
+        clip_durations={},
+        shared_assets=[{
+            "asset_id": f"asset_{video_index:03d}",
+            "clip_id": "0001",
+            "source_storage_bucket": "poi-assets",
+            "source_storage_path": f"poi_123/clips/asset_{video_index:03d}.mp4",
+            "source_content_hash": "sha256:" + "a" * 64,
+            "duration_sec": 5.0,
+        }],
+        rendered_outputs=[{
+            "variant_index": 1,
+            "render_output_path": str(output_file),
+            "final_output_path": str(output_file),
+            "target_duration_sec": 65,
+            "music_label": "Run Away with Me",
+            "timeline_entries": [{
+                "clip_id": "0001",
+                "usage_role": "assigned_phrase",
+                "segment": 1,
+                "trim_start_sec": 0.0,
+                "trim_end_sec": 2.0,
+                "display_start_sec": 0.0,
+                "display_end_sec": 2.0,
+                "source_duration_sec": 5.0,
+            }],
+        }],
+        sidecar_paths={},
+        run_id=f"pgc_run_{video_index:03d}",
+        manifest_id=f"manifest_{video_index:03d}",
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+
 def test_plan_batch_items_isolates_each_video_run(tmp_path):
     from promo.cli.run_batch import BatchPoi, plan_batch_items
 
@@ -279,6 +369,174 @@ def test_run_batch_receipt_records_manifest_audit_failure(tmp_path):
     assert video["manifest_audit"]["status"] == "failed"
     assert video["error"] == "manifest audit failed"
     assert receipt["summary"]["manifest_audit_failed_videos"] == 1
+
+
+def test_run_batch_production_autopilot_registers_successful_video(tmp_path):
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{
+                "poi_id": "poi_123",
+                "name": "Terranea Resort",
+                "location": "Rancho Palos Verdes",
+            }],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    fake_uploader = _FakeUploader()
+    usage_calls = []
+    release_calls = []
+
+    def command_runner(command):
+        _write_valid_manifest_from_command(command, video_index=1)
+        return 0
+
+    def usage_recorder(client, events):
+        usage_calls.append(events)
+        return {"inserted_count": len(events), "duplicate_count": 0}
+
+    def usage_verifier(client, events):
+        return {
+            "verified": True,
+            "expected_count": len(events),
+            "observed_count": len(events),
+            "missing_count": 0,
+            "mismatch_count": 0,
+            "duplicate_observed_event_id_count": 0,
+            "missing_event_ids": [],
+            "mismatches": [],
+            "duplicate_observed_event_ids": [],
+        }
+
+    def release_registrar(client, records):
+        release_calls.append(records)
+        return {
+            "inserted_count": len(records),
+            "already_registered_count": 0,
+            "verification": {
+                "verified": True,
+                "expected_count": len(records),
+                "observed_count": len(records),
+                "missing_count": 0,
+                "mismatch_count": 0,
+                "duplicate_observed_key_count": 0,
+                "missing_source_video_keys": [],
+                "mismatches": [],
+                "duplicate_observed_source_video_keys": [],
+            },
+        }
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=fake_uploader,
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    )
+
+    assert exit_code == 0
+    assert len(usage_calls) == 1
+    assert len(release_calls) == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    video = receipt["videos"][0]
+    assert receipt["request"]["mode"] == "production_autopilot"
+    assert receipt["summary"]["drive_uploaded_videos"] == 1
+    assert receipt["summary"]["usage_written_videos"] == 1
+    assert receipt["summary"]["release_candidates_created"] == 1
+    assert video["state"] == "release_candidate_verified"
+    assert video["drive_upload"]["source_output_uri"].startswith("drive:")
+    assert video["usage"]["writeback_status"] == "verified"
+    assert video["release_candidate"]["status"] == "verified"
+    assert (tmp_path / "out" / "handoff").exists()
+    assert len(list((tmp_path / "out" / "handoff").glob("*_drive_inventory.json"))) == 1
+    assert release_calls[0][0]["source_output_uri"].startswith("drive:")
+    assert release_calls[0][0]["source_batch_id"] == receipt["batch_id"]
+
+
+def test_run_batch_production_autopilot_quarantines_poi_on_usage_failure(tmp_path):
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    commands = []
+
+    def command_runner(command):
+        commands.append(command)
+        _write_valid_manifest_from_command(command, video_index=len(commands))
+        return 0
+
+    def usage_verifier(client, events):
+        return {
+            "verified": False,
+            "expected_count": len(events),
+            "observed_count": 0,
+            "missing_count": len(events),
+            "mismatch_count": 0,
+            "duplicate_observed_event_id_count": 0,
+            "missing_event_ids": [event["event_id"] for event in events],
+            "mismatches": [],
+            "duplicate_observed_event_ids": [],
+        }
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id=None,
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: {
+            "inserted_count": len(events),
+            "duplicate_count": 0,
+        },
+        usage_verifier=usage_verifier,
+        release_registrar=lambda client, records: pytest.fail(
+            "release registration should not run after usage failure"
+        ),
+    )
+
+    assert exit_code == 1
+    assert len(commands) == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["quarantined_pois"] == [{
+        "poi_key": "poi_123",
+        "poi_id": "poi_123",
+        "canonical_key": None,
+        "poi_name": "Terranea Resort",
+        "reason": "usage writeback verification failed",
+    }]
+    assert [video["state"] for video in receipt["videos"]] == [
+        "usage_writeback_failed",
+        "skipped_quarantined_poi",
+    ]
+    assert receipt["summary"]["drive_uploaded_videos"] == 1
+    assert receipt["summary"]["usage_failed_videos"] == 1
+    assert receipt["summary"]["quarantined_skipped_videos"] == 1
 
 
 def test_run_batch_rejects_parallel_jobs_until_safe(tmp_path):

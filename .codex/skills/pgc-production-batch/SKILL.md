@@ -38,8 +38,11 @@ POI selection via `promo.cli.select_batch_pois`, manifest-backed Drive staging
 inventory via `promo.cli.prepare_drive_staging`, and render plus manifest-audit
 `RUN_RECEIPT.json` emission from `promo.cli.run_batch`. It also has explicit
 OAuth Drive upload via `promo.cli.upload_drive_staging`; uploads are private by
-default. The future autopilot path still needs repo/runtime support for
-per-video writeback orchestration, POI quarantine, and receipt-based resume/top-up.
+default. `promo.cli.run_batch --production-autopilot` can now process each
+audit-passed video through private Drive upload, usage writeback/verification,
+`release_candidates` registration/verification, POI quarantine on usage failure,
+and receipt updates. The remaining future autopilot work is receipt-based
+resume/top-up and live smoke hardening.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -123,7 +126,22 @@ paths. `source_output_uri` must be durable, currently `drive:<file_id>`.
 Do not write usage before durable upload succeeds. If upload fails, no usage was
 spent and no release candidate exists.
 
-Current repo support can prepare/audit the Drive staging inventory:
+Current repo support can run the per-video production order from an existing
+batch JSON:
+
+```bash
+python3 -m promo.cli.run_batch \
+  --batch "$batch_json" \
+  --output-dir "$output_dir" \
+  --supabase-music-library \
+  --production-autopilot
+```
+
+This is the current one-command production path. It uses the explicit
+`--production-autopilot` flag to avoid accidental live Drive/Supabase writes
+from old render-only commands.
+
+The manual repair/debug path can prepare/audit the Drive staging inventory:
 
 ```bash
 python3 -m promo.cli.prepare_drive_staging \

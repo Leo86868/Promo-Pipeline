@@ -91,6 +91,20 @@ Register that zhongtai can use this finished video.
 Update the batch order JSON.
 ```
 
+Current one-command production path:
+
+```bash
+python3 -m promo.cli.run_batch \
+  --batch batch.json \
+  --output-dir out/pgc_batch_xxx \
+  --supabase-music-library \
+  --production-autopilot
+```
+
+The explicit `--production-autopilot` flag is a code-level safety latch. The
+skill can add it for normal production requests; old render-only commands stay
+render-only.
+
 ## Why Manifest Audit Matters
 
 The manifest is the receipt for one video. Usage writeback is created from this
@@ -264,9 +278,6 @@ The final report should say:
 The target contract is ahead of the current repo implementation. The repo still
 needs dedicated support for:
 
-- per-video usage writeback orchestration;
-- per-video release candidate orchestration;
-- POI quarantine;
 - resume/top-up from receipt.
 
 Current `promo.cli.select_batch_pois` already does read-only random POI
@@ -277,6 +288,11 @@ staging inventory from manifests or audit-passed receipt entries.
 
 Current `promo.cli.upload_drive_staging` already uploads staged final MP4s to
 Drive using OAuth credentials and keeps files private.
+
+Current `promo.cli.run_batch --production-autopilot` already runs each
+audit-passed video through Drive upload, usage writeback/verification,
+release-candidate registration/verification, and POI quarantine on usage
+writeback failure.
 
 Current `promo.cli.audit_run_manifest` already checks production manifest
 requirements before usage writeback or handoff.
@@ -289,6 +305,7 @@ Current `promo.cli.register_release_candidates --execute` inserts approved
 handoff rows into `release_candidates` and verifies the rows by
 `source_video_key` after insert.
 
-Current `promo.cli.run_batch` writes `RUN_RECEIPT.json` through render and
-manifest-audit states. Future work needs to extend that receipt through Drive,
-usage, release-candidate, and resume/top-up states.
+Current `promo.cli.run_batch` writes `RUN_RECEIPT.json` through render,
+manifest-audit, Drive, usage, release-candidate, and quarantine states when
+`--production-autopilot` is enabled. Future work needs to add receipt-based
+resume/top-up states.

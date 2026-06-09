@@ -120,8 +120,20 @@ def build_run_receipt(
     seed: int | None,
     batch_id: str | None = None,
     created_at: str | None = None,
+    production_autopilot: bool = False,
 ) -> dict[str, Any]:
     created = created_at or utc_now_iso()
+    implementation_gaps = [
+        "random_eligible_poi_selection",
+        "receipt_based_resume_top_up",
+    ]
+    if not production_autopilot:
+        implementation_gaps.extend([
+            "drive_upload",
+            "per_video_usage_writeback_orchestration",
+            "release_candidate_registration",
+            "poi_quarantine",
+        ])
     return {
         "schema_version": SCHEMA_VERSION,
         "receipt_kind": "pgc_batch_run_receipt",
@@ -132,7 +144,11 @@ def build_run_receipt(
         "request": {
             "batch_path": batch_path,
             "output_root": output_root,
-            "mode": "render_only_current_implementation",
+            "mode": (
+                "production_autopilot"
+                if production_autopilot
+                else "render_only_current_implementation"
+            ),
             "selection": "provided_list",
             "poi_count": len(pois),
             "videos_per_poi": int(videos_per_poi),
@@ -150,14 +166,7 @@ def build_run_receipt(
                 "extra_variation_asset_buffer": DEFAULT_EXTRA_VARIATION_ASSET_BUFFER,
                 "required_active_assets": required_active_assets(videos_per_poi),
             },
-            "implementation_gaps": [
-                "random_eligible_poi_selection",
-                "cooldown_enforcement",
-                "drive_upload",
-                "per_video_usage_writeback_orchestration",
-                "release_candidate_registration",
-                "poi_quarantine",
-            ],
+            "implementation_gaps": implementation_gaps,
         },
         "selected_pois": [_poi_record(poi) for poi in pois],
         "skipped_pois": [],
@@ -296,6 +305,29 @@ def summarize_videos(videos: list[dict[str, Any]]) -> dict[str, int]:
         "release_candidates_created": sum(
             1 for video in videos
             if (video.get("release_candidate") or {}).get("status") == "verified"
+        ),
+        "drive_uploaded_videos": sum(
+            1 for video in videos
+            if (video.get("drive_upload") or {}).get("status")
+            in {"verified", "verified_existing"}
+        ),
+        "drive_upload_failed_videos": sum(
+            1 for video in videos
+            if (video.get("drive_upload") or {}).get("status") == "failed"
+        ),
+        "usage_failed_videos": sum(
+            1 for video in videos
+            if (video.get("usage") or {}).get("writeback_status")
+            in {"failed", "verification_failed"}
+        ),
+        "release_candidate_failed_videos": sum(
+            1 for video in videos
+            if (video.get("release_candidate") or {}).get("status")
+            in {"failed_retryable", "verification_failed"}
+        ),
+        "quarantined_skipped_videos": sum(
+            1 for video in videos
+            if video.get("state") == "skipped_quarantined_poi"
         ),
     }
 

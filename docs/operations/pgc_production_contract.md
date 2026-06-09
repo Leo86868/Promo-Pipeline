@@ -130,13 +130,13 @@ Reject local and temporary paths as candidate output URIs.
 
 Current repo support: `promo.cli.usage_events_writeback --execute` calls the
 manifest audit first, then calls the usage RPC and verifies the resulting rows
-by `event_id`. It is still an explicit CLI, not yet wired into the full
-per-video autopilot sequence.
+by `event_id`. `promo.cli.run_batch --production-autopilot` wires the same
+write/verify behavior into the per-video production sequence.
 
 Current repo support: `promo.cli.register_release_candidates --execute` inserts
 approved handoff rows into `release_candidates` and verifies the resulting rows
-by `source_video_key`. It is still an explicit CLI, not yet wired into the full
-per-video autopilot sequence.
+by `source_video_key`. `promo.cli.run_batch --production-autopilot` wires the
+same register/verify behavior into the per-video production sequence.
 
 ## Manifest Audit Gate
 
@@ -248,9 +248,6 @@ ledger with batch registry responsibilities.
 
 As of this contract, the repo still needs implementation for:
 
-- per-video production orchestration;
-- per-video release candidate orchestration;
-- POI quarantine;
 - receipt-based resume/top-up.
 
 `promo.cli.select_batch_pois` already implements read-only random POI selection,
@@ -263,6 +260,11 @@ upload files.
 
 `promo.cli.upload_drive_staging` already uploads staged final MP4s to Drive via
 OAuth, keeps files private, and verifies Drive metadata.
+
+`promo.cli.run_batch --production-autopilot` already processes audit-passed
+videos through private Drive upload, usage writeback/verification,
+release-candidate registration/verification, and POI quarantine on usage
+writeback failure.
 
 `promo.cli.audit_run_manifest` already checks production manifest requirements.
 
