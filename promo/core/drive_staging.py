@@ -48,9 +48,19 @@ def _resolve_output_path(manifest_path: Path, output: dict[str, Any]) -> str:
         or output.get("render_output_path")
     )
     path = Path(_required_text(raw, "manifest.outputs[].output_path"))
-    if not path.is_absolute():
-        path = manifest_path.parent / path
-    return str(path)
+    if path.is_absolute():
+        return str(path)
+    if path.exists():
+        return str(path)
+    manifest_relative = manifest_path.parent / path
+    if manifest_relative.exists():
+        return str(manifest_relative)
+    if manifest_path.is_absolute():
+        for ancestor in manifest_path.parent.parents:
+            ancestor_relative = ancestor / path
+            if ancestor_relative.exists():
+                return str(ancestor_relative)
+    return str(manifest_relative)
 
 
 def _music_label(output: dict[str, Any]) -> str:

@@ -559,7 +559,7 @@ def test_run_batch_production_autopilot_registers_successful_video(tmp_path):
     assert receipt["summary"]["drive_uploaded_videos"] == 1
     assert receipt["summary"]["usage_written_videos"] == 1
     assert receipt["summary"]["release_candidates_created"] == 1
-    assert video["state"] == "release_candidate_verified"
+    assert video["state"] == "complete"
     assert video["drive_upload"]["source_output_uri"].startswith("drive:")
     assert video["usage"]["writeback_status"] == "verified"
     assert video["release_candidate"]["status"] == "verified"
@@ -717,7 +717,7 @@ def test_run_batch_final_upscale_uploads_verified_upscaled_master(tmp_path):
     assert len(release_calls) == 1
     receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
     video = receipt["videos"][0]
-    assert video["state"] == "release_candidate_verified"
+    assert video["state"] == "complete"
     assert video["final_upscale"]["status"] == "verified"
     assert video["drive_upload"]["source_output_uri"].startswith("drive:")
     assert release_calls[0][0]["source_output_uri"].startswith("drive:")

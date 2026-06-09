@@ -53,6 +53,45 @@ def test_build_staging_inventory_reads_manifest_and_local_output(tmp_path):
     assert item["staging_status"] == "pending_drive_upload"
 
 
+def test_build_staging_inventory_accepts_repo_relative_output_path(
+    tmp_path,
+    monkeypatch,
+):
+    from promo.core.drive_staging import build_staging_inventory
+
+    output_rel = "out/pgc_batch/hotel/video_001/promo_hotel_65s.mp4"
+    output_path = tmp_path / output_rel
+    output_path.parent.mkdir(parents=True)
+    output_path.write_bytes(b"mp4")
+    manifest_path = (
+        tmp_path
+        / "out/pgc_batch/hotel/video_001/run_manifest_hotel_65s.json"
+    )
+    manifest_path.write_text(
+        json.dumps({
+            "manifest_id": "manifest_abc",
+            "run_id": "pgc_run_abc",
+            "poi": {
+                "poi_id": "poi_123",
+                "display_name": "Test Hotel",
+            },
+            "outputs": [{
+                "variant_index": 1,
+                "output_path": output_rel,
+                "music_label": "Run Away",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    inventory = build_staging_inventory([manifest_path])
+
+    item = inventory["items"][0]
+    assert item["local_output_path"] == output_rel
+    assert item["local_output_exists"] is True
+
+
 def test_build_staging_inventory_rejects_missing_source_by_default(tmp_path):
     from promo.core.drive_staging import DriveStagingError, build_staging_inventory
 

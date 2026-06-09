@@ -733,7 +733,7 @@ def _run_video_production_autopilot(
         video["error"] = f"release candidate registration failed after usage writeback: {exc}"
         return False
 
-    video["state"] = "release_candidate_verified"
+    video["state"] = "complete"
     video["error"] = None
     return True
 
