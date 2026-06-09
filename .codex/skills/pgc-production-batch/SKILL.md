@@ -22,6 +22,10 @@ to Leo in non-code terms.
   production worktree, not the local Mac worktree. The VPS has the intended
   compute and production env. Local runs are for code work, dry/read-only
   preflight, and human review artifact inspection.
+- The VPS is shared with AIGC/asset-platform jobs. For large batches, inspect
+  `uptime` and the top CPU processes first. If heavy AIGC backfill or ffmpeg
+  compression is already running, report that the batch may be slow; do not
+  kill or pause those jobs unless Leo explicitly asks.
 - If a session starts locally and Leo asks for live production, run it on the
   VPS or stop and report that the active shell is not the production runtime.
 - Do not stop mid-run for routine production. Render, audit, write usage, and
@@ -152,6 +156,19 @@ This is the current structured production path. The skill translates Leo's
 natural-language request into these flags; the repo does not parse English.
 The explicit `--production-autopilot` flag avoids accidental live Drive/Supabase
 writes from old render-only commands.
+
+Render speed knobs are repo config, not natural-language policy:
+
+```text
+PROMO_RENDER_CONCURRENCY=2
+PROMO_RENDER_X264_PRESET=veryfast
+PROMO_RENDER_CRF=23
+PROMO_RENDER_TIMEOUT_SEC=900
+```
+
+Use these only to tune Remotion's current renderer. A future ffmpeg-only
+renderer would be a separate implementation path because it must preserve
+captions, CTA, audio mix, timeline entries, and manifest/usage semantics.
 
 For repair/debug against a known POI list, `run_batch --batch "$batch_json"` is
 still supported.

@@ -134,6 +134,36 @@ def render_timeout_sec() -> int:
     return _require_int("PROMO_RENDER_TIMEOUT_SEC", default=900)
 
 
+def render_x264_preset() -> str:
+    """x264 preset for Remotion's final MP4 encode."""
+    value = os.getenv("PROMO_RENDER_X264_PRESET", "veryfast").strip() or "veryfast"
+    allowed = {
+        "ultrafast",
+        "superfast",
+        "veryfast",
+        "faster",
+        "fast",
+        "medium",
+        "slow",
+        "slower",
+        "veryslow",
+    }
+    if value not in allowed:
+        raise ConfigError(
+            "PROMO_RENDER_X264_PRESET must be one of: "
+            + ", ".join(sorted(allowed))
+        )
+    return value
+
+
+def render_crf() -> int:
+    """CRF value for Remotion's final MP4 encode."""
+    value = _require_int("PROMO_RENDER_CRF", default=23)
+    if value < 0 or value > 51:
+        raise ConfigError("PROMO_RENDER_CRF must be between 0 and 51")
+    return value
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 

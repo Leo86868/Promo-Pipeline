@@ -811,16 +811,20 @@ def render_promo(
         # Render with optimization flags
         from promo.core.config import (
             render_concurrency as _render_concurrency,
+            render_crf as _render_crf,
             render_timeout_sec as _render_timeout_sec,
+            render_x264_preset as _render_x264_preset,
         )
         concurrency = _render_concurrency()
+        crf = _render_crf()
         render_timeout = timeout if timeout is not None else _render_timeout_sec()
+        x264_preset = _render_x264_preset()
         cmd = [
             "npx", "remotion", "render", composition_id, output_path,
             "--props", props_path,
             "--concurrency", str(concurrency),
-            "--x264-preset", "fast",
-            "--crf", "22",
+            "--x264-preset", x264_preset,
+            "--crf", str(crf),
         ]
 
         logger.info("Rendering: %s", " ".join(cmd))

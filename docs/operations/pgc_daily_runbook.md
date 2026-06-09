@@ -117,6 +117,38 @@ The explicit `--production-autopilot` flag is a code-level safety latch. The
 skill can add it for normal production requests; old render-only commands stay
 render-only.
 
+## VPS Load And Render Speed
+
+PGC shares the VPS with AIGC/asset-platform work. If another job is compressing
+or enriching assets, PGC can be slow even when PGC itself is healthy.
+
+Before a large batch, inspect the VPS:
+
+```bash
+uptime
+ps -eo pid,ppid,stat,pcpu,pmem,comm,args --sort=-pcpu | head -25
+```
+
+If AIGC backfill or ffmpeg compression is already using the machine heavily,
+either run only a small smoke/top-up or wait for the shared job to finish.
+
+PGC Remotion encoding defaults are tuned for production speed:
+
+```text
+PROMO_RENDER_CONCURRENCY=2
+PROMO_RENDER_X264_PRESET=veryfast
+PROMO_RENDER_CRF=23
+PROMO_RENDER_TIMEOUT_SEC=900
+```
+
+Grandma version:
+
+```text
+The video machine has eight cooking burners. If zhongtai is already using most
+of them, PGC will cook slowly. The render knobs above control how fast and how
+hard PGC cooks.
+```
+
 ## Why Manifest Audit Matters
 
 The manifest is the receipt for one video. Usage writeback is created from this
