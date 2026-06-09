@@ -1912,3 +1912,182 @@ class TestSprintArsenalExternalizationGemini2Template:
         assert "the last phrase's constraint uses the last word's end" in md
         assert "NOT target_duration_sec" in md
         assert "bridge mechanism" in md
+
+
+class TestF3SplitRepairStopgap:
+    """F3 stopgap (2026-06-09): duration violations are repaired by
+    splitting the offending phrase at a word boundary and assigning the
+    second half an unused clip — BEFORE the expensive script-regen retry
+    and WITHOUT a second Gemini #2 call. Structural violations and
+    unrepairable shortfalls propagate exactly as before.
+
+    Fixture geometry (2 segments, 5 words @ 0.2s, 0.5s inter-segment
+    silence): seg 1's single phrase spans 1.5s (words 0-4 + silence),
+    seg 2's spans 1.0s (narration_end ceiling). A 1.0s clip pool ceiling
+    therefore reproduces the production failure shape — "requires 8.43s
+    but usable footage is 8.04s" scaled down — where NO single clip can
+    cover the phrase and clip-swapping cannot help."""
+
+    def _run_assign(self, monkeypatch, raw, clip_durations):
+        from promo.core.assign import clip_assigner
+
+        calls = {"gemini2": 0}
+
+        def _fake_call(prompt):
+            calls["gemini2"] += 1
+            return [dict(e) for e in raw]
+
+        monkeypatch.setattr(
+            clip_assigner, "_build_gemini2_prompt", lambda *a, **k: "")
+        monkeypatch.setattr(clip_assigner, "_call_gemini2", _fake_call)
+        script = _make_c2_script(n_segments=2)
+        word_ts = _make_c2_word_timestamps()
+        out = clip_assigner.assign_clips(
+            script, word_ts, [500, 0], [], clip_durations,
+        )
+        return out, calls
+
+    def test_split_repair_fixes_pool_ceiling_phrase_in_one_gemini_call(
+        self, monkeypatch,
+    ):
+        """Seg 1 phrase needs 1.5s but every clip is 1.0s — the swap-clip
+        strategy is impossible. The repair splits at the word nearest the
+        span midpoint (word 4, start 0.8s) and gives the 0.7s second half
+        the unused clip 0003. One Gemini #2 call total."""
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0002", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},
+        ]
+        clip_durations = {"0001": 1.0, "0002": 1.0, "0003": 1.0}
+        out, calls = self._run_assign(monkeypatch, raw, clip_durations)
+
+        assert calls["gemini2"] == 1
+        assert [e["clip_id"] for e in out] == ["0001", "0003", "0002"]
+        assert [(e["start_word_idx"], e["end_word_idx"]) for e in out] == [
+            (0, 3), (4, 4), (5, 9),
+        ]
+        # Validator-enriched spans: 0.8s + 0.7s tile the original 1.5s.
+        assert abs(out[0]["display_span_sec"] - 0.8) < 0.01
+        assert abs(out[1]["display_span_sec"] - 0.7) < 0.01
+        assert out[1]["trim_start"] == 0.0
+
+    def test_two_violating_phrases_repaired_within_cap(self, monkeypatch):
+        """Both segments violate (0.8s clip on a 1.0s last phrase too);
+        the repair loop fixes them one re-validation at a time — two
+        repairs, still one Gemini #2 call, four final assignments."""
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0002", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},
+        ]
+        clip_durations = {
+            "0001": 1.0, "0002": 0.8, "0003": 1.0, "0004": 1.0,
+        }
+        out, calls = self._run_assign(monkeypatch, raw, clip_durations)
+
+        assert calls["gemini2"] == 1
+        assert len(out) == 4
+        ids = [e["clip_id"] for e in out]
+        assert len(set(ids)) == 4  # uniqueness invariant preserved
+        # Tiling invariant preserved across both splits.
+        spans = [(e["start_word_idx"], e["end_word_idx"]) for e in out]
+        flat = [i for lo, hi in spans for i in range(lo, hi + 1)]
+        assert flat == list(range(10))
+
+    def test_raises_when_no_unused_clip_fits_second_half(self, monkeypatch):
+        """Pool exhausted (only the two assigned clips exist) — repair
+        returns None and the ORIGINAL duration error propagates so the
+        F3 script-regen retry can run unchanged."""
+        from promo.core.errors import ClipAssignmentError
+
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0002", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},
+        ]
+        clip_durations = {"0001": 1.0, "0002": 1.0}
+        with pytest.raises(ClipAssignmentError) as excinfo:
+            self._run_assign(monkeypatch, raw, clip_durations)
+        assert excinfo.value.segment_index == 1
+        assert excinfo.value.clip_id == "0001"
+        assert excinfo.value.required_span > excinfo.value.actual_max_usable
+
+    def test_single_word_phrase_is_not_splittable(self, monkeypatch):
+        """A one-word violating phrase has no interior word boundary —
+        repair declines even though a big unused clip exists, and the
+        error propagates to the F3 retry."""
+        from promo.core.errors import ClipAssignmentError
+
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 3, "trim_start": 0.0},
+            {"segment": 1, "clip_id": "0003", "start_word_idx": 4,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0002", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},
+        ]
+        # Phrase (seg 1, words 4-4) spans 0.7s; clip 0003 offers 0.5s.
+        clip_durations = {
+            "0001": 1.0, "0002": 1.0, "0003": 0.5, "0004": 5.0,
+        }
+        with pytest.raises(ClipAssignmentError) as excinfo:
+            self._run_assign(monkeypatch, raw, clip_durations)
+        assert excinfo.value.clip_id == "0003"
+
+    def test_structural_violation_never_attempts_repair(self, monkeypatch):
+        """Duplicate clip-id (required_span == 0.0) must propagate without
+        invoking the repair path — repair is for duration shortfalls only."""
+        from promo.core.assign import clip_assigner
+        from promo.core.errors import ClipAssignmentError
+
+        repair_mock = MagicMock()
+        monkeypatch.setattr(
+            clip_assigner, "attempt_split_repair", repair_mock)
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0001", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},  # reused
+        ]
+        with pytest.raises(ClipAssignmentError, match="duplicate"):
+            self._run_assign(monkeypatch, raw, {"0001": 9.0})
+        repair_mock.assert_not_called()
+
+    def test_repair_preempts_f3_script_regen(self, monkeypatch):
+        """The money test: with a repairable violation, the full
+        assign_clips_with_f3_retry path succeeds WITHOUT calling the
+        Gemini #1 regenerate / TTS regenerate callables."""
+        from promo.core.assign import clip_assigner
+
+        raw = [
+            {"segment": 1, "clip_id": "0001", "start_word_idx": 0,
+             "end_word_idx": 4, "trim_start": 0.0},
+            {"segment": 2, "clip_id": "0002", "start_word_idx": 5,
+             "end_word_idx": 9, "trim_start": 0.0},
+        ]
+        monkeypatch.setattr(
+            clip_assigner, "_build_gemini2_prompt", lambda *a, **k: "")
+        monkeypatch.setattr(
+            clip_assigner, "_call_gemini2", lambda prompt: [dict(e) for e in raw])
+        script = _make_c2_script(n_segments=2)
+        narration = {"word_timestamps": _make_c2_word_timestamps()}
+        regen_script = MagicMock()
+        regen_narration = MagicMock()
+
+        out_script, out_narration, assignments = (
+            clip_assigner.assign_clips_with_f3_retry(
+                script, narration, [],
+                {"0001": 1.0, "0002": 1.0, "0003": 1.0},
+                regenerate_script_fn=regen_script,
+                regenerate_narration_fn=regen_narration,
+            )
+        )
+        assert out_script is script
+        assert out_narration is narration
+        assert len(assignments) == 3
+        regen_script.assert_not_called()
+        regen_narration.assert_not_called()

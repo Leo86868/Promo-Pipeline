@@ -38,6 +38,14 @@ third call. :func:`assign_clips_with_f3_retry` encapsulates that loop
 behind two injected callables so the retry logic is unit-testable without
 running the real Gemini #1 or TTS stacks.
 
+F3 stopgap (2026-06-09): BEFORE that expensive script-regen retry,
+:func:`assign_clips` attempts up to ``MAX_SPLIT_REPAIRS`` deterministic
+split-repairs on duration violations — the offending phrase is split at
+a word boundary and its second half assigned an unused clip (see
+:mod:`promo.core.assign.clip_assignment_repair`). Narration audio is
+untouched; only the visual cut point moves. Structural violations
+(``required_span == 0.0``) are never repaired and propagate unchanged.
+
 Module layout (Sprint S2b — clip_assigner.py split from 891 → ~210 LOC)
 -----------------------------------------------------------------------
 
@@ -46,6 +54,8 @@ sibling modules under ``promo/core/assign/`` own the implementation:
 
 - :mod:`promo.core.assign.clip_assignment_validator` — hard-constraint
   enforcer + display-span helpers + ``HARD_CONSTRAINT_TOL_SEC``.
+- :mod:`promo.core.assign.clip_assignment_repair` — deterministic
+  split-repair for duration violations + ``MAX_SPLIT_REPAIRS``.
 - :mod:`promo.core.assign.clip_assignment_gemini` — Gemini #2 prompt
   builder + JSON parser + sampling/retry plumbing.
 - :mod:`promo.core.assign.clip_assignment_sidecar` —
@@ -93,6 +103,10 @@ from promo.core.assign.clip_assignment_validator import (  # noqa: E402
     _phrase_display_span_sec,
     _segment_phrase_layout,
 )
+from promo.core.assign.clip_assignment_repair import (  # noqa: E402
+    MAX_SPLIT_REPAIRS,
+    attempt_split_repair,
+)
 from promo.core.assign.clip_assignment_gemini import (  # noqa: E402
     _FENCE_RE,
     _build_gemini2_prompt,
@@ -121,8 +135,13 @@ def assign_clips(
 ) -> list[ClipAssignment]:
     """Single Gemini #2 pass with hard-constraint enforcement.
 
-    Raises :class:`ClipAssignmentError` on the first constraint violation.
-    Returns the enriched per-phrase assignment list on success.
+    Raises :class:`ClipAssignmentError` on the first constraint violation
+    that :func:`attempt_split_repair` cannot fix. Duration violations get
+    up to ``MAX_SPLIT_REPAIRS`` deterministic split-repairs (offending
+    phrase split at a word boundary, second half assigned an unused clip)
+    before the error propagates to the F3 script-regen retry — no extra
+    Gemini call is made for a repair. Returns the enriched per-phrase
+    assignment list on success.
 
     Under the Sprint 10.5 C1.2 peek-ahead formula, display span for each
     phrase is ``word_timestamps[next_phrase.start].start −
@@ -147,9 +166,26 @@ def assign_clips(
         target_duration_sec=target_duration_sec,
     )
     raw = _call_gemini2(prompt)
-    return _enforce_hard_constraint_and_enrich(
-        raw, script, word_timestamps, clip_durations,
-    )
+    repairs = 0
+    while True:
+        try:
+            return _enforce_hard_constraint_and_enrich(
+                raw, script, word_timestamps, clip_durations,
+            )
+        except ClipAssignmentError as exc:
+            if exc.required_span <= 0.0 or repairs >= MAX_SPLIT_REPAIRS:
+                raise
+            repaired = attempt_split_repair(
+                raw, exc, word_timestamps, clip_durations,
+            )
+            if repaired is None:
+                raise
+            repairs += 1
+            logger.warning(
+                "F3 split-repair %d/%d applied for variant %d: %s",
+                repairs, MAX_SPLIT_REPAIRS, variant_index, exc,
+            )
+            raw = repaired
 
 
 def build_tighten_hint(exc: ClipAssignmentError) -> str:
