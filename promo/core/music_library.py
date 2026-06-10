@@ -9,6 +9,7 @@ It does not write to Supabase.
 from __future__ import annotations
 
 import os
+import random
 import re
 import urllib.request
 from collections.abc import Iterable, Mapping
@@ -19,6 +20,10 @@ MUSIC_LIBRARY_TABLE = "music_library"
 MUSIC_LIBRARY_SELECT_FIELDS = (
     "id,music_name,drive_file_id,duration_sec,genre,bpm,tags,embedding_text"
 )
+# Upper bound on the eligible pool fetched for rotation — far above the
+# library's size (≈60 rows as of 2026-06); exists only to keep the query
+# bounded if the library grows by orders of magnitude.
+MAX_ELIGIBLE_TRACKS = 200
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -158,8 +163,21 @@ class SupabaseMusicLibrary:
             raise MusicLibraryError("music_library query returned non-list data")
         return rows
 
-    def select_tracks(self, *, count: int = 1) -> list[dict[str, Any]]:
-        rows = self._fetch_rows(limit=count)
+    def select_tracks(
+        self, *, count: int = 1, shuffle_seed: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return the eligible track pool for BGM rotation.
+
+        2026-06-09 fix: this used to fetch exactly ``count`` rows ordered
+        by ``duration_sec`` ascending — every batch deterministically got
+        the same shortest tracks (production observed the identical 3
+        tracks across all batches). Now the FULL eligible pool
+        (``duration_sec >= min``) is returned, optionally shuffled with
+        ``shuffle_seed``, and callers rotate through it. ``count`` is the
+        caller's minimum need and only logs short-pool situations; fewer
+        eligible tracks than ``count`` simply cycle.
+        """
+        rows = self._fetch_rows(limit=MAX_ELIGIBLE_TRACKS)
         if not rows:
             raise MusicLibraryError(
                 "music_library returned no tracks with duration_sec >= "
@@ -172,6 +190,8 @@ class SupabaseMusicLibrary:
             )
             for row in rows
         ]
+        if shuffle_seed is not None:
+            random.Random(shuffle_seed).shuffle(tracks)
         self._selected_track = tracks[0]
         return tracks
 
@@ -200,7 +220,9 @@ class SupabaseMusicLibrary:
         return self.fetch_bgms(tmp_dir, count=1)[0]
 
     def fetch_bgms(self, tmp_dir: str, *, count: int) -> list[str]:
-        tracks = self.select_tracks(count=count)
+        # select_tracks returns the FULL eligible pool (2026-06-09 rotation
+        # fix); only download the count actually needed here.
+        tracks = self.select_tracks(count=count)[:count]
         os.makedirs(tmp_dir, exist_ok=True)
         paths: list[str] = []
         for track in tracks:

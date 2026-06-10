@@ -169,7 +169,9 @@ def test_supabase_music_library_fetches_multiple_eligible_tracks(
         count=2,
     )
 
-    assert ("limit", 2) in client.query.calls
+    # 2026-06-09 rotation fix: the query fetches the full eligible pool
+    # (bounded by MAX_ELIGIBLE_TRACKS) but only `count` tracks download.
+    assert ("limit", 200) in client.query.calls
     assert len(paths) == 2
     assert [item[0] for item in downloaded] == ["drive_file_2", "drive_file_3"]
 
@@ -217,3 +219,43 @@ def test_duration_probe_update_sql_is_review_only_shape():
         "update public.music_library set duration_sec = 65.123457 "
         "where id = '11111111-1111-1111-1111-111111111111';"
     )
+
+
+def test_select_tracks_returns_full_pool_with_seeded_shuffle():
+    """2026-06-09 rotation fix: select_tracks returns ALL eligible tracks
+    (not the shortest `count`), and shuffle_seed reorders deterministically
+    so different batches rotate different tracks."""
+    from promo.core.music_library import SupabaseMusicLibrary
+
+    rows = [
+        _track(
+            id=f"{i}{i}{i}{i}{i}{i}{i}{i}-{i}{i}{i}{i}-{i}{i}{i}{i}-{i}{i}{i}{i}-{i}{i}{i}{i}{i}{i}{i}{i}{i}{i}{i}{i}",
+            music_name=f"Track {i}",
+            duration_sec=65 + i,
+        )
+        for i in range(1, 8)  # 7 eligible tracks, like production
+    ]
+    client = _FakeSupabase(rows)
+
+    tracks = SupabaseMusicLibrary(client, min_duration_sec=65).select_tracks(
+        count=3, shuffle_seed=42,
+    )
+    # Full pool returned, not just the 3 shortest.
+    assert len(tracks) == 7
+    # Seeded shuffle: deterministic for the same seed...
+    client2 = _FakeSupabase(rows)
+    tracks2 = SupabaseMusicLibrary(client2, min_duration_sec=65).select_tracks(
+        count=3, shuffle_seed=42,
+    )
+    assert [t["id"] for t in tracks] == [t["id"] for t in tracks2]
+    # ...different order for a different seed (7! permutations; seeds 42
+    # vs 43 differing is deterministic, not flaky).
+    client3 = _FakeSupabase(rows)
+    tracks3 = SupabaseMusicLibrary(client3, min_duration_sec=65).select_tracks(
+        count=3, shuffle_seed=43,
+    )
+    assert [t["id"] for t in tracks] != [t["id"] for t in tracks3]
+    # No seed: stable duration-ascending order (single-track smoke path).
+    client4 = _FakeSupabase(rows)
+    tracks4 = SupabaseMusicLibrary(client4, min_duration_sec=65).select_tracks(count=3)
+    assert [t["music_name"] for t in tracks4][:2] == ["Track 1", "Track 2"]

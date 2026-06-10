@@ -60,6 +60,9 @@ from promo.core.run_receipt import (
     build_video_record,
     mark_render_result,
     mark_rendering,
+    mark_stage_finished,
+    mark_stage_started,
+    utc_now_iso,
     write_run_receipt,
 )
 from promo.core.source_resolution_policy import normalize_source_resolution_policy
@@ -298,13 +301,28 @@ def resolve_music_ids(
     *,
     target_duration_sec: float,
     count: int,
+    shuffle_seed: int | None = None,
     client_factory: Callable[[], Any] = _create_supabase_client_from_env,
 ) -> list[str]:
+    """Return ALL eligible track ids (shuffled per batch) for rotation.
+
+    2026-06-09 fix: previously returned exactly ``count`` ids — and the
+    library query ordered by duration ascending, so every batch reused
+    the same shortest tracks. Returning the full eligible pool lets
+    ``plan_batch_items`` cycle every track; ``shuffle_seed`` varies the
+    rotation order across batches.
+    """
     client = client_factory()
     tracks = SupabaseMusicLibrary(
         client,
         min_duration_sec=target_duration_sec,
-    ).select_tracks(count=count)
+    ).select_tracks(count=count, shuffle_seed=shuffle_seed)
+    if len(tracks) < count:
+        logger.warning(
+            "music_library has only %d track(s) >= %.1fs (requested %d) — "
+            "tracks will repeat within POIs; add longer tracks to the library.",
+            len(tracks), target_duration_sec, count,
+        )
     return [track["id"] for track in tracks]
 
 
@@ -330,7 +348,10 @@ def plan_batch_items(
             )
             music_id = None
             if music_ids:
-                music_id = music_ids[(video_index - 1) % len(music_ids)]
+                # Rotate by GLOBAL item ordinal, not video_index — indexing
+                # by video_index pinned the same track to video_001 of every
+                # POI in every batch (2026-06-09 fix).
+                music_id = music_ids[len(items) % len(music_ids)]
             seed = base_seed + len(items) if base_seed is not None else None
             items.append(
                 BatchItem(
@@ -607,18 +628,27 @@ def _run_video_production_autopilot(
     handoff_items_path = Path(handoff_dir) / f"{token}_handoff_items.json"
     release_handoff_path = Path(handoff_dir) / f"{token}_release_handoff.json"
 
+    # 2026-06-09 fix: flush the receipt after EVERY sub-step (not only when
+    # the whole chain returns) so a mid-chain crash leaves on-disk state
+    # that matches what actually happened — the receipt is the recovery
+    # source of truth. Stage timings land in video["timings"].
     try:
         inventory = build_staging_inventory([manifest_path], require_source_exists=True)
         policy = final_upscale_policy or normalize_final_upscale_policy(None)
-        if not _apply_final_upscale_to_inventory(
+        mark_stage_started(video, "final_upscale")
+        upscale_ok = _apply_final_upscale_to_inventory(
             video=video,
             handoff_dir=handoff_dir,
             inventory=inventory,
             policy=policy,
             upscaler_factory=final_upscaler_factory,
             verifier=final_upscale_verifier,
-        ):
+        )
+        mark_stage_finished(video, "final_upscale")
+        write_run_receipt(receipt_path, receipt)
+        if not upscale_ok:
             return False
+        mark_stage_started(video, "drive_upload")
         inventory.update({
             "source_receipt_path": receipt_path,
             "batch_id": receipt["batch_id"],
@@ -646,6 +676,8 @@ def _run_video_production_autopilot(
         if item.get("staging_status") != "drive_uri_ready":
             video["state"] = "drive_upload_failed"
             video["error"] = item.get("drive_upload", {}).get("error") or "Drive upload failed"
+            mark_stage_finished(video, "drive_upload")
+            write_run_receipt(receipt_path, receipt)
             return False
     except Exception as exc:
         video["drive_upload"] = {
@@ -656,8 +688,13 @@ def _run_video_production_autopilot(
         }
         video["state"] = "drive_upload_failed"
         video["error"] = f"Drive upload failed: {exc}"
+        mark_stage_finished(video, "drive_upload")
+        write_run_receipt(receipt_path, receipt)
         return False
+    mark_stage_finished(video, "drive_upload")
+    write_run_receipt(receipt_path, receipt)
 
+    mark_stage_started(video, "usage_writeback")
     try:
         preview = build_preview([manifest_path])
         events = preview["events"]
@@ -683,6 +720,8 @@ def _run_video_production_autopilot(
                 video,
                 reason="usage writeback verification failed",
             )
+            mark_stage_finished(video, "usage_writeback")
+            write_run_receipt(receipt_path, receipt)
             return False
     except Exception as exc:
         video["usage"] = {
@@ -693,8 +732,13 @@ def _run_video_production_autopilot(
         video["state"] = "usage_writeback_failed"
         video["error"] = f"usage writeback failed: {exc}"
         _add_quarantined_poi(receipt, video, reason="usage writeback failed")
+        mark_stage_finished(video, "usage_writeback")
+        write_run_receipt(receipt_path, receipt)
         return False
+    mark_stage_finished(video, "usage_writeback")
+    write_run_receipt(receipt_path, receipt)
 
+    mark_stage_started(video, "release_candidate")
     try:
         handoff_items = handoff_items_from_inventory(inventory)
         write_json(handoff_items_path, {"items": handoff_items})
@@ -721,6 +765,8 @@ def _run_video_production_autopilot(
         if not verified:
             video["state"] = "release_candidate_failed_retryable"
             video["error"] = "release candidate verification failed after usage writeback"
+            mark_stage_finished(video, "release_candidate")
+            write_run_receipt(receipt_path, receipt)
             return False
     except Exception as exc:
         video["release_candidate"] = {
@@ -731,7 +777,10 @@ def _run_video_production_autopilot(
         }
         video["state"] = "release_candidate_failed_retryable"
         video["error"] = f"release candidate registration failed after usage writeback: {exc}"
+        mark_stage_finished(video, "release_candidate")
+        write_run_receipt(receipt_path, receipt)
         return False
+    mark_stage_finished(video, "release_candidate")
 
     video["state"] = "complete"
     video["error"] = None
@@ -795,9 +844,13 @@ def run_batch(
 
     music_ids: list[str] | None = None
     if use_music_library:
+        # Batch seed doubles as the rotation seed so a seeded batch is
+        # reproducible; unseeded batches still vary track order per run.
+        music_shuffle_seed = seed if seed is not None else int.from_bytes(os.urandom(4), "big")
         music_ids = music_id_resolver(
             target_duration_sec=resolved_target_duration,
             count=resolved_videos_per_poi,
+            shuffle_seed=music_shuffle_seed,
         )
 
     items = plan_batch_items(
@@ -848,6 +901,42 @@ def run_batch(
     drive_target: DriveUploadTarget | None = None
     supabase_client: Any | None = None
     resolved_handoff_dir = handoff_dir or os.path.join(output_root, "handoff")
+
+    if production_autopilot:
+        # 2026-06-09 preflight fix: the Drive uploader / Supabase client /
+        # upscale command used to be constructed lazily AFTER the first
+        # successful render — a bad credential or missing
+        # PGC_WAVESPEED_UPSCALE_COMMAND was discovered only once hours of
+        # render + LLM/TTS spend were already sunk (or crashed the batch
+        # process mid-run). Fail the batch BEFORE rendering anything.
+        preflight_errors: list[str] = []
+        try:
+            drive_target = drive_upload_target_factory()
+        except Exception as exc:
+            preflight_errors.append(f"drive upload target: {exc}")
+        try:
+            supabase_client = supabase_client_factory()
+        except Exception as exc:
+            preflight_errors.append(f"supabase client: {exc}")
+        if resolved_final_upscale_policy.enabled:
+            try:
+                if final_upscaler_factory(resolved_final_upscale_policy) is None:
+                    preflight_errors.append(
+                        "final upscale is enabled but no upscaler is configured "
+                        "(set PGC_WAVESPEED_UPSCALE_COMMAND)"
+                    )
+            except Exception as exc:
+                preflight_errors.append(f"final upscaler: {exc}")
+        receipt["preflight"] = {
+            "status": "failed" if preflight_errors else "passed",
+            "checked_at": utc_now_iso(),
+            "errors": preflight_errors,
+        }
+        write_run_receipt(resolved_receipt_path, receipt)
+        if preflight_errors:
+            for error in preflight_errors:
+                logger.error("Autopilot preflight failed: %s", error)
+            return 1
     for item, command, video in zip(items, item_commands, videos, strict=True):
         if production_autopilot and _is_poi_quarantined(receipt, item):
             _mark_skipped_quarantined(video)

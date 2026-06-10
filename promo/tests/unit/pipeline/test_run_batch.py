@@ -187,7 +187,8 @@ def test_run_batch_executes_independent_one_video_runs(tmp_path):
         return 0
 
     def music_id_resolver(**kwargs):
-        assert kwargs == {"target_duration_sec": 65.0, "count": 2}
+        # 2026-06-09: rotation seed threads through (batch seed when set).
+        assert kwargs == {"target_duration_sec": 65.0, "count": 2, "shuffle_seed": 10}
         return ["music_a", "music_b"]
 
     exit_code = run_batch(
@@ -587,8 +588,10 @@ def test_run_batch_final_upscale_required_fails_before_drive_usage_or_release(tm
         encoding="utf-8",
     )
     fake_uploader = _FakeUploader()
+    commands = []
 
     def command_runner(command):
+        commands.append(list(command))
         _write_valid_manifest_from_command(command, video_index=1)
         return 0
 
@@ -610,14 +613,17 @@ def test_run_batch_final_upscale_required_fails_before_drive_usage_or_release(tm
         final_upscaler_factory=lambda policy: None,
     )
 
+    # 2026-06-09 preflight fix: a required-but-unconfigured upscaler now
+    # fails the batch BEFORE the first render (previously each video
+    # rendered, then failed at the upscale gate).
     assert exit_code == 1
+    assert commands == []
     assert fake_uploader.uploads == []
     receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
-    video = receipt["videos"][0]
     assert receipt["request"]["filters"]["final_upscale_policy"]["required"] is True
-    assert video["state"] == "final_upscale_failed"
-    assert video["final_upscale"]["status"] == "failed"
-    assert "provider is not configured" in video["final_upscale"]["error"]
+    assert receipt["preflight"]["status"] == "failed"
+    assert "PGC_WAVESPEED_UPSCALE_COMMAND" in receipt["preflight"]["errors"][0]
+    assert receipt["summary"]["rendered_videos"] == 0
     assert receipt["summary"]["drive_uploaded_videos"] == 0
     assert receipt["summary"]["usage_written_videos"] == 0
     assert receipt["summary"]["release_candidates_created"] == 0
@@ -884,3 +890,145 @@ def test_build_compile_command_threads_source_resolution_policy(tmp_path):
         "transition_low_res_only"
     )
     assert command[command.index("--source-target-width") + 1] == "720"
+
+
+def test_plan_batch_items_rotates_music_by_global_ordinal(tmp_path):
+    """2026-06-09 fix: music rotates by global item ordinal so video_001 of
+    every POI no longer pins the same track; a pool larger than
+    videos_per_poi gets fully cycled across the batch."""
+    from promo.cli.run_batch import BatchPoi, plan_batch_items
+
+    pois = [
+        BatchPoi(name=f"Hotel {i}", location="X", poi_id=f"poi_{i}", canonical_key=None)
+        for i in range(1, 3)
+    ]
+    items = plan_batch_items(
+        pois=pois,
+        videos_per_poi=3,
+        target_duration_sec=65,
+        output_root=str(tmp_path),
+        voices=["jarnathan"],
+        music_ids=[f"music_{n}" for n in range(1, 8)],  # 7-track pool
+        base_seed=None,
+    )
+
+    assert [item.music_id for item in items] == [
+        "music_1", "music_2", "music_3",  # POI 1
+        "music_4", "music_5", "music_6",  # POI 2 — no longer repeats POI 1
+    ]
+
+
+def test_autopilot_preflight_fails_before_any_render(tmp_path):
+    """2026-06-09 preflight fix: a bad Drive/Supabase credential or missing
+    upscale command aborts the batch BEFORE the first render, instead of
+    being discovered after hours of render + LLM/TTS spend."""
+    from promo.cli.run_batch import run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{
+                "poi_id": "poi_123",
+                "name": "Terranea Resort",
+                "location": "Rancho Palos Verdes",
+            }],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "voices": ["jarnathan"],
+        }),
+        encoding="utf-8",
+    )
+    commands = []
+
+    def command_runner(command):
+        commands.append(list(command))
+        return 0
+
+    def broken_drive_factory():
+        raise RuntimeError("token has been expired or revoked")
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=broken_drive_factory,
+        supabase_client_factory=lambda: object(),
+    )
+
+    assert exit_code == 1
+    assert commands == []  # nothing rendered, nothing spent
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["preflight"]["status"] == "failed"
+    assert "expired" in receipt["preflight"]["errors"][0]
+
+
+def test_autopilot_preflight_requires_upscaler_when_policy_enabled(tmp_path):
+    from promo.cli.run_batch import run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{
+                "poi_id": "poi_123",
+                "name": "Terranea Resort",
+                "location": "Rancho Palos Verdes",
+            }],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "voices": ["jarnathan"],
+            "final_upscale_policy": {"required": True, "enabled": True, "provider": "wavespeed"},
+        }),
+        encoding="utf-8",
+    )
+    commands = []
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        production_autopilot=True,
+        command_runner=lambda command: commands.append(command) or 0,
+        drive_upload_target_factory=lambda: _FakeUploader(),
+        supabase_client_factory=lambda: object(),
+        final_upscaler_factory=lambda policy: None,  # PGC_WAVESPEED_UPSCALE_COMMAND unset
+    )
+
+    assert exit_code == 1
+    assert commands == []
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["preflight"]["status"] == "failed"
+    assert "PGC_WAVESPEED_UPSCALE_COMMAND" in receipt["preflight"]["errors"][0]
+
+
+def test_receipt_records_render_stage_timings(tmp_path):
+    """2026-06-09 observability fix: every video record carries per-stage
+    started_at/finished_at/duration_sec under `timings`."""
+    from promo.cli.run_batch import run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{
+                "poi_id": "poi_123",
+                "name": "Terranea Resort",
+                "location": "Rancho Palos Verdes",
+            }],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "voices": ["jarnathan"],
+        }),
+        encoding="utf-8",
+    )
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        command_runner=lambda command: 1,  # render fails; timing still lands
+    )
+
+    assert exit_code == 1
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    timings = receipt["videos"][0]["timings"]
+    assert timings["render"]["started_at"]
+    assert timings["render"]["finished_at"]
+    assert timings["render"]["duration_sec"] is not None

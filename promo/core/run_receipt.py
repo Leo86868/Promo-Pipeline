@@ -240,12 +240,43 @@ def audit_discovered_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def mark_stage_started(video: dict[str, Any], stage: str) -> None:
+    """Record a per-stage wall-clock start (2026-06-09 observability fix).
+
+    Timings live under ``video["timings"][stage]`` so receipts can answer
+    "which step dominates per-video time" — previously no run produced any
+    durable timing data at all.
+    """
+    video.setdefault("timings", {})[stage] = {
+        "started_at": utc_now_iso(),
+        "finished_at": None,
+        "duration_sec": None,
+    }
+
+
+def mark_stage_finished(video: dict[str, Any], stage: str) -> None:
+    timing = video.setdefault("timings", {}).setdefault(
+        stage, {"started_at": None, "finished_at": None, "duration_sec": None},
+    )
+    timing["finished_at"] = utc_now_iso()
+    started = timing.get("started_at")
+    if started:
+        try:
+            start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+            end_dt = datetime.fromisoformat(timing["finished_at"].replace("Z", "+00:00"))
+            timing["duration_sec"] = int((end_dt - start_dt).total_seconds())
+        except ValueError:
+            pass
+
+
 def mark_rendering(video: dict[str, Any]) -> None:
     video["state"] = "rendering"
     video["error"] = None
+    mark_stage_started(video, "render")
 
 
 def mark_render_result(video: dict[str, Any], *, return_code: int) -> None:
+    mark_stage_finished(video, "render")
     video["render"]["return_code"] = int(return_code)
     if return_code == 0:
         video["state"] = "rendered"
