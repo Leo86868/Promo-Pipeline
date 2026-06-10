@@ -224,9 +224,14 @@ def test_fetch_valid_clip_rows_paginates_supabase_results():
         def __init__(self, rows):
             self.rows = rows
             self.ranges = []
+            self.order_columns = []
             self.current_range = (0, len(rows) - 1)
 
         def select(self, _columns):
+            return self
+
+        def order(self, column):
+            self.order_columns.append(column)
             return self
 
         def range(self, start, end):
@@ -251,3 +256,6 @@ def test_fetch_valid_clip_rows_paginates_supabase_results():
 
     assert fetch_valid_clip_rows(client, page_size=2) == rows
     assert client.query.ranges == [(0, 1), (2, 3), (4, 5)]
+    # 2026-06-09 fix: pagination must be ordered (stable pages under
+    # concurrent writers) — exactly one ORDER BY, applied before paging.
+    assert client.query.order_columns == ["asset_id"]

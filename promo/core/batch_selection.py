@@ -53,9 +53,20 @@ def cooldown_cutoff_iso(cooldown_days: int, *, now: datetime | None = None) -> s
     return cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _fetch_all_rows(query: Any, *, table_name: str, page_size: int = 1000) -> list[dict[str, Any]]:
+def _fetch_all_rows(
+    query: Any,
+    *,
+    table_name: str,
+    page_size: int = 1000,
+    order_by: str,
+) -> list[dict[str, Any]]:
     if page_size <= 0:
         raise BatchSelectionError("page_size must be positive")
+    # 2026-06-09 fix: PostgREST gives no stable row order without an
+    # explicit ORDER BY, so unordered .range() pages can skip/duplicate
+    # rows when concurrent writers shift rows between page reads — a
+    # skipped usage row silently breaks cooldown enforcement.
+    query = query.order(order_by)
     rows: list[dict[str, Any]] = []
     start = 0
     while True:
@@ -77,6 +88,7 @@ def fetch_valid_clip_rows(client: Any, *, page_size: int = 1000) -> list[dict[st
         query,
         table_name=POI_ASSET_VALID_CLIPS_VIEW,
         page_size=page_size,
+        order_by="asset_id",
     )
 
 
@@ -136,6 +148,7 @@ def fetch_recent_usage_poi_ids(
         .gte("created_at", cutoff),
         table_name=USAGE_EVENTS_TABLE,
         page_size=page_size,
+        order_by="event_id",
     )
     return {
         str(row["poi_id"])
