@@ -443,58 +443,51 @@ rows being zero does not prove a smoke/test cleanup is complete; an approved
 linked `release_candidates` row can still appear in
 `release_unassigned_candidates` and remain distributable.
 
+Reverts run through the repo CLI (2026-06-10) — do NOT hand-write SQL against
+production. The CLI encodes this section's full contract and is dry-run by
+default:
+
 Usage-only revert:
 
-1. Query `public.poi_asset_usage_events` by manifest ID.
-2. Query linked `public.release_candidates` by
-   `source_video_key` containing the manifest ID.
-3. If zero usage rows exist, say no usage revert is needed, but still report
-   any linked candidate status and whether it remains in
-   `release_unassigned_candidates`.
-4. If rows exist, show a revert preview: manifest IDs, event count, affected
-   asset count, current usage_count min/max, and any linked release candidate
-   status.
-5. 🔴 CHECKPOINT · STOP and wait for explicit approval.
-6. Revert usage rows and recompute usage counts from the ledger; do not blindly
-   subtract counts.
-7. Verify manifest usage rows are zero and affected asset counters match the
-   remaining ledger.
-8. If a linked `release_candidates.status = 'approved'` row remains, explicitly
-   report that the video may still appear in `release_unassigned_candidates`.
+1. Preview (no writes):
+
+```bash
+python3 -m promo.cli.revert_usage --manifest-id <manifest_id>
+```
+
+   The JSON report shows usage event count, affected asset count, usage-role
+   breakdown, linked release candidate statuses, and a warning if an approved
+   candidate would remain visible to `release_unassigned_candidates`.
+2. 🔴 CHECKPOINT · STOP, show Leo the preview, wait for explicit approval.
+3. Apply with `--execute` (same command plus the flag). The CLI calls
+   `rpc_revert_poi_asset_usage_manifests` — the platform RPC removes the
+   manifest's usage rows and recomputes asset counters from the remaining
+   ledger (never blind subtraction) — then verifies rows are zero. Exit code
+   0 = verified, 1 = verification failed (report it, do not improvise).
 
 Full smoke/test cleanup:
 
-1. Query usage rows by manifest ID and linked `release_candidates` by
-   `source_video_key`.
-2. Query `public.distribution_status` for the linked
-   `release_candidate_id`/`candidate_id`.
-3. If any distribution row exists, STOP. Report that distribution has already
-   claimed the candidate and ask Leo before touching release state.
-4. Show a cleanup preview: usage event count, affected asset count, candidate
-   ID, current candidate status, Drive URI, and distribution row count.
-5. 🔴 CHECKPOINT · STOP and wait for explicit approval.
-6. Revert usage rows and recompute usage counts from the ledger. If usage rows
-   are already zero, skip the usage revert but continue the release-candidate
-   withdrawal after approval.
-7. Mark the linked release candidate as withdrawn by updating only:
+1. Preview (no writes):
 
-```sql
-update public.release_candidates
-set status = 'rejected', updated_at = now()
-where candidate_id = '<candidate_id>';
+```bash
+python3 -m promo.cli.revert_usage --manifest-id <manifest_id> --full-cleanup
 ```
 
-8. Verify all of the following:
-   - manifest usage rows are zero;
-   - affected asset counters match the remaining ledger;
-   - the candidate status is `rejected`;
-   - the candidate no longer appears in `release_unassigned_candidates`;
-   - no `distribution_status` row was created or modified.
+   Adds the `distribution_status` check. If any distribution row already
+   claims a linked candidate (or the check itself cannot resolve), the CLI
+   exits 2 and refuses to touch release state EVEN WITH `--execute` — report
+   to Leo and coordinate with zhongtai before doing anything else.
+2. 🔴 CHECKPOINT · STOP, show Leo the preview, wait for explicit approval.
+3. Apply with `--execute`. The CLI reverts usage (skipping it when rows are
+   already zero — zero usage does NOT short-circuit the candidate
+   withdrawal), marks linked candidates `status='rejected'` (rows are never
+   deleted; the audit trail survives), and verifies: usage rows zero,
+   candidates rejected, and candidates absent from
+   `release_unassigned_candidates`.
 
-Do not delete `release_candidates` rows during cleanup. Use `status =
-'rejected'` so the audit trail remains visible while zhongtai no longer sees
-the smoke/test video as an approved candidate. Do not delete the Drive file
-unless Leo separately asks for media cleanup.
+The CLI never deletes `release_candidates` rows and never touches Drive
+files. Do not delete the Drive file unless Leo separately asks for media
+cleanup.
 
 ## Danger List
 
