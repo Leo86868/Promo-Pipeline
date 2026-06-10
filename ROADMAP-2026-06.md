@@ -55,6 +55,10 @@
 2. **窗口账本读取 fail-closed**:生产模式下查 `poi_asset_usage_events` 窗口失败 → 重试耗尽即该视频失败(resume 捞),**绝不**静默降级裸播。依据:读写同一 Supabase、同级重试,真失败率 ≈ usage 写回失败率(年级别罕见),产量代价趋近零;dev 无凭证 → 空历史 + WARNING + provenance 标记;
 3. **小店问题已被选店门槛规避**(50+10×extra ≫ ~22 beats/条):planner 仍留两行自适应保险(beat 数 > 素材数时自动拉长 beat),仅护住手搓 batch 绕过门槛的边角;
 4. **切换闸门(三条与)**:① 盲测 3 店 Leo 肉眼判 packer ≥2 不输;② F3 有效触发率持续偏高(06-09 后样本:4 条 1-2 触发,06-10 topup 批进行中又 +2 触发,趋势 ~30%);③ A/B 批 packer 臂失败率 ≤ Gemini #2 臂、节拍不慢(packer 无 LLM 调用,天然占优)。
+
+复审修正(2026-06-10,Leo 方向 + agent 复核,均已实现):
+5. **B1 切分语意优先**(替代"时间格子+标点微调"):先按标点/分句切,<2s 碎句软合并(合并不得突破 4s 硬顶——地板软、天花板硬),单句 >4s 才强制补刀。代价已具名:beat 数上升 → 每视频 clip 消耗上升 → 素材 3 次上限吃得更快;packer provenance 记 `beat_count`/`unique_clip_count`,生产数据盯消耗速度;
+6. **窗口耗尽 = 软偏好,使用次数 = 唯一硬门**(防僵尸素材条款):资格唯一硬门是中台 `poi_asset_valid_clips` 的 <3 次规则(上游过滤);排片员对"窗口用尽"只降级(队尾 → 重叠最少旧窗口 + provenance 标记),绝不当成资格拒绝。两套规则各管各:次数管"能不能上场",窗口管"上场露哪截"。
 - 实施顺序:B1 beat planner(纯函数)→ B2 检索 per-beat 排序 → B3 usage_windows 读方(家族标准,文档化查询规范,完工通知 AIGC 侧)→ B4 packer → B5 `PROMO_CLIP_ASSIGNER` 开关集成 → B6 A/B。
 - 远期(同翻转方向):MiMo 分析挪到资产入库时一次性做,视频生成时纯查表。
 

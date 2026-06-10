@@ -15,6 +15,13 @@ order fixed by the 2026-06-10 设计契约 (roadmap §翻转二):
    than failing the video — exhaustion means the POI's whole pool has
    been shown for spans this long, which is a curation problem, not a
    packing error.
+
+   **Contract clause (2026-06-10 review)**: window exhaustion is a SOFT
+   preference, never an eligibility rule. The platform's use-count gate
+   (``poi_asset_valid_clips``: <3 uses = valid) is the ONLY hard
+   eligibility door, enforced UPSTREAM in the pool the packer receives —
+   the packer adds no second eligibility system. Hardening exhaustion
+   here would mint "valid but never selectable" zombie assets.
 4. **Adjacency variety** (soft) — first pass refuses a candidate whose
    category equals the previous beat's pick; when no candidate passes
    with a different category, a second pass relaxes the rule (recorded
@@ -228,4 +235,9 @@ def pack_clips(
             "window_exhausted": chosen["exhausted"],
         })
 
+    # Clip-burn observability (2026-06-10 review): semantic-first beats
+    # consume more clips per video than time-grid beats; these counts let
+    # production data answer how much faster the 3-use caps fill up.
+    provenance["beat_count"] = len(beats)
+    provenance["unique_clip_count"] = len(seen)
     return assignments, provenance

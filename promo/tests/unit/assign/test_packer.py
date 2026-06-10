@@ -47,6 +47,9 @@ def test_happy_path_picks_top_candidates():
     assert all(a["trim_start"] == 0.0 for a in assignments)
     assert prov["assigner"] == "packer"
     assert prov["window_exhausted_beats"] == []
+    # Clip-burn observability (2026-06-10 review).
+    assert prov["beat_count"] == 2
+    assert prov["unique_clip_count"] == 2
 
 
 def test_rule1_no_reuse_within_video():

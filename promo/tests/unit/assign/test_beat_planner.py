@@ -81,16 +81,63 @@ def test_beats_tile_every_segment_contiguously():
             assert nxt["start_word_idx"] == prev["end_word_idx"] + 1
 
 
-def test_punctuation_boundary_wins_near_grid():
-    # 20 words, 8s → 2 beats, grid at 4.0s = word 10. Comma after word 8
-    # (start 3.2s, within the 0.6s snap window + nearest-distance slack).
+def test_semantic_cut_lands_exactly_on_punctuation():
+    # Comma after word 8 → clause 1 = [0..8] (3.6s, a real beat), clause 2
+    # = [9..19] (4.4s, over the ceiling) force-splits into two.
     tokens = [f"w{i}," if i == 8 else f"w{i}" for i in range(20)]
     script = _script(" ".join(tokens))
     wts = _uniform_words(20, tokens=tokens)
     beats = plan_beats(script, wts)
-    assert len(beats) == 2
-    # Snap pulled the cut to right after the comma word, not the grid word.
+    assert beats[0]["end_word_idx"] == 8   # cut AT the comma, not near a grid
     assert beats[1]["start_word_idx"] == 9
+    assert len(beats) == 3
+
+
+def test_clause_rhythm_produces_varied_beat_lengths():
+    # Three clauses of 2.4s / 3.2s / 2.4s — each becomes its own beat;
+    # lengths follow the breath, not a uniform grid.
+    tokens = (
+        [f"a{i}" for i in range(5)] + ["a5,"]
+        + [f"b{i}" for i in range(7)] + ["b7,"]
+        + [f"c{i}" for i in range(6)]
+    )
+    script = _script(" ".join(tokens))
+    wts = _uniform_words(20, tokens=tokens)
+    beats = plan_beats(script, wts)
+    assert [(b["start_word_idx"], b["end_word_idx"]) for b in beats] == [
+        (0, 5), (6, 13), (14, 19),
+    ]
+    spans = _beat_spans(beats, wts)
+    assert spans == pytest.approx([2.4, 3.2, 2.4])
+
+
+def test_soft_floor_merges_short_fragment():
+    # Clause 1 is 1.2s (< 2s floor); merging with clause 2 stays ≤4s →
+    # one beat covers both.
+    tokens = ["a0", "a1", "a2,"] + [f"b{i}" for i in range(5)]
+    script = _script(" ".join(tokens))
+    wts = _uniform_words(8, tokens=tokens)
+    beats = plan_beats(script, wts)
+    assert beats == [{"segment": 1, "start_word_idx": 0, "end_word_idx": 7}]
+
+
+def test_soft_floor_yields_to_hard_ceiling():
+    # Trailing fragment is 1.2s but merging would make 4.8s > 4s ceiling
+    # → the short beat survives (floor is soft, ceiling is not).
+    tokens = [f"a{i}" for i in range(8)] + ["a8,"] + ["b0", "b1", "b2"]
+    script = _script(" ".join(tokens))
+    wts = _uniform_words(12, tokens=tokens)
+    beats = plan_beats(script, wts)
+    assert len(beats) == 2
+    assert beats[1] == {"segment": 1, "start_word_idx": 9, "end_word_idx": 11}
+    assert _beat_spans(beats, wts)[1] == pytest.approx(1.2)
+
+
+def test_min_beat_validation():
+    script = _script("a b c")
+    wts = _uniform_words(3)
+    with pytest.raises(ValueError, match="min_beat_sec"):
+        plan_beats(script, wts, min_beat_sec=5.0)
 
 
 def test_intersegment_silence_charged_to_last_beat_of_segment():
