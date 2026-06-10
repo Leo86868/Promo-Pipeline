@@ -135,9 +135,9 @@ def build_run_receipt(
     selection_mode = "provided_list"
     if isinstance(selection_metadata, dict):
         selection_mode = str(selection_metadata.get("mode") or selection_mode)
-    implementation_gaps = [
-        "receipt_based_resume_top_up",
-    ]
+    # receipt_based_resume_top_up closed 2026-06-10: run_batch --resume
+    # replays a receipt (skip complete / tail-only / re-render per state).
+    implementation_gaps: list[str] = []
     if not production_autopilot:
         implementation_gaps.extend([
             "drive_upload",
@@ -238,6 +238,73 @@ def audit_discovered_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "summary": audit["summary"],
         "errors": audit["errors"],
     }
+
+
+# ---------------------------------------------------------------------------
+#  Resume planning (2026-06-10) — closes the receipt_based_resume_top_up gap
+# ---------------------------------------------------------------------------
+
+# States whose render output is intact and only the autopilot tail
+# (upscale → Drive → usage → release) needs to run/continue. Tail re-runs
+# are safe: usage event ids are deterministic per manifest, Drive upload
+# reuses by name+size, RC registration inserts only missing keys, and the
+# upscale step reuses an already-verified output. Crucially these videos
+# keep their ORIGINAL manifest_id — re-rendering them would mint new
+# usage event ids and double-spend the asset usage ledger.
+RESUME_TAIL_STATES = frozenset({
+    "rendered_manifest_audited",
+    "final_upscale_failed",
+    "drive_upload_failed",
+    "usage_writeback_failed",
+    "release_candidate_failed_retryable",
+})
+
+RESUME_SKIP_STATES = frozenset({"complete"})
+
+
+def plan_resume_action(
+    video: dict[str, Any], *, production_autopilot: bool,
+) -> str:
+    """Classify a receipt video record into a resume action.
+
+    Returns ``"skip"`` (already done), ``"tail"`` (render intact — run the
+    autopilot tail only), or ``"render"`` (re-render from scratch:
+    planned / stuck ``rendering`` / render or manifest failures /
+    quarantine skips).
+    """
+    state = str(video.get("state") or "planned")
+    if state in RESUME_SKIP_STATES:
+        return "skip"
+    if state in RESUME_TAIL_STATES:
+        if not production_autopilot:
+            # Render-only receipts have no tail; an audited render is done.
+            return "skip" if state == "rendered_manifest_audited" else "render"
+        return "tail"
+    return "render"
+
+
+def reset_video_record_for_rerender(video: dict[str, Any]) -> None:
+    """Reset a video record to its planned shape before a resume re-render,
+    preserving identity + command. Mirrors :func:`build_video_record`."""
+    video["state"] = "planned"
+    video["error"] = None
+    video["render"]["return_code"] = None
+    video["manifest"] = {
+        "status": "pending", "path": None, "manifest_id": None, "run_id": None,
+    }
+    video["manifest_audit"] = {
+        "status": "pending", "passed": None, "error_count": None,
+    }
+    video["drive_upload"] = {
+        "status": "not_implemented", "source_output_uri": None,
+    }
+    video["final_upscale"] = {
+        "required": False, "enabled": False,
+        "provider": "disabled", "status": "not_required",
+    }
+    video["usage"] = {"writeback_status": "not_written", "event_count": 0}
+    video["release_candidate"] = {"status": "not_created", "id": None}
+    video.pop("timings", None)
 
 
 def mark_stage_started(video: dict[str, Any], stage: str) -> None:

@@ -1032,3 +1032,244 @@ def test_receipt_records_render_stage_timings(tmp_path):
     assert timings["render"]["started_at"]
     assert timings["render"]["finished_at"]
     assert timings["render"]["duration_sec"] is not None
+
+
+def _autopilot_fakes():
+    """Shared happy-path fakes for usage/release (mirrors the registers test)."""
+    usage_calls = []
+    release_calls = []
+
+    def usage_recorder(client, events):
+        usage_calls.append(events)
+        return {"inserted_count": len(events), "duplicate_count": 0}
+
+    def usage_verifier(client, events):
+        return {
+            "verified": True,
+            "expected_count": len(events),
+            "observed_count": len(events),
+            "missing_count": 0,
+            "mismatch_count": 0,
+            "duplicate_observed_event_id_count": 0,
+            "missing_event_ids": [],
+            "mismatches": [],
+            "duplicate_observed_event_ids": [],
+        }
+
+    def release_registrar(client, records):
+        release_calls.append(records)
+        return {
+            "inserted_count": len(records),
+            "already_registered_count": 0,
+            "verification": {
+                "verified": True,
+                "expected_count": len(records),
+                "observed_count": len(records),
+                "missing_count": 0,
+                "mismatch_count": 0,
+                "duplicate_observed_key_count": 0,
+                "missing_source_video_keys": [],
+                "mismatches": [],
+                "duplicate_observed_source_video_keys": [],
+            },
+        }
+
+    return usage_recorder, usage_verifier, release_registrar, usage_calls, release_calls
+
+
+def test_resume_skips_complete_videos_and_rerenders_failures(tmp_path):
+    """2026-06-10 resume fix: --resume replays only what needs work — done
+    videos are untouched, failed renders replay their recorded command."""
+    from promo.cli.run_batch import resume_batch, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    def first_runner(command):
+        index = 1 if "video_001" in command[command.index("--output") + 1] else 2
+        if index == 1:
+            _write_valid_manifest_from_command(command, video_index=1)
+            return 0
+        return 1  # video 2 dies
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=first_runner,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    before = json.loads(receipt_path.read_text())
+    assert before["videos"][0]["state"] == "rendered_manifest_audited"
+    assert before["videos"][1]["state"] == "render_failed"
+    original_command = before["videos"][1]["render"]["command"]
+
+    resumed_commands = []
+
+    def resume_runner(command):
+        resumed_commands.append(list(command))
+        _write_valid_manifest_from_command(command, video_index=2)
+        return 0
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=resume_runner,
+    ) == 0
+    after = json.loads(receipt_path.read_text())
+    # Only the failed video re-rendered, with its exact recorded command.
+    assert resumed_commands == [original_command]
+    assert after["videos"][0]["state"] == "rendered_manifest_audited"
+    assert after["videos"][1]["state"] == "rendered_manifest_audited"
+    assert after["resume_history"][0]["plan"] == {"skip": 1, "tail": 0, "render": 1}
+
+
+def test_resume_tail_only_keeps_original_manifest_no_rerender(tmp_path):
+    """The double-spend guard: a drive_upload_failed video resumes from the
+    tail with its ORIGINAL manifest (same usage event ids), and the render
+    command is never replayed."""
+    from promo.cli.run_batch import DriveUploadTarget, resume_batch, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    usage_recorder, usage_verifier, release_registrar, usage_calls, _ = _autopilot_fakes()
+
+    class _ExplodingUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            raise RuntimeError("Drive 503 backend error")
+
+    def command_runner(command):
+        _write_valid_manifest_from_command(command, video_index=1)
+        return 0
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_ExplodingUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    before = json.loads(receipt_path.read_text())
+    assert before["videos"][0]["state"] == "drive_upload_failed"
+    original_manifest_id = before["videos"][0]["manifest"]["manifest_id"]
+    assert original_manifest_id
+    assert usage_calls == []  # usage never ran in the failed attempt
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=lambda command: pytest.fail("must not re-render"),
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 0
+    after = json.loads(receipt_path.read_text())
+    assert after["videos"][0]["state"] == "complete"
+    assert after["resume_history"][0]["plan"] == {"skip": 0, "tail": 1, "render": 0}
+    # Usage events were written against the ORIGINAL manifest — no new
+    # manifest_id was minted, so the usage ledger cannot double-spend.
+    assert len(usage_calls) == 1
+    assert all(e["manifest_id"] == original_manifest_id for e in usage_calls[0])
+
+
+def test_resume_reuses_verified_upscale_output_without_repaying(tmp_path):
+    """A video that failed AFTER a successful paid upscale resumes without
+    a second upscale call — the verified output on disk is reused."""
+    from promo.cli.run_batch import DriveUploadTarget, resume_batch, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "final_upscale_policy": {
+                "required": True, "enabled": True, "provider": "wavespeed",
+            },
+        }),
+        encoding="utf-8",
+    )
+    usage_recorder, usage_verifier, _, _, _ = _autopilot_fakes()
+
+    def command_runner(command):
+        _write_valid_manifest_from_command(command, video_index=1)
+        return 0
+
+    def failing_registrar(client, records):
+        raise RuntimeError("400 Client Error: bad release payload")
+
+    upscaler = _FakeUpscaler()
+    common = dict(
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        final_upscaler_factory=lambda policy: upscaler,
+        final_upscale_verifier=lambda *, output_path, policy: {
+            "verified": True, "path": output_path,
+            "file_size_bytes": 3, "width": 1080, "height": 1920,
+            "target_width": 1080, "target_height": 1920,
+        },
+    )
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        command_runner=command_runner,
+        release_registrar=failing_registrar,
+        **common,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    before = json.loads(receipt_path.read_text())
+    assert before["videos"][0]["state"] == "release_candidate_failed_retryable"
+    assert len(upscaler.calls) == 1  # paid once
+
+    _, _, working_registrar, _, release_calls = (
+        lambda r=_autopilot_fakes(): (r[0], r[1], r[2], r[3], r[4])
+    )()
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=lambda command: pytest.fail("must not re-render"),
+        release_registrar=working_registrar,
+        **common,
+    ) == 0
+    after = json.loads(receipt_path.read_text())
+    assert after["videos"][0]["state"] == "complete"
+    assert len(upscaler.calls) == 1  # NOT paid a second time
+    assert after["videos"][0]["final_upscale"]["result"]["status"] == "reused_existing"
+    assert len(release_calls) == 1

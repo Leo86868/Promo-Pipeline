@@ -53,8 +53,27 @@ select eligible POIs, write `selection_summary.json` and `batch.json`, then
 process each audit-passed video through private Drive upload, usage
 writeback/verification, `release_candidates` registration/verification, POI
 quarantine on usage failure, source-width transition filtering, fail-closed
-final-upscale gating before Drive handoff, and receipt updates. The remaining
-future autopilot work is receipt-based resume/top-up and live smoke hardening.
+final-upscale gating before Drive handoff, per-step receipt flushes with stage
+timings, and an autopilot preflight that validates Drive/Supabase/upscale
+configuration before rendering anything.
+
+Interrupted or partially-failed batches resume with ONE command (2026-06-10):
+
+```bash
+python3 -m promo.cli.run_batch --resume <output_root>/RUN_RECEIPT.json
+```
+
+Per-video state decides the cheapest safe recovery: `complete` videos are
+skipped; tail failures (`final_upscale_failed`, `drive_upload_failed`,
+`usage_writeback_failed`, `release_candidate_failed_retryable`, or a crash
+right after audit) re-run only the autopilot tail against the ORIGINAL
+manifest — no re-render, no duplicate usage events, and an already-verified
+upscale output is reused instead of re-paying WaveSpeed; everything else
+(stuck `rendering`, `render_failed`, manifest problems, quarantine skips)
+re-renders by replaying the recorded command. Quarantined POIs get one fresh
+chance per resume; the cleared list is archived under `resume_history`. Do
+NOT hand-build top-up batch JSONs for partial failures anymore — resume the
+receipt. The remaining future autopilot work is live smoke hardening.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.

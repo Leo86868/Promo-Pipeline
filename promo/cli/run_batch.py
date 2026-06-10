@@ -62,6 +62,8 @@ from promo.core.run_receipt import (
     mark_rendering,
     mark_stage_finished,
     mark_stage_started,
+    plan_resume_action,
+    reset_video_record_for_rerender,
     utc_now_iso,
     write_run_receipt,
 )
@@ -557,14 +559,30 @@ def _apply_final_upscale_to_inventory(
     output_path = _upscaled_output_path(handoff_dir=handoff_dir, video=video)
 
     try:
-        upscaler = upscaler_factory(policy)
-        if upscaler is None:
-            raise RuntimeError("final upscale provider is not configured")
-        result = _retry_autopilot_step(
-            lambda: upscaler.upscale(input_path=input_path, output_path=output_path),
-            "final video upscale",
+        # Idempotency (2026-06-10, resume support): a previous attempt may
+        # have produced a verified upscale before a later sub-step failed.
+        # Reuse it instead of paying for a fresh WaveSpeed prediction.
+        result: dict[str, Any]
+        existing = (
+            verifier(output_path=output_path, policy=policy)
+            if Path(output_path).exists()
+            else {"verified": False}
         )
-        verified = verifier(output_path=output_path, policy=policy)
+        if existing.get("verified"):
+            logger.info(
+                "Final upscale output already verified — reusing %s", output_path,
+            )
+            result = {"status": "reused_existing", "output_path": output_path}
+            verified = existing
+        else:
+            upscaler = upscaler_factory(policy)
+            if upscaler is None:
+                raise RuntimeError("final upscale provider is not configured")
+            result = _retry_autopilot_step(
+                lambda: upscaler.upscale(input_path=input_path, output_path=output_path),
+                "final video upscale",
+            )
+            verified = verifier(output_path=output_path, policy=policy)
         if not verified.get("verified"):
             raise RuntimeError(
                 "final upscale verification failed: "
@@ -599,6 +617,57 @@ def _apply_final_upscale_to_inventory(
         "verification": verified,
     }
     return True
+
+
+def _autopilot_preflight(
+    receipt: dict[str, Any],
+    receipt_path: str,
+    *,
+    final_upscale_policy: FinalUpscalePolicy,
+    drive_upload_target_factory: Callable[[], DriveUploadTarget],
+    supabase_client_factory: Callable[[], Any],
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None],
+) -> tuple[DriveUploadTarget | None, Any | None, bool]:
+    """Validate every autopilot dependency BEFORE rendering anything.
+
+    2026-06-09 preflight fix: these used to be constructed lazily after
+    the first successful render — a bad credential or missing
+    PGC_WAVESPEED_UPSCALE_COMMAND was discovered only once hours of
+    render + LLM/TTS spend were already sunk (or crashed the batch
+    process mid-run). Returns ``(drive_target, supabase_client, ok)``;
+    the result is recorded under ``receipt["preflight"]``.
+    """
+    preflight_errors: list[str] = []
+    drive_target: DriveUploadTarget | None = None
+    supabase_client: Any | None = None
+    try:
+        drive_target = drive_upload_target_factory()
+    except Exception as exc:
+        preflight_errors.append(f"drive upload target: {exc}")
+    try:
+        supabase_client = supabase_client_factory()
+    except Exception as exc:
+        preflight_errors.append(f"supabase client: {exc}")
+    if final_upscale_policy.enabled:
+        try:
+            if final_upscaler_factory(final_upscale_policy) is None:
+                preflight_errors.append(
+                    "final upscale is enabled but no upscaler is configured "
+                    "(set PGC_WAVESPEED_UPSCALE_COMMAND)"
+                )
+        except Exception as exc:
+            preflight_errors.append(f"final upscaler: {exc}")
+    receipt["preflight"] = {
+        "status": "failed" if preflight_errors else "passed",
+        "checked_at": utc_now_iso(),
+        "errors": preflight_errors,
+    }
+    write_run_receipt(receipt_path, receipt)
+    if preflight_errors:
+        for error in preflight_errors:
+            logger.error("Autopilot preflight failed: %s", error)
+        return drive_target, supabase_client, False
+    return drive_target, supabase_client, True
 
 
 def _run_video_production_autopilot(
@@ -903,39 +972,15 @@ def run_batch(
     resolved_handoff_dir = handoff_dir or os.path.join(output_root, "handoff")
 
     if production_autopilot:
-        # 2026-06-09 preflight fix: the Drive uploader / Supabase client /
-        # upscale command used to be constructed lazily AFTER the first
-        # successful render — a bad credential or missing
-        # PGC_WAVESPEED_UPSCALE_COMMAND was discovered only once hours of
-        # render + LLM/TTS spend were already sunk (or crashed the batch
-        # process mid-run). Fail the batch BEFORE rendering anything.
-        preflight_errors: list[str] = []
-        try:
-            drive_target = drive_upload_target_factory()
-        except Exception as exc:
-            preflight_errors.append(f"drive upload target: {exc}")
-        try:
-            supabase_client = supabase_client_factory()
-        except Exception as exc:
-            preflight_errors.append(f"supabase client: {exc}")
-        if resolved_final_upscale_policy.enabled:
-            try:
-                if final_upscaler_factory(resolved_final_upscale_policy) is None:
-                    preflight_errors.append(
-                        "final upscale is enabled but no upscaler is configured "
-                        "(set PGC_WAVESPEED_UPSCALE_COMMAND)"
-                    )
-            except Exception as exc:
-                preflight_errors.append(f"final upscaler: {exc}")
-        receipt["preflight"] = {
-            "status": "failed" if preflight_errors else "passed",
-            "checked_at": utc_now_iso(),
-            "errors": preflight_errors,
-        }
-        write_run_receipt(resolved_receipt_path, receipt)
-        if preflight_errors:
-            for error in preflight_errors:
-                logger.error("Autopilot preflight failed: %s", error)
+        drive_target, supabase_client, preflight_ok = _autopilot_preflight(
+            receipt,
+            resolved_receipt_path,
+            final_upscale_policy=resolved_final_upscale_policy,
+            drive_upload_target_factory=drive_upload_target_factory,
+            supabase_client_factory=supabase_client_factory,
+            final_upscaler_factory=final_upscaler_factory,
+        )
+        if not preflight_ok:
             return 1
     for item, command, video in zip(items, item_commands, videos, strict=True):
         if production_autopilot and _is_poi_quarantined(receipt, item):
@@ -994,6 +1039,176 @@ def run_batch(
             write_run_receipt(resolved_receipt_path, receipt)
             if not ok:
                 failures += 1
+
+    return 1 if failures else 0
+
+
+def _rebuild_item_from_video(video: dict[str, Any]) -> BatchItem:
+    """Reconstruct a BatchItem from a receipt video record (resume path).
+
+    ``location`` is not persisted per-video; it is only used for prompt
+    grounding inside compile_promo, whose full command is replayed
+    verbatim from the record, so an empty value here is harmless.
+    """
+    render = video.get("render") or {}
+    return BatchItem(
+        poi=BatchPoi(
+            name=str(video.get("poi_name") or ""),
+            location="",
+            poi_id=video.get("poi_id"),
+            canonical_key=video.get("canonical_key"),
+        ),
+        video_index=int(video.get("video_index") or 0),
+        output_dir=str(render.get("output_dir") or ""),
+        output_path=str(render.get("output_path") or ""),
+        voice_key=str(video.get("voice_key") or ""),
+        music_id=video.get("music_id"),
+        seed=video.get("seed"),
+    )
+
+
+def resume_batch(
+    *,
+    receipt_path: str,
+    handoff_dir: str | None = None,
+    command_runner: Callable[[Sequence[str]], int] = run_compile_command,
+    drive_upload_target_factory: Callable[[], DriveUploadTarget] = _create_drive_upload_target_from_env,
+    supabase_client_factory: Callable[[], Any] = _create_supabase_client_from_env,
+    usage_recorder: Callable[[Any, list[dict[str, Any]]], dict[str, int]] = record_usage_events,
+    usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = verify_usage_events,
+    release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
+    final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
+) -> int:
+    """Resume an interrupted/partially-failed batch from its RUN_RECEIPT.
+
+    Closes the ``receipt_based_resume_top_up`` gap (2026-06-10): per-video
+    state decides the cheapest safe recovery — ``complete`` videos are
+    skipped, tail-failure states re-run ONLY the autopilot tail against
+    the ORIGINAL manifest (deterministic usage event ids + Drive
+    name/size reuse + RC missing-key inserts + verified-upscale reuse
+    make the tail idempotent, and keeping the manifest_id prevents
+    double-spending the usage ledger), and everything else re-renders by
+    replaying the recorded compile command. Quarantined POIs get one
+    fresh chance per resume; the cleared list is archived under
+    ``resume_history``.
+    """
+    receipt_file = Path(receipt_path)
+    try:
+        receipt = json.loads(receipt_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read receipt {receipt_path}: {exc}") from exc
+    if receipt.get("receipt_kind") != "pgc_batch_run_receipt":
+        raise ValueError(f"not a PGC batch run receipt: {receipt_path}")
+    request = receipt.get("request") or {}
+    production_autopilot = str(request.get("mode") or "") == "production_autopilot"
+    resolved_final_upscale_policy = normalize_final_upscale_policy(
+        (request.get("filters") or {}).get("final_upscale_policy"),
+    )
+    output_root = str(request.get("output_root") or receipt_file.parent)
+    resolved_handoff_dir = handoff_dir or os.path.join(output_root, "handoff")
+
+    videos = receipt.get("videos") or []
+    plan = [
+        (video, plan_resume_action(video, production_autopilot=production_autopilot))
+        for video in videos
+    ]
+    plan_counts = {
+        action: sum(1 for _, planned in plan if planned == action)
+        for action in ("skip", "tail", "render")
+    }
+    logger.info(
+        "Resume plan for %s: %d skip / %d tail-only / %d re-render",
+        receipt.get("batch_id"),
+        plan_counts["skip"], plan_counts["tail"], plan_counts["render"],
+    )
+
+    # Quarantined POIs get a fresh chance on resume (the underlying outage
+    # may be fixed); a repeat usage failure re-quarantines within this run.
+    history_entry: dict[str, Any] = {
+        "resumed_at": utc_now_iso(),
+        "plan": plan_counts,
+    }
+    if receipt.get("quarantined_pois"):
+        history_entry["cleared_quarantined_pois"] = receipt["quarantined_pois"]
+        receipt["quarantined_pois"] = []
+    receipt.setdefault("resume_history", []).append(history_entry)
+    write_run_receipt(receipt_path, receipt)
+
+    drive_target: DriveUploadTarget | None = None
+    supabase_client: Any | None = None
+    if production_autopilot and (plan_counts["tail"] or plan_counts["render"]):
+        drive_target, supabase_client, preflight_ok = _autopilot_preflight(
+            receipt,
+            receipt_path,
+            final_upscale_policy=resolved_final_upscale_policy,
+            drive_upload_target_factory=drive_upload_target_factory,
+            supabase_client_factory=supabase_client_factory,
+            final_upscaler_factory=final_upscaler_factory,
+        )
+        if not preflight_ok:
+            return 1
+
+    failures = 0
+    for video, action in plan:
+        if action == "skip":
+            continue
+        item = _rebuild_item_from_video(video)
+        if production_autopilot and _is_poi_quarantined(receipt, item):
+            _mark_skipped_quarantined(video)
+            failures += 1
+            write_run_receipt(receipt_path, receipt)
+            continue
+        if action == "render":
+            reset_video_record_for_rerender(video)
+            os.makedirs(item.output_dir, exist_ok=True)
+            logger.info(
+                "Resume re-render: poi=%s video=%d",
+                item.poi.name, item.video_index,
+            )
+            mark_rendering(video)
+            write_run_receipt(receipt_path, receipt)
+            return_code = command_runner(video["render"]["command"])
+            mark_render_result(video, return_code=return_code)
+            write_run_receipt(receipt_path, receipt)
+            if return_code != 0:
+                failures += 1
+                logger.error(
+                    "Resume re-render failed: poi=%s video=%d exit_code=%d",
+                    item.poi.name, item.video_index, return_code,
+                )
+                continue
+            if (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
+                failures += 1
+                logger.error(
+                    "Resume manifest audit failed: poi=%s video=%d",
+                    item.poi.name, item.video_index,
+                )
+                continue
+        else:
+            logger.info(
+                "Resume tail-only: poi=%s video=%d from state=%s",
+                item.poi.name, item.video_index, video.get("state"),
+            )
+        if not production_autopilot:
+            continue
+        ok = _run_video_production_autopilot(
+            video=video,
+            receipt=receipt,
+            receipt_path=receipt_path,
+            handoff_dir=resolved_handoff_dir,
+            drive_target=drive_target,
+            supabase_client=supabase_client,
+            usage_recorder=usage_recorder,
+            usage_verifier=usage_verifier,
+            release_registrar=release_registrar,
+            final_upscale_policy=resolved_final_upscale_policy,
+            final_upscaler_factory=final_upscaler_factory,
+            final_upscale_verifier=final_upscale_verifier,
+        )
+        write_run_receipt(receipt_path, receipt)
+        if not ok:
+            failures += 1
 
     return 1 if failures else 0
 
@@ -1090,7 +1305,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Read Supabase assets, select eligible POIs, and write output-dir/batch.json.",
     )
-    parser.add_argument("--output-dir", required=True, help="Root directory for batch outputs")
+    source.add_argument(
+        "--resume",
+        metavar="RECEIPT_PATH",
+        help=(
+            "Resume an interrupted/partially-failed batch from its "
+            "RUN_RECEIPT.json: completed videos are skipped, tail failures "
+            "(upscale/Drive/usage/release) continue from the failed step "
+            "without re-rendering, everything else re-renders."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=False,
+        help="Root directory for batch outputs (not needed with --resume).",
+    )
     parser.add_argument(
         "--poi-count",
         type=int,
@@ -1198,6 +1427,13 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
     try:
+        if args.resume:
+            sys.exit(resume_batch(
+                receipt_path=args.resume,
+                handoff_dir=args.handoff_dir,
+            ))
+        if not args.output_dir:
+            parser.error("--output-dir is required (except with --resume)")
         voices = parse_voice_keys(args.voices) if args.voices is not None else None
         source_resolution_policy = None
         if args.source_resolution_policy_mode != "best_available":
