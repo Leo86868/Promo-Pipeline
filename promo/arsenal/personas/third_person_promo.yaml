@@ -1,7 +1,11 @@
 id: third_person_promo
 display_name: Luxury Travel Narrator
 perspective: third_person
-wpm: 140
+# 2026-06-11: 140 was stale vs production-measured TTS speech rate
+# (172.8-192.66 wpm at tts_speed 0.95, topup batch tts_metrics). The
+# pacing gate hard-rejects LONG scripts against this value, so the
+# declared wpm must track reality; 175 = conservative measured middle.
+wpm: 175
 voice_id: ""  # deprecated — use gemini.voice or --voice; VOICE_CATALOG rotation is the live source of truth
 
 # Sprint TTS-Migration — default Gemini TTS binding.

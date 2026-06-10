@@ -226,12 +226,15 @@ class TestSprint085PauseBudgetTailConstraint:
     def test_only_hard_gaps_receive_ms(self):
         """Sprint 08.5 AC7 test case 1: weights=[1,2,3,1,_] → only idx 1,2 nonzero."""
         from promo.core.script.pause_budget import compute_pause_budget
+        # 2026-06-11 word-budget raise: 159-word fixture keeps the silence
+        # budget below the (now 3000 ms) per-gap cap so the weight gradient
+        # stays observable instead of both gaps saturating at the cap.
         segs = [
-            {"word_count": 26, "pause_weight": 1},
-            {"word_count": 28, "pause_weight": 2},
-            {"word_count": 30, "pause_weight": 3},
-            {"word_count": 28, "pause_weight": 1},
-            {"word_count": 20, "pause_weight": 1},  # last ignored
+            {"word_count": 31, "pause_weight": 1},
+            {"word_count": 34, "pause_weight": 2},
+            {"word_count": 36, "pause_weight": 3},
+            {"word_count": 34, "pause_weight": 1},
+            {"word_count": 24, "pause_weight": 1},  # last ignored
         ]
         compute_pause_budget(segs, target_sec=65, wpm=165)
         gaps = [s["pause_after_ms"] for s in segs]
@@ -280,27 +283,26 @@ class TestSprint085SilenceBuffer:
 
     def test_apply_silence_buffer_scales_by_1_10(self):
         from promo.core.script.pause_budget import _apply_silence_buffer
-        assert _apply_silence_buffer(4000) == 4400
+        assert _apply_silence_buffer(2000) == 2200
 
     def test_apply_silence_buffer_caps_at_per_gap_cap(self):
         from promo.core.script.pause_budget import _apply_silence_buffer, PER_GAP_CAP_MS
-        # 6500 * 1.10 = 7150 → capped at 7000.
-        assert _apply_silence_buffer(6500) == PER_GAP_CAP_MS
+        # 2900 * 1.10 = 3190 → capped at 3000 (2026-06-11: cap lowered
+        # with the word-budget raise; silence no longer stuffs duration).
+        assert _apply_silence_buffer(2900) == PER_GAP_CAP_MS
 
     def test_apply_silence_buffer_zero_in_zero_out(self):
         from promo.core.script.pause_budget import _apply_silence_buffer
         assert _apply_silence_buffer(0) == 0
 
 class TestSprint085DocstringFix:
-    """AC13: pause_budget.py docstring's per-gap cap matches actual 7000 ms."""
+    """AC13: pause_budget.py source matches the actual 3000 ms cap."""
 
-    def test_compute_pause_budget_docstring_no_3s(self):
-        """No '(3 s)' or '3s)' in pause_budget.py — the cap is 7000 ms now."""
+    def test_compute_pause_budget_docstring_matches_cap(self):
+        """Constant and prose agree: cap is 3000 ms (2026-06-11)."""
         import promo.core.script.pause_budget as pb
         source = open(pb.__file__).read()
-        assert "(3 s)" not in source
-        # The 7-second cap comment / constant should be present.
-        assert "7000" in source
+        assert "PER_GAP_CAP_MS = 3000" in source
 
 class TestSprint09bC7WPMCalibration:
     """Sprint 09b C7 (ACs 28-31): load_calibrated_wpm reads measured

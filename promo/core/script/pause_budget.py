@@ -78,12 +78,14 @@ DEFAULT_TARGET_COVERAGE = 0.90
 
 # Per-gap pause ceiling. Sprint 08 uses per-batch TTS + ffmpeg silence
 # concat (no SSML break involvement), so there's no engine-side cap. The
-# cap here is a pacing sanity rail. Empirically on LONG 65 s targets with
-# 130-140 word scripts, the required budget distributes to 4.5-5.5 s on
-# the highest-weight gap — 7000 ms gives enough headroom to cover the full
-# math budget without truncation while still flagging scripts that would
-# need unreasonably long (>7 s) pauses as pacing warnings.
-PER_GAP_CAP_MS = 7000
+# cap here is a pacing sanity rail. 2026-06-11 (Leo): lowered 7000 →
+# 3000 together with the LONG skeleton's word budget raise (130-140 →
+# 155-170): videos fill 65 s with MORE NARRATION instead of stuffed
+# silence. The old 7 s ceiling let a mid-script pause inflate one visual
+# beat past every clip's physical length (a 3 s sentence + 7 s pause =
+# a 10 s shot no 8 s clip can cover) and produced tiring >4 s lingering
+# shots; leftover duration now belongs to the renderer's tail bridges.
+PER_GAP_CAP_MS = 3000
 
 # Silence buffer (Sprint 08.5, Item 4): each weight>=2 gap's silence gets
 # an extra 10% beyond the raw distribution. Operator's "multi-给一点空间"

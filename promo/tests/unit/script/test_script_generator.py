@@ -87,7 +87,7 @@ class TestScriptValidator:
 
         script = {
             "segments": [
-                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant.",
+                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant, and the silence starts doing its quiet work on you.",
                  "clips": [
                      {"clip_id": "0001", "cut_after": "night,"},
                      {"clip_id": "0002", "cut_after": "calm."},
@@ -193,7 +193,7 @@ class TestPacingValidation:
 class TestLongFormGenerationContract:
     """Long-form foundation rules should be enforced before productization layers."""
 
-    def _write_persona(self, tmp_path, wpm: int = 140) -> str:
+    def _write_persona(self, tmp_path, wpm: int = 175) -> str:
         persona_path = tmp_path / "persona.yaml"
         persona_path.write_text(
             "\n".join(
@@ -216,41 +216,41 @@ class TestLongFormGenerationContract:
         return str(persona_path)
 
     def _valid_long_raw_script(self) -> dict:
-        # Sprint 08.5: rewritten to 133 words (in LONG range [130, 140]).
-        # Segment word counts: 28 + 27 + 29 + 28 + 21 = 133.
+        # 2026-06-11 word-budget raise: extended to 168 words (LONG range
+        # [155, 170]).
         # Sprint 10 C1: pause_weight on non-last segments (required by
         # validate_script_only under the two-pass Gemini schema).
         return {
             "segments": [
-                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant.",
+                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant, and the silence starts doing its quiet work on you.",
                  "pause_weight": 2,
                  "clips": [
                      {"clip_id": "0001", "cut_after": "night,"},
                      {"clip_id": "0002", "cut_after": "calm."},
                      {"clip_id": "0003", "cut_after": ""},
                  ]},
-                {"segment": 2, "text": "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform.",
+                {"segment": 2, "text": "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform, and nobody is keeping score of your day.",
                  "pause_weight": 2,
                  "clips": [
                      {"clip_id": "0004", "cut_after": "heat."},
                      {"clip_id": "0005", "cut_after": "senses."},
                      {"clip_id": "0006", "cut_after": ""},
                  ]},
-                {"segment": 3, "text": "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward.",
+                {"segment": 3, "text": "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward, the kind you stop counting.",
                  "pause_weight": 2,
                  "clips": [
                      {"clip_id": "0007", "cut_after": "certain."},
                      {"clip_id": "0008", "cut_after": "stone,"},
                      {"clip_id": "0009", "cut_after": ""},
                  ]},
-                {"segment": 4, "text": "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters.",
+                {"segment": 4, "text": "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters, with everything else stripped quietly away.",
                  "pause_weight": 3,
                  "clips": [
                      {"clip_id": "0010", "cut_after": "dawn,"},
                      {"clip_id": "0011", "cut_after": "color."},
                      {"clip_id": "0012", "cut_after": ""},
                  ]},
-                {"segment": 5, "text": "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected.",
+                {"segment": 5, "text": "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected, and somehow that feels exactly right.",
                  "clips": [
                      {"clip_id": "0013", "cut_after": "desert."},
                      {"clip_id": "0014", "cut_after": ""},
@@ -291,7 +291,7 @@ class TestLongFormGenerationContract:
         """
         return {
             "segments": [
-                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant.",
+                {"segment": 1, "text": "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant, and the silence starts doing its quiet work on you.",
                  "pause_weight": 2,
                  "clips": [
                      {"clip_id": "0001", "cut_after": "night,"},
@@ -376,9 +376,9 @@ class TestLongFormGenerationContract:
     def test_generate_script_variants_rejects_partial_delivery(self, tmp_path, monkeypatch):
         from promo.core.script.script_generator import generate_script_variants
 
-        # Sprint 08.5: wpm=140 (was 130) so the new 133-word in-range fixture
+        # 2026-06-11: wpm=175 tracks measured TTS speech rate; fixture is 168 words
         # stays under profile.max_narration_ratio=0.92 at target 65s.
-        persona_path = self._write_persona(tmp_path, wpm=140)
+        persona_path = self._write_persona(tmp_path, wpm=175)
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         clips_metadata = [{"id": f"{i:04d}", "category": "scenic", "scene_description": "clip"} for i in range(1, 15)]
         valid_script = self._valid_long_raw_script()
@@ -455,7 +455,7 @@ class TestSprint08NormalizeScript:
         with pytest.raises(ValidationError) as exc_info:
             normalize_script(s, profile=LONG_PROFILE)
         assert "below LONG floor" in str(exc_info.value)
-        assert "130" in str(exc_info.value)
+        assert "155" in str(exc_info.value)
 
     def test_short_under_range_still_warns(self, caplog):
         """SHORT keeps normalize-not-reject — pause budget absorbs the shortfall."""
@@ -628,15 +628,15 @@ class TestSprint10C1ValidateScriptOnly:
         return {
             "segments": [
                 {"segment": 1, "pause_weight": 2, "text":
-                 "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant."},
+                 "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant, and the silence starts doing its quiet work on you."},
                 {"segment": 2, "pause_weight": 2, "text":
-                 "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform."},
+                 "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform, and nobody is keeping score of your day."},
                 {"segment": 3, "pause_weight": 2, "text":
-                 "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward."},
+                 "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward, the kind you stop counting."},
                 {"segment": 4, "pause_weight": 3, "text":
-                 "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters."},
+                 "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters, with everything else stripped quietly away."},
                 {"segment": 5, "text":
-                 "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected."},
+                 "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected, and somehow that feels exactly right."},
             ],
             "hook_technique": "specific_number",
             "unique_detail": "canyon calm",
@@ -874,15 +874,15 @@ class TestSprint10C1PromptSchema:
         stub = {
             "segments": [
                 {"segment": 1, "pause_weight": 2, "text":
-                 "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant."},
+                 "Rooms here start at three thousand a night, and the canyon makes that number feel strangely calm. By the time you arrive, the outside world already feels distant, and the silence starts doing its quiet work on you."},
                 {"segment": 2, "pause_weight": 2, "text":
-                 "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform."},
+                 "You arrive quiet, then everything slows down in the heat. Stone, shadow, warm concrete, and open sky take over the senses. Nothing here asks you to perform, and nobody is keeping score of your day."},
                 {"segment": 3, "pause_weight": 2, "text":
-                 "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward."},
+                 "Morning light hits the rust-red walls first, slow and certain. Coffee on the terrace, a pool cut into stone, and long silences that actually feel luxurious instead of awkward, the kind you stop counting."},
                 {"segment": 4, "pause_weight": 3, "text":
-                 "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters."},
+                 "Private canyon dinners, slot-canyon walks at dawn, spa hours by the boulder, and sunsets that keep changing color. Every detail feels edited down to only what truly matters, with everything else stripped quietly away."},
                 {"segment": 5, "text":
-                 "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected."},
+                 "This is Amangiri. It never fights the desert. It just lets you stay inside it, a little longer than you expected, and somehow that feels exactly right."},
             ],
             "hook_technique": "specific_number",
             "unique_detail": "canyon calm",
@@ -916,7 +916,7 @@ class TestSprint10C2RegenerateSingleVariant:
     _build_prompt and runs the same gate chain as generate_script_variants.
     """
 
-    def _write_persona(self, tmp_path, wpm: int = 140) -> str:
+    def _write_persona(self, tmp_path, wpm: int = 175) -> str:
         persona_path = tmp_path / "persona.yaml"
         persona_path.write_text(
             "\n".join([

@@ -583,7 +583,7 @@ class TestSprint09aPerVariantRetryBudget:
         """
         from promo.core.script.script_generator import generate_script_variants
 
-        persona_path = self._write_persona(tmp_path, wpm=140)
+        persona_path = self._write_persona(tmp_path, wpm=175)
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         clips_metadata = [
             {"id": f"{i:04d}", "category": "scenic", "scene_description": "clip"}
@@ -621,7 +621,7 @@ class TestSprint09aPerVariantRetryBudget:
         """
         from promo.core.script.script_generator import generate_script_variants
 
-        persona_path = self._write_persona(tmp_path, wpm=140)
+        persona_path = self._write_persona(tmp_path, wpm=175)
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         clips_metadata = [
             {"id": f"{i:04d}", "category": "scenic", "scene_description": "clip"}
@@ -654,7 +654,7 @@ class TestSprint09aPerVariantRetryBudget:
         """
         from promo.core.script.script_generator import generate_script_variants, _build_variant_plans
 
-        persona_path = self._write_persona(tmp_path, wpm=140)
+        persona_path = self._write_persona(tmp_path, wpm=175)
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         clips_metadata = [
             {"id": f"{i:04d}", "category": "scenic", "scene_description": "clip"}
