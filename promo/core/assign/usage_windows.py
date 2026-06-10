@@ -118,10 +118,12 @@ def fetch_used_windows(
         start = max(0.0, trim)
         end = start + display_len
         # Clamp to the ROW's recorded source duration (2026-06-10 review
-        # blocking #2): a ledger window beyond the current source length
-        # (re-encoded/stale asset) must not survive into gap math, where
-        # it would manufacture a false free window and kill the video at
-        # the validator. Fully out-of-range rows are stale, not usage.
+        # blocking #2). NOT because such rows exist today — a full-ledger
+        # audit (2026-06-10) found 0 out-of-range windows in 4,532
+        # comparable rows — but because ledger and source have no sync
+        # guarantee, and an unclamped row would manufacture a false free
+        # window that kills the video at the validator. One-line lifetime
+        # insurance against metadata bugs / future pipelines / hand-edits.
         try:
             src = float(row["source_duration_sec"])
         except (KeyError, TypeError, ValueError):
@@ -176,10 +178,12 @@ def free_windows(
     cursor = 0.0
     for w in used:
         # Clamp BEFORE the length test (2026-06-10 review blocking #2):
-        # judging the gap by the unclamped window start let a stale
-        # ledger window beyond the source (e.g. [6,7) on a 5s clip)
-        # certify a 1.5s tail as a 2s free window — the packer would
-        # place a span there and the validator would kill the video.
+        # judging the gap by the unclamped window start would let a
+        # window beyond the source (e.g. [6,7) on a 5s clip) certify a
+        # 1.5s tail as a 2s free window — packer places a span there,
+        # validator kills the video. No such rows exist in today's
+        # ledger (audited 2026-06-10: 0/4,532); this is the same
+        # no-sync-guarantee insurance as the fetch-side clamp.
         w_start = min(max(0.0, w.start_sec), source_duration_sec)
         w_end = min(max(0.0, w.end_sec), source_duration_sec)
         if w_start - cursor >= min_len_sec:
