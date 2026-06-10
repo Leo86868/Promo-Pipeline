@@ -1384,3 +1384,294 @@ def test_resume_derives_required_upscale_from_source_policy(tmp_path):
     after = json.loads(receipt_path.read_text())
     assert after["preflight"]["status"] == "failed"
     assert "PGC_WAVESPEED_UPSCALE_COMMAND" in after["preflight"]["errors"][0]
+
+
+# --- Tail pipelining (2026-06-10) -------------------------------------------
+
+
+def _ok_usage_verifier(client, events):
+    return {
+        "verified": True,
+        "expected_count": len(events),
+        "observed_count": len(events),
+        "missing_count": 0,
+        "mismatch_count": 0,
+        "duplicate_observed_event_id_count": 0,
+        "missing_event_ids": [],
+        "mismatches": [],
+        "duplicate_observed_event_ids": [],
+    }
+
+
+def _ok_release_registrar(client, records):
+    return {
+        "inserted_count": len(records),
+        "already_registered_count": 0,
+        "verification": {
+            "verified": True,
+            "expected_count": len(records),
+            "observed_count": len(records),
+            "missing_count": 0,
+            "mismatch_count": 0,
+            "duplicate_observed_key_count": 0,
+            "missing_source_video_keys": [],
+            "mismatches": [],
+            "duplicate_observed_source_video_keys": [],
+        },
+    }
+
+
+def _two_poi_batch(tmp_path, *, videos_per_poi=1):
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [
+                {"poi_id": "poi_1", "name": "Resort One"},
+                {"poi_id": "poi_2", "name": "Resort Two"},
+            ],
+            "videos_per_poi": videos_per_poi,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    return batch_path
+
+
+def test_plan_batch_items_round_robins_pois_for_tail_pipelining(tmp_path):
+    from promo.cli.run_batch import BatchPoi, plan_batch_items
+
+    items = plan_batch_items(
+        pois=[
+            BatchPoi(name="Resort One", location="", poi_id="poi_1", canonical_key=None),
+            BatchPoi(name="Resort Two", location="", poi_id="poi_2", canonical_key=None),
+        ],
+        videos_per_poi=2,
+        target_duration_sec=65,
+        output_root=str(tmp_path),
+        voices=["jarnathan", "hope"],
+        music_ids=["music_a", "music_b", "music_c"],
+        base_seed=100,
+    )
+
+    # Adjacent items hit different POIs so render N+1 never waits on tail N.
+    assert [(item.poi.poi_id, item.video_index) for item in items] == [
+        ("poi_1", 1), ("poi_2", 1), ("poi_1", 2), ("poi_2", 2),
+    ]
+    # Music still rotates by global ordinal; seed by global ordinal.
+    assert [item.music_id for item in items] == [
+        "music_a", "music_b", "music_c", "music_a",
+    ]
+    assert [item.seed for item in items] == [100, 101, 102, 103]
+    # Voice still keys off video_index (unchanged by reordering).
+    assert [item.voice_key for item in items] == [
+        "jarnathan", "jarnathan", "hope", "hope",
+    ]
+
+
+def test_pipelined_tail_overlaps_next_render(tmp_path):
+    import threading
+
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    tail_gate = threading.Event()
+    tail_one_done = threading.Event()
+    overlap = {}
+
+    class _BlockingUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            if not tail_one_done.is_set():
+                # First tail parks here until render #2 has started.
+                assert tail_gate.wait(timeout=10), "render #2 never released tail #1"
+                tail_one_done.set()
+            return super().upload_video_once(**kwargs)
+
+    commands = []
+
+    def command_runner(command):
+        commands.append(command)
+        if len(commands) == 2:
+            # Render #2 is running while tail #1 is still blocked: overlap.
+            overlap["render2_started_before_tail1_done"] = not tail_one_done.is_set()
+            tail_gate.set()
+        _write_valid_manifest_from_command(command, video_index=len(commands))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(_two_poi_batch(tmp_path)),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        tail_workers=1,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_BlockingUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: {
+            "inserted_count": len(events), "duplicate_count": 0,
+        },
+        usage_verifier=_ok_usage_verifier,
+        release_registrar=_ok_release_registrar,
+    )
+
+    assert exit_code == 0
+    assert overlap == {"render2_started_before_tail1_done": True}
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert [video["state"] for video in receipt["videos"]] == ["complete", "complete"]
+
+
+def test_pipelined_same_poi_videos_never_overlap(tmp_path):
+    import threading
+
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    events_lock = threading.Lock()
+    sequence = []
+
+    class _RecordingUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            with events_lock:
+                sequence.append("tail")
+            return super().upload_video_once(**kwargs)
+
+    def command_runner(command):
+        with events_lock:
+            sequence.append("render")
+        _write_valid_manifest_from_command(
+            command, video_index=sequence.count("render"),
+        )
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        tail_workers=2,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_RecordingUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: {
+            "inserted_count": len(events), "duplicate_count": 0,
+        },
+        usage_verifier=_ok_usage_verifier,
+        release_registrar=_ok_release_registrar,
+    )
+
+    assert exit_code == 0
+    # Same POI: usage ordering forbids overlap, so the second render must
+    # wait for the first tail even with two workers available.
+    assert sequence == ["render", "tail", "render", "tail"]
+
+
+def test_pipelined_two_tail_workers_run_concurrently(tmp_path):
+    import threading
+
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    both_tails_in_flight = threading.Barrier(2, timeout=10)
+
+    class _BarrierUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            # Trips only if BOTH tails reach the upload step concurrently.
+            both_tails_in_flight.wait()
+            return super().upload_video_once(**kwargs)
+
+    commands = []
+
+    def command_runner(command):
+        commands.append(command)
+        _write_valid_manifest_from_command(command, video_index=len(commands))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(_two_poi_batch(tmp_path)),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        tail_workers=2,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_BarrierUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: {
+            "inserted_count": len(events), "duplicate_count": 0,
+        },
+        usage_verifier=_ok_usage_verifier,
+        release_registrar=_ok_release_registrar,
+    )
+
+    assert exit_code == 0
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert [video["state"] for video in receipt["videos"]] == ["complete", "complete"]
+
+
+def test_pipelined_tail_crash_fails_batch_but_renders_continue(tmp_path):
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    factory_calls = []
+
+    def drive_upload_target_factory():
+        factory_calls.append(1)
+        if len(factory_calls) > 1:
+            # Preflight call succeeds; the worker thread's own client
+            # construction crashes → the tail must fail without killing
+            # the render loop.
+            raise RuntimeError("worker drive client exploded")
+        return DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        )
+
+    commands = []
+
+    def command_runner(command):
+        commands.append(command)
+        _write_valid_manifest_from_command(command, video_index=len(commands))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(_two_poi_batch(tmp_path)),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        tail_workers=1,
+        command_runner=command_runner,
+        drive_upload_target_factory=drive_upload_target_factory,
+        supabase_client_factory=lambda: object(),
+        usage_recorder=lambda client, events: {
+            "inserted_count": len(events), "duplicate_count": 0,
+        },
+        usage_verifier=_ok_usage_verifier,
+        release_registrar=_ok_release_registrar,
+    )
+
+    assert exit_code == 1
+    # Both videos rendered despite the tail crash.
+    assert len(commands) == 2
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    # Renders + audits succeeded; tails never completed → states stay at the
+    # audited checkpoint, which --resume classifies as tail-only.
+    assert [video["state"] for video in receipt["videos"]] == [
+        "rendered_manifest_audited",
+        "rendered_manifest_audited",
+    ]

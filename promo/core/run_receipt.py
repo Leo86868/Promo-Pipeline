@@ -7,12 +7,18 @@ local JSON for now; live asset truth still belongs in Supabase usage events.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from promo.core.manifest_audit import audit_manifest_path
 
+
+# One batch process owns one receipt; a module-level lock is enough to make
+# receipt flushes and timings-key inserts safe under tail pipelining
+# (main thread renders video N+1 while worker threads run tail N).
+_RECEIPT_IO_LOCK = threading.Lock()
 
 SCHEMA_VERSION = 1
 DEFAULT_COOLDOWN_DAYS = 3
@@ -314,26 +320,28 @@ def mark_stage_started(video: dict[str, Any], stage: str) -> None:
     "which step dominates per-video time" — previously no run produced any
     durable timing data at all.
     """
-    video.setdefault("timings", {})[stage] = {
-        "started_at": utc_now_iso(),
-        "finished_at": None,
-        "duration_sec": None,
-    }
+    with _RECEIPT_IO_LOCK:
+        video.setdefault("timings", {})[stage] = {
+            "started_at": utc_now_iso(),
+            "finished_at": None,
+            "duration_sec": None,
+        }
 
 
 def mark_stage_finished(video: dict[str, Any], stage: str) -> None:
-    timing = video.setdefault("timings", {}).setdefault(
-        stage, {"started_at": None, "finished_at": None, "duration_sec": None},
-    )
-    timing["finished_at"] = utc_now_iso()
-    started = timing.get("started_at")
-    if started:
-        try:
-            start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
-            end_dt = datetime.fromisoformat(timing["finished_at"].replace("Z", "+00:00"))
-            timing["duration_sec"] = int((end_dt - start_dt).total_seconds())
-        except ValueError:
-            pass
+    with _RECEIPT_IO_LOCK:
+        timing = video.setdefault("timings", {}).setdefault(
+            stage, {"started_at": None, "finished_at": None, "duration_sec": None},
+        )
+        timing["finished_at"] = utc_now_iso()
+        started = timing.get("started_at")
+        if started:
+            try:
+                start_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(timing["finished_at"].replace("Z", "+00:00"))
+                timing["duration_sec"] = int((end_dt - start_dt).total_seconds())
+            except ValueError:
+                pass
 
 
 def mark_rendering(video: dict[str, Any]) -> None:
@@ -460,11 +468,18 @@ def summarize_videos(videos: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def write_run_receipt(path: str, receipt: dict[str, Any]) -> None:
-    receipt["updated_at"] = utc_now_iso()
-    receipt["summary"] = summarize_videos(receipt.get("videos", []))
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(receipt, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    # Tail pipelining (2026-06-10): the batch main thread and the autopilot
+    # tail workers flush the same receipt concurrently. The lock keeps two
+    # serializations from interleaving on disk, and keeps json.dumps from
+    # racing the timings-key inserts in mark_stage_started/finished (the
+    # only receipt mutations that resize a dict; everything else is a
+    # whole-value reassignment, which dumps tolerates).
+    with _RECEIPT_IO_LOCK:
+        receipt["updated_at"] = utc_now_iso()
+        receipt["summary"] = summarize_videos(receipt.get("videos", []))
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(receipt, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )

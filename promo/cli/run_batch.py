@@ -15,8 +15,10 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -342,9 +344,14 @@ def plan_batch_items(
 ) -> list[BatchItem]:
     items: list[BatchItem] = []
     duration_label = f"{int(round(target_duration_sec))}s"
-    for poi in pois:
-        poi_slug = _safe_poi_dir(poi.name)
-        for video_index in range(1, videos_per_poi + 1):
+    # POI round-robin (2026-06-10, tail pipelining): adjacent items must hit
+    # DIFFERENT POIs so the renderer never has to wait on the previous tail —
+    # same-POI videos cannot overlap because their usage events must stay
+    # ordered. Output paths are (poi, video_index)-keyed, so reordering only
+    # changes execution order, not where anything lands.
+    for video_index in range(1, videos_per_poi + 1):
+        for poi in pois:
+            poi_slug = _safe_poi_dir(poi.name)
             run_dir = os.path.join(output_root, poi_slug, f"video_{video_index:03d}")
             output_path = os.path.join(
                 run_dir,
@@ -457,8 +464,12 @@ def _add_quarantined_poi(
     })
 
 
+def _item_poi_key(item: BatchItem) -> str:
+    return item.poi.poi_id or item.poi.canonical_key or item.poi.name
+
+
 def _is_poi_quarantined(receipt: dict[str, Any], item: BatchItem) -> bool:
-    poi_key = item.poi.poi_id or item.poi.canonical_key or item.poi.name
+    poi_key = _item_poi_key(item)
     return any(
         row.get("poi_key") == poi_key
         for row in receipt.get("quarantined_pois", [])
@@ -543,16 +554,24 @@ def _apply_final_upscale_to_inventory(
     if not policy.required and not policy.enabled:
         return True
     if not policy.enabled:
-        video["final_upscale"]["status"] = "failed"
-        video["final_upscale"]["error"] = "final upscale is required but disabled"
+        # Whole-value reassignment (not key insertion) keeps concurrent
+        # receipt serialization safe under tail pipelining.
+        video["final_upscale"] = {
+            **video["final_upscale"],
+            "status": "failed",
+            "error": "final upscale is required but disabled",
+        }
         video["state"] = "final_upscale_failed"
         video["error"] = "final upscale is required but disabled"
         return False
 
     items = inventory.get("items") or []
     if len(items) != 1:
-        video["final_upscale"]["status"] = "failed"
-        video["final_upscale"]["error"] = "expected exactly one staging item"
+        video["final_upscale"] = {
+            **video["final_upscale"],
+            "status": "failed",
+            "error": "expected exactly one staging item",
+        }
         video["state"] = "final_upscale_failed"
         video["error"] = "final upscale expected exactly one staging item"
         return False
@@ -911,9 +930,12 @@ def run_batch(
     final_upscale_policy: dict[str, Any] | None = None,
     final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
+    tail_workers: int = 1,
 ) -> int:
     if jobs != 1:
         raise ValueError("run_batch currently supports --jobs 1 only")
+    if tail_workers < 0:
+        raise ValueError("tail_workers must be >= 0 (0 = serial tail)")
 
     spec = load_batch_spec(batch_path)
     selection_metadata = spec.get("selection") if isinstance(spec.get("selection"), dict) else None
@@ -1011,63 +1033,152 @@ def run_batch(
         )
         if not preflight_ok:
             return 1
-    for item, command, video in zip(items, item_commands, videos, strict=True):
-        if production_autopilot and _is_poi_quarantined(receipt, item):
-            _mark_skipped_quarantined(video)
-            failures += 1
-            write_run_receipt(resolved_receipt_path, receipt)
-            continue
-        os.makedirs(item.output_dir, exist_ok=True)
-        logger.info(
-            "Batch item: poi=%s video=%d voice=%s music_id=%s output=%s",
-            item.poi.name,
-            item.video_index,
-            item.voice_key,
-            item.music_id,
-            item.output_path,
+
+    # Tail pipelining (2026-06-10): the autopilot tail (upscale ~700s, mostly
+    # waiting on WaveSpeed's servers) is LONGER than a render (~450s of local
+    # CPU). Overlapping render N+1 with tail N drops the per-video cadence
+    # from render+tail to max(render, tail); a second tail worker drops it
+    # to ~render. tail_workers=0 restores the strictly serial behavior.
+    pipelined = production_autopilot and tail_workers > 0
+    executor: ThreadPoolExecutor | None = None
+    in_flight: dict[Future, str] = {}
+    tail_locals = threading.local()
+
+    def _tail_clients() -> tuple[DriveUploadTarget, Any]:
+        # One client pair per worker thread: googleapiclient/httplib2 is not
+        # thread-safe, so workers never share the preflight-validated pair
+        # (which only proves the credentials work).
+        if not hasattr(tail_locals, "drive_target"):
+            tail_locals.drive_target = drive_upload_target_factory()
+            tail_locals.supabase_client = supabase_client_factory()
+        return tail_locals.drive_target, tail_locals.supabase_client
+
+    def _run_tail(video: dict[str, Any]) -> bool:
+        tail_drive_target, tail_supabase_client = _tail_clients()
+        ok = _run_video_production_autopilot(
+            video=video,
+            receipt=receipt,
+            receipt_path=resolved_receipt_path,
+            handoff_dir=resolved_handoff_dir,
+            drive_target=tail_drive_target,
+            supabase_client=tail_supabase_client,
+            usage_recorder=usage_recorder,
+            usage_verifier=usage_verifier,
+            release_registrar=release_registrar,
+            final_upscale_policy=resolved_final_upscale_policy,
+            final_upscaler_factory=final_upscaler_factory,
+            final_upscale_verifier=final_upscale_verifier,
         )
-        mark_rendering(video)
         write_run_receipt(resolved_receipt_path, receipt)
-        return_code = command_runner(command)
-        mark_render_result(video, return_code=return_code)
-        write_run_receipt(resolved_receipt_path, receipt)
-        if return_code != 0:
-            failures += 1
-            logger.error(
-                "Batch item failed: poi=%s video=%d exit_code=%d",
-                item.poi.name,
-                item.video_index,
-                return_code,
-            )
-        elif (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
-            failures += 1
-            logger.error(
-                "Batch item manifest audit failed: poi=%s video=%d",
-                item.poi.name,
-                item.video_index,
-            )
-        elif production_autopilot:
-            if drive_target is None:
-                drive_target = drive_upload_target_factory()
-            if supabase_client is None:
-                supabase_client = supabase_client_factory()
-            ok = _run_video_production_autopilot(
-                video=video,
-                receipt=receipt,
-                receipt_path=resolved_receipt_path,
-                handoff_dir=resolved_handoff_dir,
-                drive_target=drive_target,
-                supabase_client=supabase_client,
-                usage_recorder=usage_recorder,
-                usage_verifier=usage_verifier,
-                release_registrar=release_registrar,
-                final_upscale_policy=resolved_final_upscale_policy,
-                final_upscaler_factory=final_upscaler_factory,
-                final_upscale_verifier=final_upscale_verifier,
-            )
-            write_run_receipt(resolved_receipt_path, receipt)
+        return ok
+
+    def _harvest(futures: Sequence[Future]) -> None:
+        nonlocal failures
+        for future in futures:
+            poi_key = in_flight.pop(future)
+            try:
+                ok = future.result()
+            except Exception:
+                logger.exception("Autopilot tail crashed: poi_key=%s", poi_key)
+                ok = False
             if not ok:
                 failures += 1
+
+    def _harvest_done() -> None:
+        _harvest([future for future in list(in_flight) if future.done()])
+
+    def _wait_for_poi_tail(poi_key: str) -> None:
+        # Same-POI usage events must stay ordered: never start rendering a
+        # POI's next video while that POI's tail is still in flight, and
+        # only check quarantine after the tail has settled.
+        pending = [f for f, key in in_flight.items() if key == poi_key]
+        if pending:
+            wait(pending)
+        _harvest_done()
+
+    def _wait_for_tail_slot() -> None:
+        while len(in_flight) >= tail_workers:
+            wait(list(in_flight), return_when=FIRST_COMPLETED)
+            _harvest_done()
+
+    if pipelined:
+        executor = ThreadPoolExecutor(
+            max_workers=tail_workers, thread_name_prefix="autopilot-tail",
+        )
+    try:
+        for item, command, video in zip(items, item_commands, videos, strict=True):
+            if pipelined:
+                _wait_for_poi_tail(_item_poi_key(item))
+            if production_autopilot and _is_poi_quarantined(receipt, item):
+                _mark_skipped_quarantined(video)
+                failures += 1
+                write_run_receipt(resolved_receipt_path, receipt)
+                continue
+            os.makedirs(item.output_dir, exist_ok=True)
+            logger.info(
+                "Batch item: poi=%s video=%d voice=%s music_id=%s output=%s",
+                item.poi.name,
+                item.video_index,
+                item.voice_key,
+                item.music_id,
+                item.output_path,
+            )
+            mark_rendering(video)
+            write_run_receipt(resolved_receipt_path, receipt)
+            return_code = command_runner(command)
+            mark_render_result(video, return_code=return_code)
+            write_run_receipt(resolved_receipt_path, receipt)
+            if return_code != 0:
+                failures += 1
+                logger.error(
+                    "Batch item failed: poi=%s video=%d exit_code=%d",
+                    item.poi.name,
+                    item.video_index,
+                    return_code,
+                )
+            elif (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
+                failures += 1
+                logger.error(
+                    "Batch item manifest audit failed: poi=%s video=%d",
+                    item.poi.name,
+                    item.video_index,
+                )
+            elif production_autopilot:
+                if pipelined:
+                    assert executor is not None
+                    _wait_for_tail_slot()
+                    future = executor.submit(_run_tail, video)
+                    in_flight[future] = _item_poi_key(item)
+                else:
+                    if drive_target is None:
+                        drive_target = drive_upload_target_factory()
+                    if supabase_client is None:
+                        supabase_client = supabase_client_factory()
+                    ok = _run_video_production_autopilot(
+                        video=video,
+                        receipt=receipt,
+                        receipt_path=resolved_receipt_path,
+                        handoff_dir=resolved_handoff_dir,
+                        drive_target=drive_target,
+                        supabase_client=supabase_client,
+                        usage_recorder=usage_recorder,
+                        usage_verifier=usage_verifier,
+                        release_registrar=release_registrar,
+                        final_upscale_policy=resolved_final_upscale_policy,
+                        final_upscaler_factory=final_upscaler_factory,
+                        final_upscale_verifier=final_upscale_verifier,
+                    )
+                    write_run_receipt(resolved_receipt_path, receipt)
+                    if not ok:
+                        failures += 1
+    finally:
+        if executor is not None:
+            # Drain so a crash/interrupt never abandons a paid-for upscale
+            # mid-flight; the receipt stays the recovery source of truth.
+            if in_flight:
+                logger.info("Draining %d in-flight autopilot tail(s)", len(in_flight))
+            _harvest(list(in_flight))
+            executor.shutdown(wait=True)
 
     return 1 if failures else 0
 
@@ -1289,6 +1400,7 @@ def run_selected_batch(
     final_upscale_policy: dict[str, Any] | None = None,
     final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
+    tail_workers: int = 1,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -1331,6 +1443,7 @@ def run_selected_batch(
         final_upscale_policy=final_upscale_policy,
         final_upscaler_factory=final_upscaler_factory,
         final_upscale_verifier=final_upscale_verifier,
+        tail_workers=tail_workers,
     )
 
 
@@ -1442,6 +1555,21 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Directory for Drive inventory and release handoff JSON. Defaults to output-dir/handoff.",
     )
     parser.add_argument(
+        "--tail-workers",
+        type=int,
+        default=1,
+        help=(
+            "Concurrent autopilot tails (upscale/Drive/usage/release) overlapped "
+            "with rendering. 1 pipelines tail N under render N+1; 2 keeps up with "
+            "rendering while upscale (~700s) exceeds render (~450s); 0 = serial."
+        ),
+    )
+    parser.add_argument(
+        "--serial-tail",
+        action="store_true",
+        help="Disable tail pipelining and run exactly like before (same as --tail-workers 0).",
+    )
+    parser.add_argument(
         "--final-upscale-provider",
         choices=["disabled", "wavespeed"],
         default=None,
@@ -1490,6 +1618,7 @@ def main() -> None:
                 "enabled": provider != "disabled",
                 "provider": provider,
             }
+        tail_workers = 0 if args.serial_tail else args.tail_workers
         if args.select_random_pois:
             if args.poi_count is None:
                 parser.error("--poi-count is required with --select-random-pois")
@@ -1521,6 +1650,7 @@ def main() -> None:
                 handoff_dir=args.handoff_dir,
                 source_resolution_policy=source_resolution_policy,
                 final_upscale_policy=final_upscale_policy,
+                tail_workers=tail_workers,
             )
         else:
             exit_code = run_batch(
@@ -1539,6 +1669,7 @@ def main() -> None:
                 handoff_dir=args.handoff_dir,
                 source_resolution_policy=source_resolution_policy,
                 final_upscale_policy=final_upscale_policy,
+                tail_workers=tail_workers,
             )
     except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))

@@ -250,6 +250,14 @@ natural-language request into these flags; the repo does not parse English.
 The explicit `--production-autopilot` flag avoids accidental live Drive/Supabase
 writes from old render-only commands.
 
+Tail pipelining (2026-06-10): by default the autopilot tail of video N
+(upscale/Drive/usage/release) runs on a worker thread while video N+1 renders;
+batch items are POI-round-robin ordered because same-POI videos must never
+overlap (usage-event ordering). `--tail-workers 2` adds a second concurrent
+tail (WaveSpeed allows 100 concurrent predictions; 2 is enough because
+upscale ~700s < 2× render ~450s). `--serial-tail` (or `--tail-workers 0`)
+restores the strictly serial pre-2026-06 behavior as the rollback switch.
+
 Render speed knobs are repo config, not natural-language policy:
 
 ```text

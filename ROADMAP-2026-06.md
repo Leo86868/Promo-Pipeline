@@ -74,7 +74,7 @@
 
 1. ✅ **Receipt resume/top-up**(= 翻转一落地)——已完成并实战验证(skip/re-render 路径;tail-only 待真实尾部失败时毕业考)。原理:`LEARNING.md` §2。
 2. ✅ **Revert/smoke cleanup 产品化**:`promo.cli.revert_usage` 已落地(dry-run 默认 / distribution 一票否决)。原理:`LEARNING.md` §10。
-3. 🔜 **批次流水线化(优先级上调)**:2026-06-10 实测尾巴(upscale ~700s)**比渲染(~450s)还长**——重叠后批次 wall-clock 近乎砍半,不再是估算。前置:`plan_batch_items` 改 POI round-robin(同 POI 因 usage 顺序不能重叠)。
+3. ✅ **批次流水线化**(2026-06-10 落地,待 VPS 实证):渲染 N+1 与尾巴 N 重叠,`--tail-workers`(默认 1,2 = 双送餐员、节拍≈渲染时长)/`--serial-tail` 回退开关;`plan_batch_items` 已改 POI round-robin。原理:`LEARNING.md` §12。WaveSpeed 已确认支持 100 并发 prediction。
 4. **720p 渲染 + 真超分 A/B**(低优先,过渡期限定):现状是 720 素材拉伸到 1080 再让 WaveSpeed"精修拉伸像素";实验 = 720 渲染(像素减半)+ WaveSpeed 真 720→1080。**注意经济学**:upscale 这 700s 是"过渡期税",素材库有原生 1080 后强制 upscale 自动消失、整体变快——这个实验届时作废,所以只在过渡期还要持续很久时才值得做。详见 `LEARNING.md` §11。
 5. **S5 测试解耦**(见 BACKLOG.md):测试 monkeypatch 内部符号 → "改内部就崩测试",这是"以后自己改起来费劲"的真正元凶。
 6. **ffmpeg vs Remotion 调研**(过渡期后的问题):upscale 消失后渲染(450s)重新成为最大头,届时换引擎才真正值钱;但 Remotion 承担字幕/排版,迁移是大重写 → 先调研收益与成本,不预设结论。
@@ -155,3 +155,14 @@
   - 部署教训:新 worktree 必须 `npm install`(promo/remotion/),应进部署清单。
 - 当前状态:main = `39caa85` 已推送并部署;696 tests passed。
 - 下一步候选(按数据就绪度):尾巴流水线化(timings 已到手)> 720p 真超分 A/B > beat planner + packer(F3 触发率持续积累中,窗口数据已就绪)。
+
+### 2026-06-10(续)
+
+- **尾巴流水线化落地**(方案 A,Leo 拍板"开并行接口,为日产 200 条做准备"):
+  - `plan_batch_items` 改 POI round-robin(相邻 item 异 POI,渲染永不等同 POI 尾巴);
+  - 主循环改两级流水:渲染(主线程)‖ 尾巴(`--tail-workers` 线程池,默认 1);同 POI 守门(渲染前 join 该 POI 在飞尾巴后再查 quarantine);槽位节流(在飞尾巴 ≤ workers);`finally` 排空在飞尾巴;
+  - 并发安全:`run_receipt` 写盘 + timings 插键持模块锁;`final_upscale` 子字典改整体重赋值;每个 worker 线程自建 Drive/Supabase client(googleapiclient 非线程安全);
+  - `--serial-tail`(= `--tail-workers 0`)一键回老路;`--tail-workers 2` 时节拍 ≈ 渲染时长(700 < 2×450,2 个够,WaveSpeed 100 并发上限远未触及);
+  - 5 个新单测(round-robin / 重叠实证 / 同 POI 串行 / 双 worker 并发 / 尾巴线程崩溃隔离),线程测试 20 连跑无 flake;701 tests passed。
+  - **待办:VPS 实证**——下一次生产批看 receipt timings 确认重叠(渲染 N+1 started_at < 尾巴 N finished_at),并试 `--tail-workers 2`。
+- 翻转二(beat planner + packer)方案已与 Leo 对齐,关乎核心、先讨论后动工;A/B 闸门不变。
