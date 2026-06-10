@@ -112,6 +112,14 @@ def _run_variant_loop(
     """
     all_ok = True
     run_retrieval_provenance = _empty_retrieval_provenance()
+    # 翻转二 B5 — the packer assigner needs the clip→asset mapping for
+    # usage-window rotation; platform backends expose it via
+    # shared_assets(), local backends don't (rotation inactive).
+    backend_shared_assets = (
+        backend.shared_assets()  # type: ignore[attr-defined]
+        if callable(getattr(type(backend), "shared_assets", None))
+        else None
+    )
     # Sprint 09b C7 introduced this counter for FreezeWouldOccurError
     # raises. Sprint 10 C2 extended it: the same counter now also
     # bumps on Sprint 10 F3 variant aborts (ClipAssignmentError on the
@@ -173,10 +181,12 @@ def _run_variant_loop(
                 variant_profile=variant_profile,
                 variant_persona=variant_persona,
                 asset_visual_brief=asset_visual_brief,
+                shared_assets=backend_shared_assets,
             )
             run_retrieval_provenance = variant_retrieval
             logger.info(
-                "Gemini #2 assigned %d phrases for variant %d",
+                "%s assigned %d phrases for variant %d",
+                variant_retrieval.get("assigner") or "Gemini #2",
                 len(variant_assignments), variant_index,
             )
         except ClipAssignmentError as exc:

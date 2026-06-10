@@ -15,7 +15,7 @@ decomposition). Behavior byte-identical to the pre-extraction site.
 import logging
 import os
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
 from promo.core.format_profiles import (
@@ -462,6 +462,7 @@ def _step_assign_clips(
     variant_profile: "PromoFormatProfile | None" = None,
     variant_persona: "NarratorPersona | None" = None,
     asset_visual_brief: dict | None = None,
+    shared_assets: list[dict] | None = None,
 ) -> tuple[dict, dict, list[dict], dict]:
     """Gemini #2 clip assignment with F3 single-retry policy.
 
@@ -508,6 +509,23 @@ def _step_assign_clips(
     from promo.core.assign.clip_assigner import assign_clips_with_f3_retry
     from promo.core.script.script_generator import regenerate_single_variant_with_hint
     from promo.core.narrate.tts_engine import generate_narration
+
+    from promo.core import config as promo_config
+
+    # 翻转二 B5 — PROMO_CLIP_ASSIGNER=packer routes to the deterministic
+    # chain (beat planner → per-beat retrieval → packer → same validator).
+    # No F3 machinery: beats ≤4s vs clips ≥5s makes the duration
+    # hard-constraint structurally unsatisfiable, so there is nothing for
+    # a script-regen retry to fix.
+    if promo_config.clip_assigner() == "packer":
+        return _assign_clips_packer(
+            script,
+            narration,
+            clips_metadata,
+            clip_durations,
+            embedding_cache_dir=embedding_cache_dir,
+            shared_assets=shared_assets,
+        )
 
     def _regen_script(hint: str) -> dict:
         # Sprint 16 — F3 regen uses the SAME profile + persona the original
@@ -668,6 +686,153 @@ def _step_assign_clips(
         retrieve_clips_fn=retrieve_clips_fn,  # type: ignore[arg-type]
     )
     return final_script, final_narration, assignments, retrieval_provenance  # type: ignore[return-value]
+
+
+def _default_usage_client() -> Any:
+    """Supabase client for the packer's usage-window reads.
+
+    设计契约 ② (fail-closed): missing credentials raise instead of
+    silently skipping window rotation — production platform-backed runs
+    always carry these env vars (the asset download already needed them).
+    """
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "packer window rotation requires SUPABASE_URL + key in env "
+            "(fail-closed per 设计契约 ②; set PROMO_CLIP_ASSIGNER=gemini2 "
+            "to fall back to the legacy assigner)"
+        )
+    from supabase import create_client
+
+    return create_client(url, key)
+
+
+def _assign_clips_packer(
+    script: dict,
+    narration: dict,
+    clips_metadata: list[dict],
+    clip_durations: dict[str, float],
+    *,
+    embedding_cache_dir: str | None,
+    shared_assets: list[dict] | None,
+    rank_fn: Any | None = None,
+    windows_fetcher: Any | None = None,
+    usage_client_factory: Any | None = None,
+) -> tuple[dict, dict, list[dict], dict]:
+    """翻转二 B5 — deterministic assignment: beats → retrieval → packer.
+
+    Same return contract as the Gemini #2 path, but script/narration pass
+    through untouched (no regen) and the output still runs through
+    ``_enforce_hard_constraint_and_enrich`` — the validator stays the
+    single renderer-contract arbiter regardless of assigner.
+
+    Embeddings are REQUIRED (the packer ranks by cosine; there is no
+    full-pool prompt to fall back to). Usage-window reads are fail-closed
+    per 设计契约 ②: ledger errors abort the variant (``--resume``
+    recovers); dev runs without an asset mapping skip rotation with a
+    provenance flag instead.
+
+    ``rank_fn`` / ``windows_fetcher`` / ``usage_client_factory`` are test
+    seams only — production always uses the real implementations.
+    """
+    from promo.core.assign import clip_embedder, clip_retriever
+    from promo.core.assign.beat_planner import beat_text, plan_beats
+    from promo.core.assign.clip_assignment_validator import (
+        _enforce_hard_constraint_and_enrich,
+    )
+    from promo.core.assign.packer import pack_clips
+    from promo.core.assign.usage_windows import fetch_used_windows
+
+    word_timestamps = narration["word_timestamps"]
+    if embedding_cache_dir is None:
+        raise RuntimeError(
+            "PROMO_CLIP_ASSIGNER=packer requires the embedding sidecar "
+            "(embedding_cache_dir is unset — run build_embedding_index)"
+        )
+    sidecar = clip_embedder.load_embeddings_for_poi(embedding_cache_dir)
+    if sidecar is None:
+        raise RuntimeError(
+            f"PROMO_CLIP_ASSIGNER=packer: no embedding sidecar at "
+            f"{embedding_cache_dir} — run build_embedding_index for this POI"
+        )
+    embedded_metadata, dropped_clip_ids = clip_embedder.attach_embeddings_to_metadata(
+        clips_metadata, sidecar,  # type: ignore[arg-type]
+    )
+    if not embedded_metadata:
+        raise RuntimeError(
+            "PROMO_CLIP_ASSIGNER=packer: embedding sidecar matched zero clips"
+        )
+    if dropped_clip_ids:
+        logger.warning(
+            "packer: %d clip(s) lack embeddings and are outside the ranking "
+            "pool: %s (rebuild the index to include them)",
+            len(dropped_clip_ids), dropped_clip_ids,
+        )
+
+    beats = plan_beats(
+        script,  # type: ignore[arg-type]
+        word_timestamps,
+        max_beats=len(embedded_metadata),
+    )
+    queries = [beat_text(beat, word_timestamps) for beat in beats]
+    rankings = (rank_fn or clip_retriever.rank_per_query)(queries, embedded_metadata)
+
+    clip_to_asset = {
+        str(row.get("clip_id")).zfill(4): str(row.get("asset_id"))
+        for row in (shared_assets or [])
+        if row.get("clip_id") is not None and row.get("asset_id")
+    }
+    used_windows: dict = {}
+    ledger_state = "no_asset_mapping"
+    if clip_to_asset:
+        client = (usage_client_factory or _default_usage_client)()
+        # 设计契约 ② — UsageWindowError propagates: the variant aborts and
+        # --resume recovers. Never silently degrade to trim-0 reruns.
+        used_windows = (windows_fetcher or fetch_used_windows)(
+            client, sorted(set(clip_to_asset.values())),
+        )
+        ledger_state = "loaded"
+    else:
+        logger.warning(
+            "packer: no clip→asset mapping (local-clips run?) — window "
+            "rotation inactive for this video",
+        )
+
+    raw_assignments, pack_provenance = pack_clips(
+        beats,
+        rankings,
+        word_timestamps=word_timestamps,
+        clip_durations=clip_durations,
+        clip_metadata=embedded_metadata,
+        used_windows=used_windows,
+        clip_to_asset=clip_to_asset,
+    )
+    assignments = _enforce_hard_constraint_and_enrich(
+        raw_assignments,
+        script,  # type: ignore[arg-type]
+        word_timestamps,
+        clip_durations,
+    )
+
+    provenance = _empty_retrieval_provenance()
+    provenance.update({
+        "retrieval_active": True,
+        "assigner": "packer",
+        "embedded_pool_size": len(embedded_metadata),
+        "reduced_pool_size": len(embedded_metadata),
+        "mimo_prompt_sha1": sidecar.get("mimo_prompt_sha1"),
+        "usage_ledger": ledger_state,
+        "packer": pack_provenance,
+    })
+    logger.info(
+        "packer assigned %d beats (%d unique clips, ledger=%s, "
+        "window_exhausted=%d, adjacency_relaxed=%d)",
+        pack_provenance["beat_count"], pack_provenance["unique_clip_count"],
+        ledger_state, len(pack_provenance["window_exhausted_beats"]),
+        len(pack_provenance["adjacency_relaxed_beats"]),
+    )
+    return script, narration, assignments, provenance
 
 
 # ---------------------------------------------------------------------------
