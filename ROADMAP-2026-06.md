@@ -1,5 +1,7 @@
 # PGC Pipeline 下一阶段路线图(2026-06)
 
+> **新 session 自举(60 秒)**:① 读本文件(重点:§执行日志 最后一天 + §翻转二);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文。**已完成勿重做**:第一二梯队全部落地;翻转一(轻量版)已实现并实战验证(per-step flush + timings + `--resume`),不需要再"实现翻转一"。**当前最大未做项**:尾巴流水线化(timings 数据已到手:upscale ~700s > render ~450s)和 翻转二(beat planner + packer,F3 触发率首样本 50%)。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
+
 **写作日期**: 2026-06-09
 **当前 main HEAD**: `4453d78`(F3 split-repair 止血已落地)
 **来源**: 37-agent 全库深扫(31 条发现全部经独立对抗复核确认)+ 三轮架构讨论
