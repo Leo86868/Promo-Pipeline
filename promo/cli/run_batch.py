@@ -350,20 +350,30 @@ def plan_batch_items(
     # ordered. Output paths are (poi, video_index)-keyed, so reordering only
     # changes execution order, not where anything lands.
     for video_index in range(1, videos_per_poi + 1):
-        for poi in pois:
+        for poi_ordinal, poi in enumerate(pois):
             poi_slug = _safe_poi_dir(poi.name)
             run_dir = os.path.join(output_root, poi_slug, f"video_{video_index:03d}")
             output_path = os.path.join(
                 run_dir,
                 f"promo_{poi_slug}_video_{video_index:03d}_{duration_label}.mp4",
             )
+            # Music + seed key off the CANONICAL (POI-major) ordinal, not the
+            # round-robin execution ordinal. Two reasons (2026-06-10 review):
+            # (1) a POI's videos sit poi_count apart in execution order, so
+            # whenever poi_count is a multiple of the track-pool size the
+            # execution ordinal pins ONE track to all of a POI's videos —
+            # the same per-POI monotony the 2026-06-09 rotation fix removed
+            # (which rotated by global ordinal to stop video_001 of every
+            # POI sharing a track); the canonical ordinal keeps a POI's
+            # videos on consecutive tracks in every batch shape.
+            # (2) it keeps seed→(music, seed) per video identical to the
+            # pre-pipelining serial code, so seeded batches stay comparable
+            # across versions.
+            canonical_ordinal = poi_ordinal * videos_per_poi + (video_index - 1)
             music_id = None
             if music_ids:
-                # Rotate by GLOBAL item ordinal, not video_index — indexing
-                # by video_index pinned the same track to video_001 of every
-                # POI in every batch (2026-06-09 fix).
-                music_id = music_ids[len(items) % len(music_ids)]
-            seed = base_seed + len(items) if base_seed is not None else None
+                music_id = music_ids[canonical_ordinal % len(music_ids)]
+            seed = base_seed + canonical_ordinal if base_seed is not None else None
             items.append(
                 BatchItem(
                     poi=poi,
@@ -1567,7 +1577,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--serial-tail",
         action="store_true",
-        help="Disable tail pipelining and run exactly like before (same as --tail-workers 0).",
+        help=(
+            "Disable tail pipelining (same as --tail-workers 0): strictly serial "
+            "render→tail per video. Per-video voice/music/seed are identical "
+            "either way; batch items always execute in POI-round-robin order."
+        ),
     )
     parser.add_argument(
         "--final-upscale-provider",

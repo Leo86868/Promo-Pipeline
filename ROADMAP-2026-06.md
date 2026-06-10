@@ -165,4 +165,5 @@
   - `--serial-tail`(= `--tail-workers 0`)一键回老路;`--tail-workers 2` 时节拍 ≈ 渲染时长(700 < 2×450,2 个够,WaveSpeed 100 并发上限远未触及);
   - 5 个新单测(round-robin / 重叠实证 / 同 POI 串行 / 双 worker 并发 / 尾巴线程崩溃隔离),线程测试 20 连跑无 flake;701 tests passed。
   - **待办:VPS 实证**——下一次生产批看 receipt timings 确认重叠(渲染 N+1 started_at < 尾巴 N finished_at),并试 `--tail-workers 2`。
+  - **复审修复**(外部 review 抓到两条,均确认属实):① 音乐/种子从执行序号改回**规范序号**(POI-major)——执行序号下,POI 数是曲库数(现 7 首)整数倍时,同 POI 所有视频钉死同一首歌(2026-06-09 轮换修复的孪生回归);规范序号同时保住种子跨版本可比性。② `--serial-tail` 帮助文案改实:行为等价(每视频参数逐字节同老版),但执行顺序无条件 round-robin。新增"整除现形"回归测试;702 tests passed。
 - 翻转二(beat planner + packer)方案已与 Leo 对齐,关乎核心、先讨论后动工;A/B 闸门不变。

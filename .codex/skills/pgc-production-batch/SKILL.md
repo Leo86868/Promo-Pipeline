@@ -255,8 +255,11 @@ Tail pipelining (2026-06-10): by default the autopilot tail of video N
 batch items are POI-round-robin ordered because same-POI videos must never
 overlap (usage-event ordering). `--tail-workers 2` adds a second concurrent
 tail (WaveSpeed allows 100 concurrent predictions; 2 is enough because
-upscale ~700s < 2× render ~450s). `--serial-tail` (or `--tail-workers 0`)
-restores the strictly serial pre-2026-06 behavior as the rollback switch.
+upscale ~700s < 2× render ~450s). `--serial-tail` (or `--tail-workers 0`) is
+the rollback switch: strictly serial render→tail per video. Per-video
+voice/music/seed assignments are order-independent (keyed to the canonical
+POI-major ordinal, byte-identical to the pre-pipelining mapping for the same
+seed); the POI-round-robin EXECUTION order itself is unconditional.
 
 Render speed knobs are repo config, not natural-language policy:
 

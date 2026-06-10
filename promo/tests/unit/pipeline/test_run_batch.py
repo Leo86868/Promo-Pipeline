@@ -892,10 +892,11 @@ def test_build_compile_command_threads_source_resolution_policy(tmp_path):
     assert command[command.index("--source-target-width") + 1] == "720"
 
 
-def test_plan_batch_items_rotates_music_by_global_ordinal(tmp_path):
-    """2026-06-09 fix: music rotates by global item ordinal so video_001 of
-    every POI no longer pins the same track; a pool larger than
-    videos_per_poi gets fully cycled across the batch."""
+def test_plan_batch_items_rotates_music_by_canonical_ordinal(tmp_path):
+    """2026-06-09 fix, hardened 2026-06-10: music rotates by the CANONICAL
+    POI-major ordinal (execution-order independent), so video_001 of every
+    POI no longer pins the same track AND a POI's own videos always land on
+    consecutive distinct tracks regardless of round-robin execution order."""
     from promo.cli.run_batch import BatchPoi, plan_batch_items
 
     pois = [
@@ -912,10 +913,47 @@ def test_plan_batch_items_rotates_music_by_global_ordinal(tmp_path):
         base_seed=None,
     )
 
-    assert [item.music_id for item in items] == [
-        "music_1", "music_2", "music_3",  # POI 1
-        "music_4", "music_5", "music_6",  # POI 2 — no longer repeats POI 1
+    by_poi = {}
+    for item in items:
+        by_poi.setdefault(item.poi.poi_id, []).append((item.video_index, item.music_id))
+    assert sorted(by_poi["poi_1"]) == [
+        (1, "music_1"), (2, "music_2"), (3, "music_3"),
     ]
+    assert sorted(by_poi["poi_2"]) == [
+        (1, "music_4"), (2, "music_5"), (3, "music_6"),
+    ]
+
+
+def test_plan_batch_items_music_not_pinned_when_poi_count_divides_pool(tmp_path):
+    """2026-06-10 review bug: keying music off the round-robin EXECUTION
+    ordinal pinned one track per POI whenever poi_count was a multiple of
+    the track-pool size (a POI's videos sit poi_count apart in execution
+    order). The canonical ordinal keeps each POI's videos on distinct
+    consecutive tracks in exactly that batch shape."""
+    from promo.cli.run_batch import BatchPoi, plan_batch_items
+
+    pois = [
+        BatchPoi(name=f"Hotel {i}", location="X", poi_id=f"poi_{i}", canonical_key=None)
+        for i in range(1, 3)
+    ]
+    items = plan_batch_items(
+        pois=pois,
+        videos_per_poi=2,
+        target_duration_sec=65,
+        output_root=str(tmp_path),
+        voices=["jarnathan"],
+        music_ids=["music_a", "music_b"],  # pool size divides poi_count
+        base_seed=None,
+    )
+
+    by_poi = {}
+    for item in items:
+        by_poi.setdefault(item.poi.poi_id, set()).add(item.music_id)
+    # Execution-ordinal keying would yield {"music_a"} / {"music_b"} here.
+    assert by_poi == {
+        "poi_1": {"music_a", "music_b"},
+        "poi_2": {"music_a", "music_b"},
+    }
 
 
 def test_autopilot_preflight_fails_before_any_render(tmp_path):
@@ -1457,11 +1495,13 @@ def test_plan_batch_items_round_robins_pois_for_tail_pipelining(tmp_path):
     assert [(item.poi.poi_id, item.video_index) for item in items] == [
         ("poi_1", 1), ("poi_2", 1), ("poi_1", 2), ("poi_2", 2),
     ]
-    # Music still rotates by global ordinal; seed by global ordinal.
+    # Music + seed key off the CANONICAL (POI-major) ordinal, so the
+    # per-video assignment is byte-identical to the pre-pipelining serial
+    # mapping: poi_1 → ordinals 0,1; poi_2 → ordinals 2,3.
     assert [item.music_id for item in items] == [
-        "music_a", "music_b", "music_c", "music_a",
+        "music_a", "music_c", "music_b", "music_a",
     ]
-    assert [item.seed for item in items] == [100, 101, 102, 103]
+    assert [item.seed for item in items] == [100, 102, 101, 103]
     # Voice still keys off video_index (unchanged by reordering).
     assert [item.voice_key for item in items] == [
         "jarnathan", "jarnathan", "hope", "hope",
