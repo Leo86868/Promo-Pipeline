@@ -48,6 +48,14 @@
 - **设计责任**:PGC packer 将是这四个字段的**第一个读方**,中台没有现成查询约定;做好后即全家族标准,music remix 反向换装同一套(届时通知 AIGC 侧)。
 - **切换条件**:先拿 2-3 个 POI 做同 script A/B(Gemini #2 版 vs retrieval 版各渲一遍,肉眼比),赢了再全量切。检索质量上限 = MiMo scene_description 质量,A/B 就是在验这个。
 - **数据闸门**:在那之前,看 batch log 里 `F3 split-repair` WARNING 的频率——频繁 = 换掉 Gemini #2 的硬证据;罕见 = 大改降优先级。
+
+#### 设计契约(2026-06-10 与 Leo 四板拍定,可以开工)
+
+1. **A/B 用同文案**:给 `compile_promo` 加"回放已录 script"输入(~80 行,additive),同文案两臂各渲一版,差异 100% 归因选片;
+2. **窗口账本读取 fail-closed**:生产模式下查 `poi_asset_usage_events` 窗口失败 → 重试耗尽即该视频失败(resume 捞),**绝不**静默降级裸播。依据:读写同一 Supabase、同级重试,真失败率 ≈ usage 写回失败率(年级别罕见),产量代价趋近零;dev 无凭证 → 空历史 + WARNING + provenance 标记;
+3. **小店问题已被选店门槛规避**(50+10×extra ≫ ~22 beats/条):planner 仍留两行自适应保险(beat 数 > 素材数时自动拉长 beat),仅护住手搓 batch 绕过门槛的边角;
+4. **切换闸门(三条与)**:① 盲测 3 店 Leo 肉眼判 packer ≥2 不输;② F3 有效触发率持续偏高(06-09 后样本:4 条 1-2 触发,06-10 topup 批进行中又 +2 触发,趋势 ~30%);③ A/B 批 packer 臂失败率 ≤ Gemini #2 臂、节拍不慢(packer 无 LLM 调用,天然占优)。
+- 实施顺序:B1 beat planner(纯函数)→ B2 检索 per-beat 排序 → B3 usage_windows 读方(家族标准,文档化查询规范,完工通知 AIGC 侧)→ B4 packer → B5 `PROMO_CLIP_ASSIGNER` 开关集成 → B6 A/B。
 - 远期(同翻转方向):MiMo 分析挪到资产入库时一次性做,视频生成时纯查表。
 
 ### 翻转三:反馈闭环(defer)
@@ -164,6 +172,6 @@
   - 并发安全:`run_receipt` 写盘 + timings 插键持模块锁;`final_upscale` 子字典改整体重赋值;每个 worker 线程自建 Drive/Supabase client(googleapiclient 非线程安全);
   - `--serial-tail`(= `--tail-workers 0`)一键回老路;`--tail-workers 2` 时节拍 ≈ 渲染时长(700 < 2×450,2 个够,WaveSpeed 100 并发上限远未触及);
   - 5 个新单测(round-robin / 重叠实证 / 同 POI 串行 / 双 worker 并发 / 尾巴线程崩溃隔离),线程测试 20 连跑无 flake;701 tests passed。
-  - **待办:VPS 实证**——下一次生产批看 receipt timings 确认重叠(渲染 N+1 started_at < 尾巴 N finished_at),并试 `--tail-workers 2`。
+  - **VPS 实证完毕**(smoke `tail_pipeline_smoke_20260610T1`,2 POI × 1,双 complete,全批 33 分钟):重叠铁证 = Lido 渲染 20:41:04 开始,恰为 Westgate 尾巴起点,且在其 upscale 结束(20:52:51)前渲完。实测:渲染 597/466s、upscale 707/668s、Drive 9/6s、usage 1s。节拍结论:串行 ~21 分/条 → 1 worker ~12 分/条 → 2 workers ~9 分/条(≈160 条/天单机上限;日产 200 需渲染提速,过渡期后再议)。待办:`--tail-workers 2` 在下一次生产批验证。
   - **复审修复**(外部 review 抓到两条,均确认属实):① 音乐/种子从执行序号改回**规范序号**(POI-major)——执行序号下,POI 数是曲库数(现 7 首)整数倍时,同 POI 所有视频钉死同一首歌(2026-06-09 轮换修复的孪生回归);规范序号同时保住种子跨版本可比性。② `--serial-tail` 帮助文案改实:行为等价(每视频参数逐字节同老版),但执行顺序无条件 round-robin。新增"整除现形"回归测试;702 tests passed。
 - 翻转二(beat planner + packer)方案已与 Leo 对齐,关乎核心、先讨论后动工;A/B 闸门不变。
