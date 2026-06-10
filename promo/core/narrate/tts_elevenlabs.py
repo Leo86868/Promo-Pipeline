@@ -29,6 +29,7 @@ from promo.core.model_adapters.registry import (
     ELEVENLABS_MODEL_ID,
     ELEVENLABS_OUTPUT_FORMAT,
 )
+from promo.core.llm.retry import retry_with_backoff
 from promo.core.model_adapters.tts import call_elevenlabs_with_timestamps
 from promo.core.schema import WordTimestamp
 
@@ -74,6 +75,13 @@ def _call_elevenlabs_with_timestamps(
 
     ``speed`` overrides ``VOICE_SETTINGS.speed`` when provided. Accepted
     ElevenLabs range is 0.7–1.2; default (None) keeps ``VOICE_SETTINGS.speed``.
+
+    2026-06-09 reliability fix: this was the only external API on the
+    per-video critical path with no bounded retry — a single transient
+    429/5xx/connection reset killed the whole video after the script cost
+    was already paid. Transient failures now get up to 3 attempts with
+    backoff; deterministic 4xx (e.g. bad key) still fail fast via
+    ``retry_with_backoff``'s default ``give_up`` classifier.
     """
     voice_settings = dict(VOICE_SETTINGS)
     if speed is not None:
@@ -82,15 +90,19 @@ def _call_elevenlabs_with_timestamps(
         "Calling ElevenLabs with_timestamps (voice=%s, model=%s, format=%s)...",
         voice_id[:12], model_id, output_format,
     )
-    return call_elevenlabs_with_timestamps(
-        text=text,
-        voice_id=voice_id,
-        voice_settings=voice_settings,
-        model_id=model_id,
-        output_format=output_format,
-        timeout=timeout,
-        requests_post=requests.post,
-    )
+
+    def _call() -> dict[str, object]:
+        return call_elevenlabs_with_timestamps(
+            text=text,
+            voice_id=voice_id,
+            voice_settings=voice_settings,
+            model_id=model_id,
+            output_format=output_format,
+            timeout=timeout,
+            requests_post=requests.post,
+        )
+
+    return retry_with_backoff(_call, max_retries=3, base_delay=2.0)
 
 
 # ---------------------------------------------------------------------------
