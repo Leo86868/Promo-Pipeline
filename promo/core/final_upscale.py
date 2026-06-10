@@ -72,6 +72,20 @@ def normalize_final_upscale_policy(
     )
 
 
+def _parse_last_json_line(stdout: str) -> dict[str, Any] | None:
+    for line in reversed((stdout or "").strip().splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 class CommandFinalVideoUpscaler:
     """Run an operator-provided command that performs the actual upscale.
 
@@ -102,12 +116,45 @@ class CommandFinalVideoUpscaler:
                 f"final upscale command failed with exit {completed.returncode}: "
                 f"{completed.stderr.strip() or completed.stdout.strip()}"
             )
-        return {
+        result = {
             "status": "applied",
             "provider": self._provider,
             "input_path": input_path,
             "output_path": output_path,
         }
+        # Auditability (2026-06-10 review fix): the wavespeed CLI prints a
+        # JSON result line (prediction_id, source_host, resumed,
+        # staging_object_deleted). Keep it in the receipt instead of
+        # discarding stdout.
+        details = _parse_last_json_line(completed.stdout)
+        if details is not None:
+            result["details"] = details
+        return result
+
+    def preflight(self) -> dict[str, Any]:
+        """Run the command in --preflight mode (2026-06-10 review fix).
+
+        Validates the command's actual runtime configuration — API key and
+        source-host credentials, including anything its --env file loads —
+        before any render spend. Raises :class:`FinalUpscaleError` on
+        failure so run_batch's autopilot preflight can fail the batch.
+        """
+        command = self._command_template.format(
+            input_path="__preflight__",
+            output_path="__preflight__",
+        ) + " --preflight"
+        completed = subprocess.run(
+            shlex.split(command),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise FinalUpscaleError(
+                "final upscale preflight failed: "
+                f"{completed.stdout.strip() or completed.stderr.strip()}"
+            )
+        return _parse_last_json_line(completed.stdout) or {"preflight": "passed"}
 
 
 def create_final_video_upscaler_from_env(
@@ -123,16 +170,28 @@ def create_final_video_upscaler_from_env(
     return CommandFinalVideoUpscaler(command_template=command, provider=policy.provider)
 
 
-def _probe_video_dimensions(path: Path) -> tuple[int, int]:
+# Upscaled output must match the pre-upscale master's duration within
+# this tolerance — container remux/encode jitter only, never content loss.
+DURATION_TOLERANCE_SEC = 1.0
+
+
+def probe_video_properties(path: Path) -> dict[str, Any]:
+    """ffprobe width/height/duration/audio in one call.
+
+    2026-06-10 hardening (resume-reuse review): dimensions alone are NOT
+    proof of a usable master — a truncated or silent MP4 can still report
+    1080x1920 from its header. Duration and audio-stream presence are
+    probed alongside so verification can fail closed on broken outputs.
+    """
     completed = subprocess.run(
         [
             "ffprobe",
             "-v",
             "error",
-            "-select_streams",
-            "v:0",
             "-show_entries",
-            "stream=width,height",
+            "stream=codec_type,width,height",
+            "-show_entries",
+            "format=duration",
             "-of",
             "json",
             str(path),
@@ -148,11 +207,21 @@ def _probe_video_dimensions(path: Path) -> tuple[int, int]:
         )
     try:
         payload = json.loads(completed.stdout)
-        stream = (payload.get("streams") or [])[0]
-        return int(stream["width"]), int(stream["height"])
-    except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        streams = payload.get("streams") or []
+        video = next(
+            stream for stream in streams if stream.get("codec_type") == "video"
+        )
+        return {
+            "width": int(video["width"]),
+            "height": int(video["height"]),
+            "has_audio": any(
+                stream.get("codec_type") == "audio" for stream in streams
+            ),
+            "duration_sec": float((payload.get("format") or {}).get("duration") or 0.0),
+        }
+    except (StopIteration, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise FinalUpscaleError(
-            f"ffprobe returned invalid dimension payload for {path}"
+            f"ffprobe returned invalid stream payload for {path}"
         ) from exc
 
 
@@ -160,42 +229,54 @@ def verify_final_upscale_output(
     *,
     output_path: str,
     policy: FinalUpscalePolicy,
+    expected_duration_sec: float | None = None,
 ) -> dict[str, Any]:
+    """Fail-closed check that an upscaled MP4 is a usable master.
+
+    Beyond dimensions, requires a positive duration (within
+    ``DURATION_TOLERANCE_SEC`` of ``expected_duration_sec`` when the
+    caller knows the pre-upscale master's length) and an audio stream —
+    PGC masters always carry narration + BGM. 2026-06-10 hardening: this
+    verdict now also gates the resume-path reuse of an existing upscale
+    output, where "looks 1080x1920" alone must not be treated as "is a
+    complete 65s video with sound".
+    """
     path = Path(output_path)
     if not path.exists():
         return {"verified": False, "reason": "missing_output", "path": output_path}
     size = path.stat().st_size
     if size <= 0:
         return {"verified": False, "reason": "empty_output", "path": output_path}
-    try:
-        width, height = _probe_video_dimensions(path)
-    except FinalUpscaleError as exc:
-        return {
-            "verified": False,
-            "reason": "dimension_probe_failed",
-            "path": output_path,
-            "file_size_bytes": size,
-            "error": str(exc),
-            "target_width": policy.target_width,
-            "target_height": policy.target_height,
-        }
-    if width != policy.target_width or height != policy.target_height:
-        return {
-            "verified": False,
-            "reason": "dimension_mismatch",
-            "path": output_path,
-            "file_size_bytes": size,
-            "width": width,
-            "height": height,
-            "target_width": policy.target_width,
-            "target_height": policy.target_height,
-        }
-    return {
-        "verified": True,
+    base = {
         "path": output_path,
         "file_size_bytes": size,
-        "width": width,
-        "height": height,
         "target_width": policy.target_width,
         "target_height": policy.target_height,
+        "expected_duration_sec": expected_duration_sec,
     }
+    try:
+        props = probe_video_properties(path)
+    except FinalUpscaleError as exc:
+        return {
+            **base,
+            "verified": False,
+            "reason": "dimension_probe_failed",
+            "error": str(exc),
+        }
+    base.update(props)
+    if (
+        props["width"] != policy.target_width
+        or props["height"] != policy.target_height
+    ):
+        return {**base, "verified": False, "reason": "dimension_mismatch"}
+    if props["duration_sec"] <= 0:
+        return {**base, "verified": False, "reason": "missing_duration"}
+    if (
+        expected_duration_sec is not None
+        and abs(props["duration_sec"] - float(expected_duration_sec))
+        > DURATION_TOLERANCE_SEC
+    ):
+        return {**base, "verified": False, "reason": "duration_mismatch"}
+    if not props["has_audio"]:
+        return {**base, "verified": False, "reason": "missing_audio_stream"}
+    return {**base, "verified": True}

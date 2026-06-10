@@ -655,7 +655,7 @@ def test_run_batch_final_upscale_uploads_verified_upscaled_master(tmp_path):
         _write_valid_manifest_from_command(command, video_index=1)
         return 0
 
-    def final_upscale_verifier(*, output_path, policy):
+    def final_upscale_verifier(*, output_path, policy, **kwargs):
         from pathlib import Path
 
         path = Path(output_path)
@@ -1237,7 +1237,7 @@ def test_resume_reuses_verified_upscale_output_without_repaying(tmp_path):
         usage_recorder=usage_recorder,
         usage_verifier=usage_verifier,
         final_upscaler_factory=lambda policy: upscaler,
-        final_upscale_verifier=lambda *, output_path, policy: {
+        final_upscale_verifier=lambda *, output_path, policy, **kwargs: {
             "verified": True, "path": output_path,
             "file_size_bytes": 3, "width": 1080, "height": 1920,
             "target_width": 1080, "target_height": 1920,
@@ -1273,3 +1273,114 @@ def test_resume_reuses_verified_upscale_output_without_repaying(tmp_path):
     assert len(upscaler.calls) == 1  # NOT paid a second time
     assert after["videos"][0]["final_upscale"]["result"]["status"] == "reused_existing"
     assert len(release_calls) == 1
+
+
+def test_autopilot_preflight_runs_upscaler_deep_check(tmp_path):
+    """2026-06-10 review fix: when the upscaler exposes preflight(), the
+    batch preflight runs it — a bad runtime config (e.g. missing
+    WAVESPEED_API_KEY inside the command's --env file) fails the batch
+    before any render."""
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+            "final_upscale_policy": {
+                "required": True, "enabled": True, "provider": "wavespeed",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    class _BadConfigUpscaler(_FakeUpscaler):
+        def preflight(self):
+            raise RuntimeError("WAVESPEED_API_KEY missing")
+
+    commands = []
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        production_autopilot=True,
+        command_runner=lambda command: commands.append(command) or 0,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        final_upscaler_factory=lambda policy: _BadConfigUpscaler(),
+    )
+
+    assert exit_code == 1
+    assert commands == []
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["preflight"]["status"] == "failed"
+    assert "WAVESPEED_API_KEY" in receipt["preflight"]["errors"][0]
+
+
+def test_resume_derives_required_upscale_from_source_policy(tmp_path):
+    """2026-06-10 review fix: a transition_low_res_only receipt that lacks
+    an explicit final_upscale_policy must still REQUIRE upscale on resume
+    (preflight demands an upscaler instead of silently skipping the gate)."""
+    from promo.cli.run_batch import DriveUploadTarget, resume_batch
+
+    receipt = {
+        "schema_version": 1,
+        "receipt_kind": "pgc_batch_run_receipt",
+        "batch_id": "b1",
+        "paradigm": "pgc_65s",
+        "created_at": "2026-06-10T00:00:00Z",
+        "updated_at": "2026-06-10T00:00:00Z",
+        "request": {
+            "output_root": str(tmp_path / "out"),
+            "mode": "production_autopilot",
+            "filters": {
+                "source_resolution_policy": {
+                    "mode": "transition_low_res_only",
+                    "target_width": 720,
+                    "tolerance_px": 40,
+                },
+                # final_upscale_policy intentionally ABSENT (older receipt)
+            },
+        },
+        "videos": [{
+            "poi_id": "poi_123", "poi_name": "Terranea Resort",
+            "canonical_key": None, "video_index": 1,
+            "state": "drive_upload_failed",
+            "voice_key": "jarnathan", "music_id": None, "seed": None,
+            "render": {"command": ["echo"], "output_path": "x.mp4",
+                       "output_dir": str(tmp_path), "return_code": 0},
+            "manifest": {"status": "found", "path": str(tmp_path / "m.json"),
+                         "manifest_id": "m1", "run_id": "r1"},
+            "manifest_audit": {"status": "passed", "passed": True, "error_count": 0},
+            "drive_upload": {"status": "failed", "source_output_uri": None},
+            "usage": {"writeback_status": "not_written", "event_count": 0},
+            "release_candidate": {"status": "not_created", "id": None},
+            "error": "Drive upload failed",
+        }],
+        "summary": {},
+    }
+    receipt_path = tmp_path / "RUN_RECEIPT.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    exit_code = resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=lambda command: pytest.fail("must not render"),
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_FakeUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        final_upscaler_factory=lambda policy: None,  # not configured
+    )
+
+    # Required upscale was derived from the source policy → preflight fails
+    # closed instead of resuming without the mandatory upscale gate.
+    assert exit_code == 1
+    after = json.loads(receipt_path.read_text())
+    assert after["preflight"]["status"] == "failed"
+    assert "PGC_WAVESPEED_UPSCALE_COMMAND" in after["preflight"]["errors"][0]

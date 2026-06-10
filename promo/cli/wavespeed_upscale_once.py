@@ -507,6 +507,39 @@ def upscale_once(
     }
 
 
+def run_preflight(source_host: str) -> dict[str, Any]:
+    """Config-only readiness check (2026-06-10 review fix).
+
+    run_batch's autopilot preflight previously only proved this command
+    EXISTS; a missing WAVESPEED_API_KEY or missing Supabase storage
+    credentials still surfaced after the first render. This validates the
+    actual runtime configuration — including anything loaded via --env —
+    without paid calls or network traffic.
+    """
+    errors: list[str] = []
+    if not os.environ.get("WAVESPEED_API_KEY", "").strip():
+        errors.append("WAVESPEED_API_KEY missing")
+    resolved = source_host
+    if source_host == "auto":
+        resolved = "supabase" if _supabase_creds() else "temp"
+    if source_host == "supabase" and _supabase_creds() is None:
+        errors.append(
+            "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_KEY) "
+            "missing for --source-host supabase"
+        )
+    if resolved == "temp" and not errors:
+        print(
+            "warning: preflight resolved source host to PUBLIC temp hosts — "
+            "production must use --source-host supabase",
+            file=sys.stderr,
+        )
+    return {
+        "preflight": "failed" if errors else "passed",
+        "source_host": resolved,
+        "errors": errors,
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Local source MP4 path.")
@@ -535,6 +568,15 @@ def _parser() -> argparse.ArgumentParser:
             "temp-host chain, auto = supabase when credentials exist."
         ),
     )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help=(
+            "Validate runtime configuration (API key + source-host "
+            "credentials, including --env contents) and exit without "
+            "upscaling anything. Used by run_batch's autopilot preflight."
+        ),
+    )
     return parser
 
 
@@ -542,6 +584,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         _load_env(args.env)
+        if args.preflight:
+            result = run_preflight(args.source_host)
+            print(json.dumps(result, sort_keys=True))
+            return 0 if result["preflight"] == "passed" else 1
         result = upscale_once(
             input_path=Path(args.input),
             output_path=Path(args.output),

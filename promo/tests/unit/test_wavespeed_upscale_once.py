@@ -354,3 +354,39 @@ class TestCliSurface:
         monkeypatch.setenv("PGC_WAVESPEED_SOURCE_HOST", "temp")
         args = ws._parser().parse_args(["--input", "a.mp4", "--output", "b.mp4"])
         assert args.source_host == "temp"
+
+
+class TestPreflightMode:
+    """2026-06-10 review fix: --preflight validates runtime config (API key
+    + source-host credentials, incl. --env contents) with no paid calls."""
+
+    def test_preflight_passes_with_full_supabase_config(self, monkeypatch, capsys):
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        exit_code = ws.main([
+            "--input", "a.mp4", "--output", "b.mp4",
+            "--source-host", "supabase", "--preflight",
+        ])
+        assert exit_code == 0
+        result = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert result == {
+            "preflight": "passed", "source_host": "supabase", "errors": [],
+        }
+
+    def test_preflight_fails_without_wavespeed_key_or_storage_creds(
+        self, monkeypatch, capsys,
+    ):
+        monkeypatch.delenv("WAVESPEED_API_KEY", raising=False)
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+        monkeypatch.delenv("SUPABASE_SERVICE_ROLE_KEY", raising=False)
+        monkeypatch.delenv("SUPABASE_KEY", raising=False)
+        exit_code = ws.main([
+            "--input", "a.mp4", "--output", "b.mp4",
+            "--source-host", "supabase", "--preflight",
+        ])
+        assert exit_code == 1
+        result = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert result["preflight"] == "failed"
+        assert any("WAVESPEED_API_KEY" in e for e in result["errors"])
+        assert any("SUPABASE_URL" in e for e in result["errors"])

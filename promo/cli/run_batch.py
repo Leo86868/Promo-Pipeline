@@ -47,9 +47,11 @@ from promo.core.drive_upload import (
     upload_staging_inventory,
 )
 from promo.core.final_upscale import (
+    FinalUpscaleError,
     FinalUpscalePolicy,
     create_final_video_upscaler_from_env,
     normalize_final_upscale_policy,
+    probe_video_properties,
     verify_final_upscale_output,
 )
 from promo.core.music_library import SupabaseMusicLibrary
@@ -559,12 +561,25 @@ def _apply_final_upscale_to_inventory(
     output_path = _upscaled_output_path(handoff_dir=handoff_dir, video=video)
 
     try:
+        # The pre-upscale master's duration anchors output verification —
+        # an upscale must not change content length (review hardening
+        # 2026-06-10: dimensions alone can pass on a truncated file).
+        try:
+            expected_duration = float(
+                probe_video_properties(Path(input_path))["duration_sec"]
+            ) or None
+        except (FinalUpscaleError, OSError):
+            expected_duration = None
         # Idempotency (2026-06-10, resume support): a previous attempt may
         # have produced a verified upscale before a later sub-step failed.
         # Reuse it instead of paying for a fresh WaveSpeed prediction.
         result: dict[str, Any]
         existing = (
-            verifier(output_path=output_path, policy=policy)
+            verifier(
+                output_path=output_path,
+                policy=policy,
+                expected_duration_sec=expected_duration,
+            )
             if Path(output_path).exists()
             else {"verified": False}
         )
@@ -582,7 +597,11 @@ def _apply_final_upscale_to_inventory(
                 lambda: upscaler.upscale(input_path=input_path, output_path=output_path),
                 "final video upscale",
             )
-            verified = verifier(output_path=output_path, policy=policy)
+            verified = verifier(
+                output_path=output_path,
+                policy=policy,
+                expected_duration_sec=expected_duration,
+            )
         if not verified.get("verified"):
             raise RuntimeError(
                 "final upscale verification failed: "
@@ -650,13 +669,23 @@ def _autopilot_preflight(
         preflight_errors.append(f"supabase client: {exc}")
     if final_upscale_policy.enabled:
         try:
-            if final_upscaler_factory(final_upscale_policy) is None:
+            upscaler = final_upscaler_factory(final_upscale_policy)
+            if upscaler is None:
                 preflight_errors.append(
                     "final upscale is enabled but no upscaler is configured "
                     "(set PGC_WAVESPEED_UPSCALE_COMMAND)"
                 )
+            else:
+                # Deep config check (2026-06-10 review fix): constructing the
+                # wrapper only proves the command string exists. When the
+                # upscaler supports --preflight, run it so a missing
+                # WAVESPEED_API_KEY or Supabase storage credential (even one
+                # inside the command's own --env file) fails the batch here.
+                preflight_fn = getattr(upscaler, "preflight", None)
+                if callable(preflight_fn):
+                    preflight_fn()
         except Exception as exc:
-            preflight_errors.append(f"final upscaler: {exc}")
+            preflight_errors.append(f"final upscaler preflight: {exc}")
     receipt["preflight"] = {
         "status": "failed" if preflight_errors else "passed",
         "checked_at": utc_now_iso(),
@@ -1102,8 +1131,17 @@ def resume_batch(
         raise ValueError(f"not a PGC batch run receipt: {receipt_path}")
     request = receipt.get("request") or {}
     production_autopilot = str(request.get("mode") or "") == "production_autopilot"
+    # Derive defaults exactly like the original run did: a receipt whose
+    # source policy is transition_low_res_only but which lacks an explicit
+    # final_upscale_policy must still REQUIRE upscale on resume (review
+    # fix 2026-06-10 — older/partial receipts would otherwise resume
+    # without the mandatory upscale gate).
+    resolved_source_policy = normalize_source_resolution_policy(
+        (request.get("filters") or {}).get("source_resolution_policy"),
+    )
     resolved_final_upscale_policy = normalize_final_upscale_policy(
         (request.get("filters") or {}).get("final_upscale_policy"),
+        source_policy_mode=resolved_source_policy.mode,
     )
     output_root = str(request.get("output_root") or receipt_file.parent)
     resolved_handoff_dir = handoff_dir or os.path.join(output_root, "handoff")
