@@ -140,6 +140,45 @@ def top_k(
     return top_k_by_vector(query_vecs[0], clip_metadata, k=k)
 
 
+def rank_per_query(
+    queries: list[str],
+    clip_metadata: list[dict],
+    *,
+    embed_query_fn: Optional[EmbedQueryFn] = None,
+) -> list[list[tuple[str, float]]]:
+    """翻转二 B2 — full ranked candidates PER query (one list per beat).
+
+    Unlike ``union_of_top_k`` (which feeds Gemini #2 a deduped id pool),
+    the packer needs every beat's own ranking WITH scores so it can walk
+    down the list applying house rules (no reuse, duration coverage,
+    window rotation, adjacency penalty). Returns, for each query, the
+    complete ``[(clip_id, cosine_similarity), ...]`` ordering over the
+    pool — the packer does its own filtering, so no k-truncation here.
+
+    Queries are embedded in ONE batched ``embed_query_fn`` call.
+    **No memoization** (same F3/stateless rationale as the rest of this
+    module — and the packer may re-plan beats after a seatbelt stretch).
+    """
+    if not clip_metadata:
+        raise ValueError("clip_metadata is empty — no pool to retrieve from")
+    if not queries:
+        raise ValueError("queries is empty — beat planner emits ≥1 beat per segment")
+
+    embed_fn = embed_query_fn or _default_embed_query_fn
+    query_vecs = embed_fn(queries)
+    if len(query_vecs) != len(queries):
+        raise RuntimeError(
+            f"embed_query_fn returned {len(query_vecs)} vectors "
+            f"for {len(queries)} queries"
+        )
+
+    ids, matrix = _extract_clip_vectors(clip_metadata)
+    return [
+        _cosine_rank(np.asarray(qvec, dtype=np.float32), matrix, ids)
+        for qvec in query_vecs
+    ]
+
+
 def union_of_top_k(
     narration_queries: list[str],
     clip_metadata: list[dict],
