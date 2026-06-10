@@ -1,6 +1,6 @@
 # PGC Pipeline 下一阶段路线图(2026-06)
 
-> **新 session 自举(60 秒)**:① 读本文件(重点:§执行日志 最后一天 + §翻转二);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文。**已完成勿重做**:第一二梯队全部落地;翻转一(轻量版)已实现并实战验证(per-step flush + timings + `--resume`),不需要再"实现翻转一"。**当前最大未做项**:尾巴流水线化(timings 数据已到手:upscale ~700s > render ~450s)和 翻转二(beat planner + packer,F3 触发率首样本 50%)。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
+> **新 session 自举(60 秒)**:① 读本文件(重点:§执行日志 最后一天 + §翻转二);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文;④ **已完成项的工作原理在根目录 `LEARNING.md`**(给 Leo 的学习手册,含 receipt 实时机制、resume 决策表、速度经济学)。**已完成勿重做**:第一二梯队全部落地;翻转一(轻量版)已实现并实战验证(per-step flush + timings + `--resume`),不需要再"实现翻转一"。**当前最大未做项**:尾巴流水线化(timings 数据已到手:upscale ~700s > render ~450s)和 翻转二(beat planner + packer,F3 触发率首样本 50%)。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
 
 **写作日期**: 2026-06-09
 **当前 main HEAD**: `4453d78`(F3 split-repair 止血已落地)
@@ -56,7 +56,9 @@
 
 ---
 
-## 2. 第一梯队:止损修复(全部 S,合计约 2-3 天)
+## 2. 第一梯队:止损修复 — ✅ 全部完成(2026-06-09 落地,06-10 生产实证)
+
+> 下表保留当时的问题诊断作历史记录;**每项怎么修的、修完怎么运作,看 `LEARNING.md` 对应章节**(#1→§3、#2→§4、#3→§6、#4→§5、#5→§1、#6→§7、#7→§8)。
 
 | # | 修复 | 证据 | 收益 |
 |---|------|------|------|
@@ -70,11 +72,12 @@
 
 ## 3. 第二梯队(M)
 
-1. **Receipt resume/top-up**(= 翻转一落地)——最大 scaling 阻塞,4 个扫描视角独立命中,receipt 自己在 `implementation_gaps` 里承认。
-2. **Revert/smoke cleanup 产品化**:现在是 agent 对 prod 手写裸 SQL(SKILL.md:456-460),做成 dry-run 默认的 `promo.cli.revert_usage`。
-3. **批次流水线化**(render CPU-bound ‖ autopilot 尾巴网络-bound,估省 25-40% wall-clock)——先做 #5 装表实测,再注意 `plan_batch_items` 需改 POI round-robin(同 POI 因 usage 顺序不能重叠)。
-4. **720p 渲染 + 真超分 A/B**(一个下午):现在是 720 素材拉伸到 1080 再让 WaveSpeed"增强"已拉伸像素;改 720 渲染(像素减半更快)+ WaveSpeed 真 720→1080,看字幕是否劣化。
+1. ✅ **Receipt resume/top-up**(= 翻转一落地)——已完成并实战验证(skip/re-render 路径;tail-only 待真实尾部失败时毕业考)。原理:`LEARNING.md` §2。
+2. ✅ **Revert/smoke cleanup 产品化**:`promo.cli.revert_usage` 已落地(dry-run 默认 / distribution 一票否决)。原理:`LEARNING.md` §10。
+3. 🔜 **批次流水线化(优先级上调)**:2026-06-10 实测尾巴(upscale ~700s)**比渲染(~450s)还长**——重叠后批次 wall-clock 近乎砍半,不再是估算。前置:`plan_batch_items` 改 POI round-robin(同 POI 因 usage 顺序不能重叠)。
+4. **720p 渲染 + 真超分 A/B**(低优先,过渡期限定):现状是 720 素材拉伸到 1080 再让 WaveSpeed"精修拉伸像素";实验 = 720 渲染(像素减半)+ WaveSpeed 真 720→1080。**注意经济学**:upscale 这 700s 是"过渡期税",素材库有原生 1080 后强制 upscale 自动消失、整体变快——这个实验届时作废,所以只在过渡期还要持续很久时才值得做。详见 `LEARNING.md` §11。
 5. **S5 测试解耦**(见 BACKLOG.md):测试 monkeypatch 内部符号 → "改内部就崩测试",这是"以后自己改起来费劲"的真正元凶。
+6. **ffmpeg vs Remotion 调研**(过渡期后的问题):upscale 消失后渲染(450s)重新成为最大头,届时换引擎才真正值钱;但 Remotion 承担字幕/排版,迁移是大重写 → 先调研收益与成本,不预设结论。
 
 ---
 
