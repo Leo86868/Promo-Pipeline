@@ -213,12 +213,18 @@ This derives `final_upscale_policy.required=true` by default. Configure the
 runtime runner before live transition production:
 
 ```text
-PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env'
+PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env --source-host supabase'
 ```
 
-The env file must provide `WAVESPEED_API_KEY`. If this command is missing,
-production autopilot must fail before Drive/usage/release rather than hand off a
-raw low-res-source render.
+The env file must provide `WAVESPEED_API_KEY`, and the process env (or the same
+env file) must provide `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — the
+WaveSpeed source upload stages the master in a private Supabase Storage bucket
+behind a time-limited signed URL (2026-06-09 fix; unreleased masters must NOT
+transit public temp hosts). `--source-host supabase` is REQUIRED in production:
+it fails closed when Supabase credentials are missing instead of silently
+falling back to public temp hosts (`auto`/`temp` are for local smoke only).
+If this command is missing, production autopilot must fail before
+Drive/usage/release rather than hand off a raw low-res-source render.
 
 This is the current structured production path. The skill translates Leo's
 natural-language request into these flags; the repo does not parse English.
