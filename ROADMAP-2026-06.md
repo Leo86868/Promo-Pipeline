@@ -128,3 +128,25 @@
 1. 过手即终态:碰哪个模块,留下新模块 + 测试 + 该目录 `architecture.md` 更新;
 2. 外壳接口冻结:SKILL.md 用法、CLI 参数、Supabase schema、receipt 字段、Drive 目录——改 core 不改契约;
 3. 一切提速/换模型决策先看数据(receipt 时间戳、`F3 split-repair` 频率),不拍脑袋。
+
+---
+
+## 执行日志
+
+### 2026-06-09
+
+- `4453d78` F3 split-repair 止血落地(时长违规 phrase 词边界拆分,替代 script+TTS 重生成)。
+- 37-agent 全库深扫 → 31 条发现全部独立复核,本路线图据此成稿。
+- 第一梯队全部落地:`3c97dd1` WaveSpeed 私有桶+prediction 续传;`e80316d` 4xx fail-fast + TTS 重试;`af45192` 分页稳定排序;`8e1323d` preflight + 阶段时间戳 + 每步落盘 + 音乐全池轮换。
+
+### 2026-06-10
+
+- `2951adc` `run_batch --resume`(skip/tail-only/re-render 三分;tail 沿用原 manifest 防 usage 双记);`f6e72b3` review 加固(验证器查时长+音轨、resume 策略推导、真 preflight、upscale 回执留痕);`39caa85` `promo.cli.revert_usage`(dry-run 默认,distribution 一票否决,候选只标 rejected 永不删)。
+- 与 AIGC 侧核实闭环:usage events **已**持久化窗口四字段(3,343 行完整);PGC trim 恒 0(去重风险现在进行时);music remix 是无状态散列、跨批次确定性复读,非可抄先例 → PGC packer 将是窗口查询的家族标准。中台零改动。
+- **部署 + 实战验证**:推送至 origin;VPS worktree `main_20260610T044026Z_hardened`(39caa85);storage 上传/签名/删除 live 往返通过;hardened smoke(2 POI × 1,production autopilot)双双 `complete`。
+  - **split-repair 生产首秀**:7.63s vs 7.04s 违规被拆分修复,视频走完全链(首样本 2 条中 1 条触发——beat planner 重构的第一个硬数据点);
+  - **resume 实战**:skip 与 re-render 路径验证通过(1 skip / 1 re-render → 全 complete);**tail-only 路径仅有单测覆盖,待下次真实尾部失败完成实战**;
+  - **timings 第一课**:upscale ~700s **>** 渲染 ~430-490s,尾巴流水线化收益高于预估,优先级上调;
+  - 部署教训:新 worktree 必须 `npm install`(promo/remotion/),应进部署清单。
+- 当前状态:main = `39caa85` 已推送并部署;696 tests passed。
+- 下一步候选(按数据就绪度):尾巴流水线化(timings 已到手)> 720p 真超分 A/B > beat planner + packer(F3 触发率持续积累中,窗口数据已就绪)。
