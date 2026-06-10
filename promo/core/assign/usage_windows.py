@@ -103,6 +103,7 @@ def fetch_used_windows(
 
     windows: dict[str, list[UsedWindow]] = {}
     malformed = 0
+    stale = 0
     for row in rows:
         try:
             asset_id = str(row["asset_id"])
@@ -114,14 +115,31 @@ def fetch_used_windows(
         if display_len <= 0:
             malformed += 1
             continue
+        start = max(0.0, trim)
+        end = start + display_len
+        # Clamp to the ROW's recorded source duration (2026-06-10 review
+        # blocking #2): a ledger window beyond the current source length
+        # (re-encoded/stale asset) must not survive into gap math, where
+        # it would manufacture a false free window and kill the video at
+        # the validator. Fully out-of-range rows are stale, not usage.
+        try:
+            src = float(row["source_duration_sec"])
+        except (KeyError, TypeError, ValueError):
+            src = None
+        if src is not None and src > 0:
+            start = min(start, src)
+            end = min(end, src)
+            if end - start <= 0:
+                stale += 1
+                continue
         windows.setdefault(asset_id, []).append(
-            UsedWindow(start_sec=max(0.0, trim), end_sec=max(0.0, trim) + display_len)
+            UsedWindow(start_sec=start, end_sec=end)
         )
-    if malformed:
+    if malformed or stale:
         logger.warning(
-            "usage window ledger: skipped %d row(s) with missing/invalid "
-            "window fields (pre-migration-036 residue?)",
-            malformed,
+            "usage window ledger: skipped %d malformed row(s) and %d stale "
+            "row(s) whose window lies beyond the recorded source duration",
+            malformed, stale,
         )
     return {aid: merge_windows(ws) for aid, ws in windows.items()}
 
@@ -157,9 +175,16 @@ def free_windows(
     gaps: list[UsedWindow] = []
     cursor = 0.0
     for w in used:
-        if w.start_sec - cursor >= min_len_sec:
-            gaps.append(UsedWindow(cursor, min(w.start_sec, source_duration_sec)))
-        cursor = max(cursor, w.end_sec)
+        # Clamp BEFORE the length test (2026-06-10 review blocking #2):
+        # judging the gap by the unclamped window start let a stale
+        # ledger window beyond the source (e.g. [6,7) on a 5s clip)
+        # certify a 1.5s tail as a 2s free window — the packer would
+        # place a span there and the validator would kill the video.
+        w_start = min(max(0.0, w.start_sec), source_duration_sec)
+        w_end = min(max(0.0, w.end_sec), source_duration_sec)
+        if w_start - cursor >= min_len_sec:
+            gaps.append(UsedWindow(cursor, w_start))
+        cursor = max(cursor, w_end)
         if cursor >= source_duration_sec:
             return gaps
     if source_duration_sec - cursor >= min_len_sec:

@@ -45,8 +45,10 @@ randomness — same inputs, same output, forever.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
+from promo.core.assign.beat_planner import DEFAULT_MAX_BEAT_SEC
 from promo.core.assign.clip_assignment_validator import HARD_CONSTRAINT_TOL_SEC
 from promo.core.assign.usage_windows import UsedWindow, free_windows
 from promo.core.errors import ClipAssignmentError
@@ -122,8 +124,10 @@ def pack_clips(
     """Pick one clip per beat. Returns ``(raw_assignments, provenance)``.
 
     ``used_windows`` keys by asset_id (``usage_windows.fetch_used_windows``);
-    ``clip_to_asset`` maps local clip ids to platform asset ids — clips
-    without a mapping (local dev) are treated as never shown.
+    ``clip_to_asset`` maps local clip ids to platform asset ids — its keys
+    MUST be ``zfill(4)``-normalized (the caller's contract; ``_assign_
+    clips_packer`` normalizes when building it). Clips without a mapping
+    (local dev) are treated as never shown.
 
     Raises :class:`ClipAssignmentError` when a beat has no candidate
     passing rules 1-2 — given the selection gate + beat seatbelt this
@@ -227,10 +231,13 @@ def pack_clips(
             "end_word_idx": int(beat["end_word_idx"]),
             "trim_start": round(float(chosen["trim"]), 3),
         })
+        score = float(chosen["score"])
         provenance["picks"].append({
             "beat": beat_i,
             "clip_id": chosen["clip_id"],
-            "score": round(float(chosen["score"]), 4),
+            # -inf cosine scores (zero-norm embeddings) would serialize as
+            # `-Infinity` — invalid JSON for the sidecar. None instead.
+            "score": round(score, 4) if math.isfinite(score) else None,
             "trim_start": round(float(chosen["trim"]), 3),
             "window_exhausted": chosen["exhausted"],
         })
@@ -240,4 +247,10 @@ def pack_clips(
     # production data answer how much faster the 3-use caps fill up.
     provenance["beat_count"] = len(beats)
     provenance["unique_clip_count"] = len(seen)
+    # Review blocking #3 companion: over-ceiling beats (long authored
+    # pauses / seatbelt stretch) are visible in the sidecar, not just logs.
+    provenance["overlong_beats"] = [
+        i for i, s in enumerate(spans)
+        if s > DEFAULT_MAX_BEAT_SEC + HARD_CONSTRAINT_TOL_SEC
+    ]
     return assignments, provenance

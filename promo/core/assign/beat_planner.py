@@ -1,11 +1,16 @@
 """翻转二 B1 — deterministic visual-beat planner (no LLM).
 
 Replaces Gemini #2's phrase segmentation with pure timestamp math: split
-each script segment's narration into "beats" of at most ``max_beat_sec``
-of display time. Because clip sources are ≥5s and beats are ≤4s, the
+each script segment's narration into "beats" targeting at most
+``max_beat_sec`` of display time. With clip sources ≥5s and beats ≤4s the
 duration hard-constraint that drives ``ClipAssignmentError`` (and the F3
-script-regen / split-repair machinery) becomes structurally unsatisfiable
-— any clip covers any beat.
+script-regen / split-repair machinery) loses its normal failure mode.
+NOT absolutely, though (2026-06-10 review blocking #3): a beat's span
+includes the authored pause that follows it, and production allows
+pauses up to ~7s — a 6.5s beat is legal output. Such beats are flagged
+loudly (WARNING here, ``overlong_beats`` in packer provenance) so the
+packer's need for a longer clip is visible instead of silent; there is
+no F3 fallback on this path.
 
 Splitting strategy (SEMANTIC-FIRST, 2026-06-10 review revision): cuts
 follow the breath of the narration, not a metronome.
@@ -37,12 +42,16 @@ beat's first word's start in emission order; the very last beat runs to
 Inter-segment authored silence is therefore naturally charged to the
 last beat of each segment, exactly as the validator charges phrases.
 
-Seatbelt (设计契约 #3, 2026-06-10): the POI selection gate
-(50 + 10×extra active assets) already guarantees pool ≫ beat count for
-selected batches; ``max_beats`` exists only for hand-built batches that
-bypass the gate. When the semantic plan exceeds it, beat length is
-stretched (``total_span / max_beats``) and the floor raised so merging
-gets aggressive enough to fit.
+Seatbelt (设计契约 #3, 2026-06-10; rewritten after review blocking #1):
+the POI selection gate (50 + 10×extra active assets) already guarantees
+pool ≫ beat count for selected batches; ``max_beats`` exists only for
+hand-built batches that bypass the gate. A uniform length stretch is
+NOT a guarantee — per-segment ceil rounding defeats it (counterexample:
+segment windows [7,1,1]s, max_beats=3 → stretched ceiling 3s still
+gives the 7s segment 2+ beats = 4 total). The seatbelt therefore
+allocates the budget across segments explicitly (largest-remainder by
+span, floor 1 each) and grid-splits each segment into exactly its
+allocation, then fail-louds on a post-check that should be unreachable.
 
 Word indices are GLOBAL into ``word_timestamps`` and segment word ranges
 are derived from ``len(segment.text.split())`` — byte-for-byte the same
@@ -52,9 +61,12 @@ beats always satisfy the validator's tiling invariant by construction.
 
 from __future__ import annotations
 
+import logging
 import math
 
 from promo.core.schema import Script, WordTimestamp
+
+logger = logging.getLogger(__name__)
 
 # Hard ceiling. Clips are ≥5s; 4s keeps a ≥1s trim window free for the
 # packer's source-window rotation even on the shortest clips.
@@ -127,6 +139,31 @@ def _pick_boundary(
     return nearest
 
 
+def _grid_starts(
+    lo: int,
+    hi: int,
+    t_lo: float,
+    t_next: float,
+    n: int,
+    word_timestamps: list[WordTimestamp],
+    punct_after: set[int],
+) -> list[int]:
+    """Split ``[lo, hi]`` into (at most) ``n`` beats on the equal-time
+    grid; word granularity may yield fewer, never more."""
+    starts = [lo]
+    span = t_next - t_lo
+    for k in range(1, n):
+        grid_t = t_lo + span * k / n
+        cand_lo = starts[-1] + 1
+        cand_hi = hi - (n - k) + 1
+        if cand_lo > cand_hi:
+            break  # word granularity exhausted
+        starts.append(
+            _pick_boundary(grid_t, cand_lo, cand_hi, word_timestamps, punct_after)
+        )
+    return starts
+
+
 def _plan_segment(
     lo: int,
     hi: int,
@@ -181,20 +218,17 @@ def _plan_segment(
         b_next_idx = starts[bi + 1] if bi + 1 < len(starts) else None
         b_end_t = start_t(b_next_idx) if b_next_idx is not None else t_next
         b_hi = (b_next_idx - 1) if b_next_idx is not None else hi
-        final.append(bstart)
         span = b_end_t - start_t(bstart)
         if span <= max_beat_sec:
+            final.append(bstart)
             continue
         n = min(math.ceil(span / max_beat_sec), b_hi - bstart + 1)
-        for k in range(1, n):
-            grid_t = start_t(bstart) + span * k / n
-            cand_lo = final[-1] + 1
-            cand_hi = b_hi - (n - k) + 1
-            if cand_lo > cand_hi:
-                break  # word granularity exhausted
-            final.append(
-                _pick_boundary(grid_t, cand_lo, cand_hi, word_timestamps, punct_after)
+        final.extend(
+            _grid_starts(
+                bstart, b_hi, start_t(bstart), b_end_t, n,
+                word_timestamps, punct_after,
             )
+        )
     return final
 
 
@@ -223,6 +257,10 @@ def plan_beats(
         )
     if max_beats is not None and max_beats <= 0:
         raise ValueError(f"max_beats must be positive (got {max_beats})")
+    if not script.get("segments"):
+        raise ValueError("script has no segments — cannot plan beats")
+    if not word_timestamps:
+        raise ValueError("word_timestamps is empty — cannot plan beats")
     ranges = _segment_word_ranges(script, word_timestamps)
     if max_beats is not None and max_beats < len(ranges):
         raise ValueError(
@@ -268,11 +306,71 @@ def plan_beats(
 
     beats = _plan_all(max_beat_sec, min_beat_sec)
     if max_beats is not None and len(beats) > max_beats:
-        # Seatbelt: stretch the ceiling and raise the floor so merging
-        # becomes aggressive enough for the count to fit the pool.
-        total_span = sum(t1 - t0 for t0, t1 in seg_windows)
-        eff_max = max(max_beat_sec, total_span / max_beats)
-        beats = _plan_all(eff_max, eff_max / 2.0)
+        # Seatbelt (review blocking #1 rewrite): explicit per-segment
+        # budget allocation — largest remainder by span, floor 1 each —
+        # then exact grid splits. A uniform length stretch cannot
+        # guarantee the count (per-segment ceil rounding; see module
+        # docstring counterexample [7,1,1]×3).
+        spans_w = [t1 - t0 for t0, t1 in seg_windows]
+        total = sum(spans_w)
+        spare = max_beats - len(ranges)
+        shares = [
+            (spare * s / total) if total > 0 else 0.0 for s in spans_w
+        ]
+        alloc = [1 + int(share) for share in shares]
+        leftover = max_beats - sum(alloc)
+        if leftover > 0:
+            by_remainder = sorted(
+                range(len(shares)),
+                key=lambda i: shares[i] - int(shares[i]),
+                reverse=True,
+            )
+            for idx in by_remainder[:leftover]:
+                alloc[idx] += 1
+        beats = []
+        for seg_pos, ((lo, hi), (t_lo, t_next), n) in enumerate(
+            zip(ranges, seg_windows, alloc), start=1,
+        ):
+            starts = _grid_starts(
+                lo, hi, t_lo, t_next, min(n, hi - lo + 1),
+                word_timestamps, punct_after,
+            )
+            for j, start_idx in enumerate(starts):
+                end_idx = (starts[j + 1] - 1) if j + 1 < len(starts) else hi
+                beats.append(Beat(
+                    segment=seg_pos,
+                    start_word_idx=start_idx,
+                    end_word_idx=end_idx,
+                ))
+        if len(beats) > max_beats:
+            # Post-check is load-bearing: a silent overshoot starves the
+            # packer's unique-clip pool downstream. Should be unreachable.
+            raise RuntimeError(
+                f"beat seatbelt failed: planned {len(beats)} beats for "
+                f"max_beats={max_beats} — planner bug, refusing to continue"
+            )
+
+    # Review blocking #3: over-long beats are legal (a beat's span eats
+    # the authored pause after it; production pauses reach ~7s) but must
+    # be LOUD — there is no F3 fallback on this path, and the packer
+    # needs a longer-than-usual clip to cover them.
+    overlong: list[float] = []
+    for i, beat in enumerate(beats):
+        t0 = float(word_timestamps[int(beat["start_word_idx"])]["start"])
+        t1 = (
+            float(word_timestamps[int(beats[i + 1]["start_word_idx"])]["start"])
+            if i + 1 < len(beats)
+            else narration_end
+        )
+        if t1 - t0 > max_beat_sec + 0.05:
+            overlong.append(t1 - t0)
+    if overlong:
+        logger.warning(
+            "beat planner: %d beat(s) exceed the %.1fs ceiling (longest "
+            "%.2fs) — long authored pauses or seatbelt stretch; the packer "
+            "needs clips long enough to cover them",
+            len(overlong), max_beat_sec, max(overlong),
+        )
     return beats
 
 

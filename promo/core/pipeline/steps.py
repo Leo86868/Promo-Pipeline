@@ -514,9 +514,11 @@ def _step_assign_clips(
 
     # 翻转二 B5 — PROMO_CLIP_ASSIGNER=packer routes to the deterministic
     # chain (beat planner → per-beat retrieval → packer → same validator).
-    # No F3 machinery: beats ≤4s vs clips ≥5s makes the duration
-    # hard-constraint structurally unsatisfiable, so there is nothing for
-    # a script-regen retry to fix.
+    # No F3 machinery: with beats targeting ≤4s vs clips ≥5s the duration
+    # hard-constraint loses its normal failure mode — though long authored
+    # pauses can still produce over-ceiling beats, which surface loudly
+    # (planner WARNING + provenance["packer"]["overlong_beats"]) instead
+    # of being retried.
     if promo_config.clip_assigner() == "packer":
         return _assign_clips_packer(
             script,

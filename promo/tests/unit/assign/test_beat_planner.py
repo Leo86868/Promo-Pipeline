@@ -219,3 +219,122 @@ def test_planned_beats_pass_the_production_validator():
     enriched = _enforce_hard_constraint_and_enrich(raw, script, wts, clip_durations)
     assert len(enriched) == len(beats)
     assert all(e["display_span_sec"] <= 5.0 for e in enriched)
+
+
+# --- 2026-06-10 review blockings -------------------------------------------
+
+
+def test_seatbelt_reviewer_counterexample_7_1_1():
+    """Blocking #1: segment windows [7,1,1]s with max_beats=3. A uniform
+    stretch (total 9s / 3 = 3s ceiling) still hands the 7s segment
+    ceil(7/3)=3 beats → 5 total; the original ×1 stretch gave 4. The
+    allocation seatbelt must produce EXACTLY ≤ 3."""
+    wts = (
+        _uniform_words(14, word_sec=0.5)                 # seg1: 7.0s
+        + _uniform_words(2, word_sec=0.5, start=7.0)     # seg2: 1.0s
+        + _uniform_words(2, word_sec=0.5, start=8.0)     # seg3: 1.0s
+    )
+    script = _script(
+        " ".join(f"a{i}" for i in range(14)),
+        "b0 b1",
+        "c0 c1",
+    )
+    assert len(plan_beats(script, wts)) > 3  # unconstrained plan is bigger
+    beats = plan_beats(script, wts, max_beats=3)
+    assert len(beats) <= 3
+    # Tiling survives the seatbelt path.
+    by_seg = {}
+    for b in beats:
+        by_seg.setdefault(b["segment"], []).append(b)
+    assert by_seg[1][0]["start_word_idx"] == 0
+    assert by_seg[1][-1]["end_word_idx"] == 13
+    assert by_seg[2][0]["start_word_idx"] == 14
+    assert by_seg[3][-1]["end_word_idx"] == 17
+
+
+def test_overlong_beat_warns_loudly(caplog):
+    """Blocking #3: a long authored pause (production allows ~7s) makes
+    the segment's last beat exceed the ceiling with no word boundary to
+    split at — legal output, but it must WARN, never pass silently."""
+    import logging
+
+    wts = _uniform_words(5) + _uniform_words(5, start=8.5)  # 6.5s pause gap
+    script = _script("a b c d e", "f g h i j")
+    with caplog.at_level(logging.WARNING, logger="promo.core.assign.beat_planner"):
+        beats = plan_beats(script, wts)
+    spans = _beat_spans(beats, wts)
+    assert max(spans) > DEFAULT_MAX_BEAT_SEC  # the over-ceiling beat exists
+    assert any("exceed" in rec.message for rec in caplog.records)
+
+
+def test_empty_inputs_raise():
+    with pytest.raises(ValueError, match="no segments"):
+        plan_beats({"segments": []}, _uniform_words(1))
+    with pytest.raises(ValueError, match="word_timestamps is empty"):
+        plan_beats(_script("a b"), [])
+
+
+def test_fuzz_realistic_shapes_hold_invariants():
+    """Both review rounds asked for real-shape bombardment: seeded-random
+    narrations (varied word lengths, punctuation, pauses up to 7s,
+    occasional max_beats) must always tile, respect max_beats, stay
+    deterministic, and sail through the production validator given a
+    big-enough pool of long clips."""
+    import random
+
+    from promo.core.assign.clip_assignment_validator import (
+        _enforce_hard_constraint_and_enrich,
+    )
+
+    rng = random.Random(20260610)
+    for _ in range(150):
+        n_segments = rng.randint(1, 6)
+        tokens_per_seg, texts, wts = [], [], []
+        t = 0.0
+        for s in range(n_segments):
+            n_words = rng.randint(3, 40)
+            toks = []
+            for w in range(n_words):
+                tok = f"s{s}w{w}"
+                if rng.random() < 0.15:
+                    tok += rng.choice([",", ".", "!", ";"])
+                dur = rng.uniform(0.15, 0.6)
+                wts.append({"word": tok, "start": round(t, 3),
+                            "end": round(t + dur, 3)})
+                t += dur
+                toks.append(tok)
+            texts.append(" ".join(toks))
+            tokens_per_seg.append(n_words)
+            t += rng.uniform(0.0, 7.0)  # authored pause, production-real
+        script = _script(*texts)
+
+        max_beats = None
+        if rng.random() < 0.4:
+            max_beats = rng.randint(n_segments, n_segments + 10)
+        beats = plan_beats(script, wts, max_beats=max_beats)
+
+        assert beats == plan_beats(script, wts, max_beats=max_beats)  # deterministic
+        if max_beats is not None:
+            assert len(beats) <= max_beats
+        # Tiling: contiguous per segment, exact coverage.
+        cursor = 0
+        by_seg = {}
+        for b in beats:
+            by_seg.setdefault(b["segment"], []).append(b)
+        for seg_pos, n_words in enumerate(tokens_per_seg, start=1):
+            seg_beats = by_seg[seg_pos]
+            assert seg_beats[0]["start_word_idx"] == cursor
+            for prev, nxt in zip(seg_beats, seg_beats[1:]):
+                assert nxt["start_word_idx"] == prev["end_word_idx"] + 1
+            cursor += n_words
+            assert seg_beats[-1]["end_word_idx"] == cursor - 1
+        # Production validator accepts the plan with unique long clips.
+        durations = {f"{i:04d}": 60.0 for i in range(1, len(beats) + 1)}
+        raw = [
+            {"segment": b["segment"], "clip_id": f"{i:04d}",
+             "start_word_idx": b["start_word_idx"],
+             "end_word_idx": b["end_word_idx"], "trim_start": 0.0}
+            for i, b in enumerate(beats, start=1)
+        ]
+        enriched = _enforce_hard_constraint_and_enrich(raw, script, wts, durations)
+        assert len(enriched) == len(beats)

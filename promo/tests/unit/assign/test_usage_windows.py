@@ -121,3 +121,27 @@ def test_free_windows_returns_usable_gaps_only():
     assert free_windows(8.0, [], min_len_sec=2.0) == [UsedWindow(0.0, 8.0)]
     # Exhausted clip: no gap long enough.
     assert free_windows(5.0, [UsedWindow(0.0, 4.5)], min_len_sec=2.0) == []
+
+
+# --- 2026-06-10 review blocking #2 ------------------------------------------
+
+
+def test_free_windows_clamps_stale_window_before_length_test():
+    """Reviewer counterexample: a stale ledger window beyond the source
+    ([6,7) on a 5s clip) must not certify the 1.5s tail after [3.5,4.5)
+    as a ≥2s free window — the packer would place a 2s span at trim 3.5
+    and the validator would kill the video."""
+    used = [UsedWindow(3.5, 4.5), UsedWindow(6.0, 7.0)]
+    gaps = free_windows(5.0, used, min_len_sec=2.0)
+    assert gaps == [UsedWindow(0.0, 3.5)]  # no false 1.5s "2s window"
+
+
+def test_fetch_clamps_windows_to_row_source_duration():
+    rows = [
+        # Stale: window entirely beyond the current 5s source → skipped.
+        _row("asset_a", 6.0, 0.0, 1.0, src=5.0),
+        # Overhanging: [4.0, 7.0) clamps to [4.0, 5.0).
+        _row("asset_a", 4.0, 0.0, 3.0, src=5.0),
+    ]
+    out = fetch_used_windows(_FakeClient(rows), ["asset_a"])
+    assert out == {"asset_a": [UsedWindow(4.0, 5.0)]}
