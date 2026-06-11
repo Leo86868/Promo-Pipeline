@@ -474,6 +474,20 @@ def _add_quarantined_poi(
     })
 
 
+def _reject_sticky_replay_env() -> None:
+    """Refuse batch work while PROMO_REPLAY_SCRIPT is set (2026-06-11
+    review bug ②): the env var is inherited by every compile subprocess,
+    so a forgotten A/B switch would render ONE script for every POI in
+    the batch — whole batch wasted, no guard would catch it. Replay is a
+    single-video compile_promo affair only."""
+    if os.environ.get("PROMO_REPLAY_SCRIPT", "").strip():
+        raise ValueError(
+            "PROMO_REPLAY_SCRIPT is set — a batch would replay one recorded "
+            "script for EVERY video. Unset it; replay is for single "
+            "compile_promo A/B renders only."
+        )
+
+
 def _item_poi_key(item: BatchItem) -> str:
     return item.poi.poi_id or item.poi.canonical_key or item.poi.name
 
@@ -946,6 +960,7 @@ def run_batch(
         raise ValueError("run_batch currently supports --jobs 1 only")
     if tail_workers < 0:
         raise ValueError("tail_workers must be >= 0 (0 = serial tail)")
+    _reject_sticky_replay_env()
 
     spec = load_batch_spec(batch_path)
     selection_metadata = spec.get("selection") if isinstance(spec.get("selection"), dict) else None
@@ -1243,6 +1258,7 @@ def resume_batch(
     fresh chance per resume; the cleared list is archived under
     ``resume_history``.
     """
+    _reject_sticky_replay_env()
     receipt_file = Path(receipt_path)
     try:
         receipt = json.loads(receipt_file.read_text(encoding="utf-8"))

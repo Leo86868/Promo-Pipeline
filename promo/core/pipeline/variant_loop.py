@@ -310,6 +310,9 @@ def _run_variant_loop(
             # without a side-channel for the per-variant duration.
             "target_duration_sec": variant_target_duration,
             "format_mode": script.get("format_mode"),
+            # Review bug ② (2026-06-11): a replayed render must declare
+            # itself in its own records — None for normal generation.
+            "replayed_from": script.get("replay_source"),
             # 翻转二 B6 — the FINAL accepted script rides with its
             # assignments so a later run can replay it verbatim
             # (`compile_promo --replay-script`): same-script A/B holds the

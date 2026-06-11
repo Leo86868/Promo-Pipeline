@@ -108,9 +108,9 @@ def load_replay_script(path: str, *, n_variants: int = 1) -> dict:
                 "predates script recording (2026-06-11); re-render the "
                 "source video on current code first"
             )
-        return script
+        return {**script, "_source_path": path}
     if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
-        return payload
+        return {**payload, "_source_path": path}
     raise ValueError(
         f"{path}: expected a clip_assignments sidecar or a "
         "{'segments': [...]} script JSON"
@@ -195,15 +195,24 @@ def _step_generate_script(
         segments = replay_script.get("segments")
         if not isinstance(segments, list) or not segments:
             raise ValueError("replay script has no segments")
+        replayed_segments = [dict(seg) for seg in segments]
+        # Recount word_count from the TEXT (2026-06-11 review bug ①): the
+        # pause budget estimates spoken duration from this label alone —
+        # a missing/stale label reads as a zero-word script and maxes
+        # every gap's silence, silently changing the B arm's pacing for
+        # reasons unrelated to clip selection (A/B invalidated).
+        for seg in replayed_segments:
+            seg["word_count"] = len(str(seg.get("text") or "").split())
         script: dict = {
             "variant_index": 1,
-            "segments": [dict(seg) for seg in segments],
-            "total_words": sum(
-                len(str(seg.get("text") or "").split()) for seg in segments
-            ),
+            "segments": replayed_segments,
+            "total_words": sum(seg["word_count"] for seg in replayed_segments),
             "format_mode": replay_script.get("format_mode"),
             "hook_technique": replay_script.get("hook_technique"),
             "target_duration_sec": target_duration_sec,
+            # Review bug ② companion: every downstream record of a replayed
+            # render declares itself (clip_assignments row picks this up).
+            "replay_source": replay_script.get("_source_path") or "replay",
         }
         logger.info(
             "Step 3: REPLAY script (%d segments, %d words) — Gemini #1 skipped",

@@ -132,3 +132,68 @@ def test_clip_assignments_row_records_script():
     source = inspect.getsource(variant_loop)
     assert '"script": {' in source
     assert "pause_weight" in source
+
+
+# --- 2026-06-11 review: A/B validity + sticky-switch interlock --------------
+
+
+def test_replay_recounts_word_count_for_pause_budget(monkeypatch):
+    """Bug ①: the pause budget estimates spoken time from segment
+    word_count labels ALONE — a replay without them reads as a zero-word
+    script and maxes every gap's silence, silently changing the B arm's
+    pacing. Replay must recount from text."""
+    from promo.core.script import script_generator
+
+    monkeypatch.setattr(
+        script_generator, "generate_script_variants",
+        lambda **kwargs: pytest.fail("Gemini #1 must not be called"),
+    )
+    replay = {
+        "segments": [
+            {"segment": 1, "text": "one two three four five", "pause_weight": 2},
+            {"segment": 2, "text": "six seven eight", "pause_weight": 1},
+        ],
+    }
+    scripts = _step_generate_script(
+        poi_name="Test Hotel", location="", clips_metadata=[],
+        n_variants=1, script_candidates=1, target_duration_sec=65.0,
+        hotel_description="", notable_details="",
+        wpm_search_dirs=[], resolved_voice_keys=["jarnathan"],
+        replay_script=replay,
+    )
+    assert [seg["word_count"] for seg in scripts[0]["segments"]] == [5, 3]
+    assert scripts[0]["replay_source"] == "replay"
+
+
+def test_loader_stamps_source_path(tmp_path):
+    f = tmp_path / "script.json"
+    f.write_text(json.dumps({
+        "segments": [{"segment": 1, "text": "a b", "pause_weight": 1}],
+    }), encoding="utf-8")
+    loaded = load_replay_script(str(f))
+    assert loaded["_source_path"] == str(f)
+
+
+def test_batch_refuses_sticky_replay_env(monkeypatch, tmp_path):
+    """Bug ②: a forgotten PROMO_REPLAY_SCRIPT would render ONE script for
+    every POI in the batch — run_batch and resume_batch fail loud at the
+    door instead."""
+    from promo.cli.run_batch import resume_batch, run_batch
+
+    monkeypatch.setenv("PROMO_REPLAY_SCRIPT", "/tmp/some_script.json")
+    batch = tmp_path / "batch.json"
+    batch.write_text(json.dumps({
+        "pois": [{"poi_id": "p1", "name": "X"}],
+        "videos_per_poi": 1,
+        "target_duration_sec": 65,
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="PROMO_REPLAY_SCRIPT"):
+        run_batch(
+            batch_path=str(batch), output_root=str(tmp_path / "out"),
+            command_runner=lambda c: pytest.fail("must not render"),
+        )
+    with pytest.raises(ValueError, match="PROMO_REPLAY_SCRIPT"):
+        resume_batch(
+            receipt_path=str(tmp_path / "missing.json"),
+            command_runner=lambda c: pytest.fail("must not render"),
+        )
