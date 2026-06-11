@@ -249,6 +249,7 @@ def full_pipeline(
     hotel_description: str = "",
     notable_details: str = "",
     seed: int | None = None,
+    replay_script: dict | None = None,
 ) -> bool:
     """Run the full promo pipeline end-to-end.
 
@@ -426,6 +427,7 @@ def full_pipeline(
                 variant_profiles=variant_profiles,
                 variant_personas=variant_personas,
                 asset_visual_brief=asset_visual_brief,
+                replay_script=replay_script,
             )
         except RuntimeError as exc:
             logger.error("Variant-pack generation failed: %s", exc)

@@ -97,10 +97,18 @@ def _step_generate_script(
     variant_profiles: list[PromoFormatProfile] | None = None,
     variant_personas: "list[NarratorPersona] | None" = None,
     asset_visual_brief: dict | None = None,
+    replay_script: dict | None = None,
 ) -> list[dict]:
     """Run Gemini #1 + resolve per-variant effective_wpm + apply
     compute_pause_budget on each accepted script. Returns ``scripts``
     with ``script["effective_wpm"]`` populated per variant.
+
+    翻转二 B6 — ``replay_script`` skips Gemini #1 entirely and feeds a
+    previously recorded script (the ``script`` field of a
+    ``clip_assignments_*.json`` variant row) through the SAME wpm
+    calibration + pause-budget loop below. Narration text is held
+    verbatim; pause_after_ms is recomputed. Requires ``n_variants == 1``
+    (a replay is one fixed script, not a variant pack).
 
     Sprint 10 C4: extraction of Step 3 from ``full_pipeline``. Scripts
     come back with ``pause_after_ms`` populated per segment but no clip
@@ -125,6 +133,33 @@ def _step_generate_script(
     from promo.core.narrate.tts_engine import VOICE_CATALOG
     from promo.core.script.script_generator import generate_script_variants
 
+    if replay_script is not None:
+        if n_variants != 1:
+            raise ValueError(
+                f"--replay-script requires n_variants=1 (got {n_variants})"
+            )
+        segments = replay_script.get("segments")
+        if not isinstance(segments, list) or not segments:
+            raise ValueError("replay script has no segments")
+        script: dict = {
+            "variant_index": 1,
+            "segments": [dict(seg) for seg in segments],
+            "total_words": sum(
+                len(str(seg.get("text") or "").split()) for seg in segments
+            ),
+            "format_mode": replay_script.get("format_mode"),
+            "hook_technique": replay_script.get("hook_technique"),
+            "target_duration_sec": target_duration_sec,
+        }
+        logger.info(
+            "Step 3: REPLAY script (%d segments, %d words) — Gemini #1 skipped",
+            len(script["segments"]), script["total_words"],
+        )
+        scripts = [script]
+        # Fall through to the shared wpm + pause-budget loop below.
+    else:
+        scripts = None  # populated by generation just after the log lines
+
     logger.info("=" * 60)
     if variant_profiles is not None:
         mode_mix = ",".join(p.mode for p in variant_profiles)
@@ -143,19 +178,20 @@ def _step_generate_script(
     # ``list[ClipMetadata]`` internally. Runtime is identical (TypedDicts ARE
     # dicts); the ignore preserves the ``list[dict]`` pipeline contract until
     # a future sprint retypes the seam.
-    scripts = generate_script_variants(
-        poi_name=poi_name,
-        location=location,
-        clips_metadata=clips_metadata,  # type: ignore[arg-type]
-        hotel_description=hotel_description,
-        notable_details=notable_details,
-        n_variants=n_variants,
-        n_candidates=script_candidates,
-        target_duration_sec=target_duration_sec,
-        profiles=variant_profiles,
-        personas=variant_personas,
-        asset_visual_brief=asset_visual_brief,
-    )
+    if scripts is None:
+        scripts = generate_script_variants(
+            poi_name=poi_name,
+            location=location,
+            clips_metadata=clips_metadata,  # type: ignore[arg-type]
+            hotel_description=hotel_description,
+            notable_details=notable_details,
+            n_variants=n_variants,
+            n_candidates=script_candidates,
+            target_duration_sec=target_duration_sec,
+            profiles=variant_profiles,
+            personas=variant_personas,
+            asset_visual_brief=asset_visual_brief,
+        )
     if len(scripts) != n_variants:
         raise RuntimeError(
             f"Variant-pack delivery failed: requested {n_variants} variants "

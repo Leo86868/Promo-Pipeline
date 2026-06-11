@@ -310,6 +310,24 @@ def _run_variant_loop(
             # without a side-channel for the per-variant duration.
             "target_duration_sec": variant_target_duration,
             "format_mode": script.get("format_mode"),
+            # 翻转二 B6 — the FINAL accepted script rides with its
+            # assignments so a later run can replay it verbatim
+            # (`compile_promo --replay-script`): same-script A/B holds the
+            # narration constant while swapping the clip assigner.
+            # pause_after_ms is intentionally stripped — replay recomputes
+            # the pause budget against its own calibrated wpm.
+            "script": {
+                "segments": [
+                    {
+                        "segment": seg.get("segment", i + 1),
+                        "text": seg["text"],
+                        "pause_weight": seg.get("pause_weight", 1),
+                    }
+                    for i, seg in enumerate(script["segments"])
+                ],
+                "format_mode": script.get("format_mode"),
+                "hook_technique": script.get("hook_technique"),
+            },
         })
 
         size_mb = os.path.getsize(variant_output_path) / (1024 * 1024)
