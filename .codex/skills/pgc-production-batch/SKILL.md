@@ -310,6 +310,17 @@ python3 -m promo.cli.compile_promo <copied A-arm args> --output <ab_dir>/B_packe
 Replayed renders self-declare via `replayed_from` in their
 clip_assignments sidecar (normal renders carry `null`).
 
+## Clip assigner cutover (2026-06-11)
+
+Leo judged the same-script A/B: the packer arm wins. Production runs
+with `PROMO_CLIP_ASSIGNER=packer` set in the VPS worktree `.env` (the
+CODE default stays `gemini2` until the legacy chain is deleted — this
+keeps the test suite untouched and makes rollback a one-line .env
+edit). Coexistence period ≈1-2 weeks of production batches; if no
+regressions, retire the Gemini #2 chain (assignment prompt + F3
+script-regen + split-repair) in one sweep and flip the code default.
+Rollback at any time: delete the .env line.
+
 ## Approved Existing Masters Handoff
 
 When Leo says something like "continue the approved batch handoff" for existing

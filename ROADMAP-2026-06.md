@@ -190,3 +190,10 @@
 - 翻转二(beat planner + packer)方案已与 Leo 对齐,关乎核心、先讨论后动工;A/B 闸门不变。
 - **补齐双批收官(22:33)**:topup_gap3(Saint Vincent、Broadmoor × 3)+ topup_gap2(Mount Princeton、Universal Cabana Bay、Westgate × 2)**双批并行 12/12 complete 零失败**,5 家店全部到 3 条 approved(分发软门槛)。**8 核双批极限吞吐首份实测:12 条 / 72 分钟 = 6 分钟/条(理论 ~240 条/天)**;渲染 466-774s(双批分核,均值 ~570s,符合预期);upscale 454-741s,**4 路并发无排队膨胀**;音乐实证:5 店每店曲目互不重复(canonical 序号修复有效)。F3 again +2(样本 ~16 条,趋势 ~20-25%)。
 - **翻转二 B1-B5 全部落地**(`535625c`→`e598802`,744 tests):B1 语意优先 beat planner(复审后翻新:标点成刀、<2s 软合并、>4s 补刀)、B2 per-beat 排序检索、B3 usage_windows 账本读方(家族标准,fail-closed)、B4 packer(五家规+防僵尸条款)、B5 `PROMO_CLIP_ASSIGNER` 开关接入热路径(默认 gemini2,生产无感)。**剩 B6**:compile_promo 回放 script 输入 + 同文案 A/B(2-3 店)。
+
+### 2026-06-11(裁决日)
+
+- B6 落地(script 随 sidecar 留底 + `PROMO_REPLAY_SCRIPT` 回放,复审两 bug——掉 word_count 标签、粘性开关——均修复:`ab417a2`);packer embeddings 三级阶梯补齐生产形态(`78267e9`);A/B 流程写进 SKILL.md(`84ca7fb`)。
+- 批次 1(2 店 × 3,新节奏+双送餐员):6/6 complete(1 条文案五抽低于 155 词下限 → resume 重渲一次过;字数闸摩擦率 1/12 观察中);**新配方 F3 = 0/6**(干净基线坐实旧触发率主因是过期 wpm)。
+- **A/B 首考(Little Palm Island,同 158 词文案)**:B 臂全链首次实战一次过——22 beats(1 张 4.12s 超顶如实告警)、22 段不重复素材、真实账本加载、窗口零耗尽、零 LLM 调用、选片 31 秒。素材消耗 22 vs 17(+30%,语意切分的已知代价)。
+- **Leo 裁决:B 胜,packer 上岗**。切换方式:VPS `.env` 设 `PROMO_CLIP_ASSIGNER=packer`(代码默认仍 gemini2,测试零churn,回滚=删一行);**陪跑期 1-2 周生产无回归 → 一次性退役 Gemini #2 链(assignment prompt + F3 script-regen + split-repair ~1100 行)+ 翻代码默认 + 测试迁移**。镜头节奏旋钮 = `beat_planner.DEFAULT_MAX/MIN_BEAT_SEC`(4.0/2.0),Leo 想调时可挪进 skeleton YAML。
