@@ -22,8 +22,6 @@ _RECEIPT_IO_LOCK = threading.Lock()
 
 SCHEMA_VERSION = 1
 DEFAULT_COOLDOWN_DAYS = 3
-DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT = 50
-DEFAULT_EXTRA_VARIATION_ASSET_BUFFER = 10
 
 
 def utc_now_iso() -> str:
@@ -36,9 +34,11 @@ def utc_now_iso() -> str:
 def required_active_assets(
     videos_per_poi: int,
     *,
-    base_min_assets_for_format: int = DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT,
-    extra_variation_asset_buffer: int = DEFAULT_EXTRA_VARIATION_ASSET_BUFFER,
+    base_min_assets_for_format: int,
+    extra_variation_asset_buffer: int,
 ) -> int:
+    """POI selection floor. Both knobs come from the format card's
+    ``assets`` block (P2 step 3) — no module defaults."""
     extra_variations = max(int(videos_per_poi) - 1, 0)
     return int(base_min_assets_for_format) + int(extra_variation_asset_buffer) * extra_variations
 
@@ -138,6 +138,12 @@ def build_run_receipt(
     final_upscale_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     created = created_at or utc_now_iso()
+    # P2 step 3: asset-floor knobs come from the format card routed by
+    # the batch's target duration. Receipt field names stay frozen
+    # (外壳接口冻结); only the value source moved.
+    from promo.core.format_profiles import get_promo_format_profile
+
+    profile = get_promo_format_profile(target_duration_sec)
     selection_mode = "provided_list"
     if isinstance(selection_metadata, dict):
         selection_mode = str(selection_metadata.get("mode") or selection_mode)
@@ -180,9 +186,13 @@ def build_run_receipt(
             "filters": {
                 "classification": None,
                 "cooldown_days": DEFAULT_COOLDOWN_DAYS,
-                "base_min_assets_for_format": DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT,
-                "extra_variation_asset_buffer": DEFAULT_EXTRA_VARIATION_ASSET_BUFFER,
-                "required_active_assets": required_active_assets(videos_per_poi),
+                "base_min_assets_for_format": profile.assets_base_min,
+                "extra_variation_asset_buffer": profile.assets_per_extra,
+                "required_active_assets": required_active_assets(
+                    videos_per_poi,
+                    base_min_assets_for_format=profile.assets_base_min,
+                    extra_variation_asset_buffer=profile.assets_per_extra,
+                ),
                 "source_resolution_policy": source_resolution_policy or {
                     "mode": "best_available",
                 },

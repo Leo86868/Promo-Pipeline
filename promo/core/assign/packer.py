@@ -48,7 +48,6 @@ import logging
 import math
 from typing import Any
 
-from promo.core.assign.beat_planner import DEFAULT_MAX_BEAT_SEC
 from promo.core.assign.clip_assignment_validator import HARD_CONSTRAINT_TOL_SEC
 from promo.core.assign.usage_windows import UsedWindow, free_windows
 from promo.core.errors import ClipAssignmentError
@@ -118,10 +117,15 @@ def pack_clips(
     word_timestamps: list[WordTimestamp],
     clip_durations: dict[str, float],
     clip_metadata: list[dict],
+    max_beat_sec: float,
     used_windows: dict[str, list[UsedWindow]] | None = None,
     clip_to_asset: dict[str, str] | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Pick one clip per beat. Returns ``(raw_assignments, provenance)``.
+
+    ``max_beat_sec`` is the format card's ``pacing.beat_max_sec`` — used
+    only to flag over-ceiling beats in provenance, same bound the
+    planner cut against.
 
     ``used_windows`` keys by asset_id (``usage_windows.fetch_used_windows``);
     ``clip_to_asset`` maps local clip ids to platform asset ids — its keys
@@ -251,6 +255,6 @@ def pack_clips(
     # pauses / seatbelt stretch) are visible in the sidecar, not just logs.
     provenance["overlong_beats"] = [
         i for i, s in enumerate(spans)
-        if s > DEFAULT_MAX_BEAT_SEC + HARD_CONSTRAINT_TOL_SEC
+        if s > max_beat_sec + HARD_CONSTRAINT_TOL_SEC
     ]
     return assignments, provenance

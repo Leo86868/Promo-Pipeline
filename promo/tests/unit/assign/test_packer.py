@@ -2,9 +2,18 @@
 
 import pytest
 
-from promo.core.assign.packer import pack_clips
+from promo.core.assign.packer import pack_clips as _real_pack_clips
 from promo.core.assign.usage_windows import UsedWindow
 from promo.core.errors import ClipAssignmentError
+
+# P2 step 3: pack_clips has no default beat ceiling — it comes from the
+# format card. Tests pin the production long-card value.
+MAX_BEAT_SEC = 4.0
+
+
+def pack_clips(*args, **kwargs):
+    kwargs.setdefault("max_beat_sec", MAX_BEAT_SEC)
+    return _real_pack_clips(*args, **kwargs)
 
 
 def _words(n, word_sec=0.4):
@@ -191,7 +200,7 @@ def test_packed_output_passes_production_validator():
         {"text": " ".join(f"b{i}" for i in range(22)), "pause_weight": 1},
     ]}
     wts = _words(40)
-    beats = plan_beats(script, wts)
+    beats = plan_beats(script, wts, max_beat_sec=MAX_BEAT_SEC, min_beat_sec=2.0)
     pool = [f"{i:04d}" for i in range(1, len(beats) + 3)]
     durations = {cid: 6.0 for cid in pool}
     meta = [_meta(cid, category=f"cat{i % 3}") for i, cid in enumerate(pool)]

@@ -281,11 +281,13 @@ def _step_generate_script(
             )
         script["effective_wpm"] = effective_wpm
         # Sprint 16 — pause budget honours each variant's own duration.
+        # P2 step 3: the pause cap comes from the variant's format card.
         script_target = float(script.get("target_duration_sec", target_duration_sec))
         compute_pause_budget(
             script["segments"],  # type: ignore[arg-type]
             target_sec=script_target,
             wpm=effective_wpm,
+            pause_cap_ms=get_promo_format_profile(script_target).pause_cap_ms,
         )
         logger.info(
             "Variant %d: %d segments, %d words (%s/%ss)",
@@ -547,10 +549,12 @@ def _step_assign_clips(
 
     Beat planner → per-beat retrieval → packer → the production validator,
     via :func:`_assign_clips_packer`. Script and narration pass through
-    untouched; the unused per-variant kwargs (voice/tmp-dir/profile/...)
-    are kept so the caller contract is stable — they belonged to the
-    retired Gemini #2 + F3 script-regen chain (removed 2026-06-11 after
-    the same-script A/B verdict; see ROADMAP-2026-06.md §执行日志).
+    untouched; ``variant_profile`` / ``target_duration_sec`` supply the
+    format card's pacing knobs (P2 step 3). The remaining unused
+    per-variant kwargs (voice/tmp-dir/persona/...) are kept so the
+    caller contract is stable — they belonged to the retired Gemini #2 +
+    F3 script-regen chain (removed 2026-06-11 after the same-script A/B
+    verdict; see ROADMAP-2026-06.md §执行日志).
 
     Returns ``(script, narration, assignments, provenance)``. Raises
     ``ClipAssignmentError`` (no coverable candidate), ``UsageWindowError``
@@ -558,14 +562,18 @@ def _step_assign_clips(
     (no embedding source) — all variant-abort conditions at the caller.
     """
     del variant_index, poi_name, location, hotel_description, notable_details
-    del variant_voice_key, variant_tmp_dir, tts_speed, target_duration_sec
+    del variant_voice_key, variant_tmp_dir, tts_speed
     del effective_wpm, n_variants_total, script_candidates
-    del variant_profile, variant_persona, asset_visual_brief
+    del variant_persona, asset_visual_brief
+    # P2 step 3: pacing knobs come from the variant's format card; fall
+    # back to duration routing when the caller did not thread a profile.
+    profile = variant_profile or get_promo_format_profile(target_duration_sec)
     return _assign_clips_packer(
         script,
         narration,
         clips_metadata,
         clip_durations,
+        profile=profile,
         embedding_cache_dir=embedding_cache_dir,
         shared_assets=shared_assets,
     )
@@ -638,6 +646,7 @@ def _assign_clips_packer(
     clips_metadata: list[dict],
     clip_durations: dict[str, float],
     *,
+    profile: PromoFormatProfile,
     embedding_cache_dir: str | None,
     shared_assets: list[dict] | None,
     rank_fn: Any | None = None,
@@ -743,6 +752,8 @@ def _assign_clips_packer(
     beats = plan_beats(
         script,  # type: ignore[arg-type]
         word_timestamps,
+        max_beat_sec=profile.beat_max_sec,
+        min_beat_sec=profile.beat_min_sec,
         max_beats=len(embedded_metadata),
     )
     queries = [beat_text(beat, word_timestamps) for beat in beats]
@@ -769,6 +780,7 @@ def _assign_clips_packer(
         word_timestamps=word_timestamps,
         clip_durations=clip_durations,
         clip_metadata=embedded_metadata,
+        max_beat_sec=profile.beat_max_sec,
         used_windows=used_windows,
         clip_to_asset=clip_to_asset,
     )

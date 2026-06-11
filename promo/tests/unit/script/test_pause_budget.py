@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+# P2 step 3: pause_budget has no module cap — production reads the
+# format card's pacing.pause_cap_ms. Tests pin the long-card value.
+PAUSE_CAP_MS = 3000
+
 class TestSprint08PauseBudget:
     """compute_pause_budget: weights → ms from target × WPM math.
 
@@ -29,7 +33,7 @@ class TestSprint08PauseBudget:
             {"word_count": 28, "pause_weight": 3},
             {"word_count": 20, "pause_weight": 1},
         ]
-        compute_pause_budget(segs, target_sec=65, wpm=140)
+        compute_pause_budget(segs, target_sec=65, wpm=140, pause_cap_ms=PAUSE_CAP_MS)
         gaps = [s["pause_after_ms"] for s in segs]
         # Last segment always 0.
         assert gaps[-1] == 0
@@ -48,7 +52,7 @@ class TestSprint08PauseBudget:
             {"word_count": 28, "pause_weight": 1},
             {"word_count": 20, "pause_weight": 1},
         ]
-        compute_pause_budget(segs, target_sec=65, wpm=140)
+        compute_pause_budget(segs, target_sec=65, wpm=140, pause_cap_ms=PAUSE_CAP_MS)
         gaps = [s["pause_after_ms"] for s in segs]
         # Only indices 1 and 2 (weight 2 and 3) get ms; 0, 3, 4 are zero.
         assert gaps[0] == 0
@@ -72,7 +76,7 @@ class TestSprint08PauseBudget:
             {"word_count": 20},
         ]
         with caplog.at_level(logging.WARNING, logger="promo.core.script.pause_budget"):
-            compute_pause_budget(segs, target_sec=65, wpm=140)
+            compute_pause_budget(segs, target_sec=65, wpm=140, pause_cap_ms=PAUSE_CAP_MS)
         gaps = [s["pause_after_ms"] for s in segs]
         # All four gaps resolve to weight=1 (or last-seg ignored) → all zero.
         assert gaps == [0, 0, 0, 0, 0]
@@ -89,7 +93,7 @@ class TestSprint08PauseBudget:
             {"word_count": 100, "pause_weight": 2},
         ]
         with caplog.at_level(logging.WARNING, logger="promo.core.script.pause_budget"):
-            compute_pause_budget(segs, target_sec=30, wpm=140)
+            compute_pause_budget(segs, target_sec=30, wpm=140, pause_cap_ms=PAUSE_CAP_MS)
         assert all(s["pause_after_ms"] == 0 for s in segs)
         assert any(
             "narration already fills target" in rec.getMessage()
@@ -98,7 +102,7 @@ class TestSprint08PauseBudget:
 
     def test_empty_input_returns_empty(self):
         from promo.core.script.pause_budget import compute_pause_budget
-        assert compute_pause_budget([], target_sec=30) == []
+        assert compute_pause_budget([], target_sec=30, pause_cap_ms=PAUSE_CAP_MS) == []
 
 class TestSprint08MeasureWPM:
     """measure_wpm extracts throughput from ElevenLabs alignment data."""
@@ -236,7 +240,7 @@ class TestSprint085PauseBudgetTailConstraint:
             {"word_count": 34, "pause_weight": 1},
             {"word_count": 24, "pause_weight": 1},  # last ignored
         ]
-        compute_pause_budget(segs, target_sec=65, wpm=165)
+        compute_pause_budget(segs, target_sec=65, wpm=165, pause_cap_ms=PAUSE_CAP_MS)
         gaps = [s["pause_after_ms"] for s in segs]
         # Segments 0, 3 (weight=1) and 4 (last) get 0. 1 and 2 get nonzero.
         assert gaps[0] == 0
@@ -257,7 +261,7 @@ class TestSprint085PauseBudgetTailConstraint:
             {"word_count": 20, "pause_weight": 1},
         ]
         with caplog.at_level(logging.WARNING, logger="promo.core.script.pause_budget"):
-            compute_pause_budget(segs, target_sec=65, wpm=165)
+            compute_pause_budget(segs, target_sec=65, wpm=165, pause_cap_ms=PAUSE_CAP_MS)
         assert all(s["pause_after_ms"] == 0 for s in segs)
         assert any(
             "no hard gaps available" in r.getMessage() for r in caplog.records
@@ -273,7 +277,7 @@ class TestSprint085PauseBudgetTailConstraint:
             {"word_count": 28, "pause_weight": 2},
             {"word_count": 20, "pause_weight": 3},  # weight 3 IGNORED (last seg)
         ]
-        compute_pause_budget(segs, target_sec=65, wpm=165)
+        compute_pause_budget(segs, target_sec=65, wpm=165, pause_cap_ms=PAUSE_CAP_MS)
         gaps = [s["pause_after_ms"] for s in segs]
         assert all(g > 0 for g in gaps[:4])
         assert gaps[4] == 0  # last segment ignored despite weight=3
@@ -283,26 +287,27 @@ class TestSprint085SilenceBuffer:
 
     def test_apply_silence_buffer_scales_by_1_10(self):
         from promo.core.script.pause_budget import _apply_silence_buffer
-        assert _apply_silence_buffer(2000) == 2200
+        assert _apply_silence_buffer(2000, cap_ms=PAUSE_CAP_MS) == 2200
 
     def test_apply_silence_buffer_caps_at_per_gap_cap(self):
-        from promo.core.script.pause_budget import _apply_silence_buffer, PER_GAP_CAP_MS
+        from promo.core.script.pause_budget import _apply_silence_buffer
         # 2900 * 1.10 = 3190 → capped at 3000 (2026-06-11: cap lowered
         # with the word-budget raise; silence no longer stuffs duration).
-        assert _apply_silence_buffer(2900) == PER_GAP_CAP_MS
+        assert _apply_silence_buffer(2900, cap_ms=PAUSE_CAP_MS) == PAUSE_CAP_MS
 
     def test_apply_silence_buffer_zero_in_zero_out(self):
         from promo.core.script.pause_budget import _apply_silence_buffer
-        assert _apply_silence_buffer(0) == 0
+        assert _apply_silence_buffer(0, cap_ms=PAUSE_CAP_MS) == 0
 
 class TestSprint085DocstringFix:
-    """AC13: pause_budget.py source matches the actual 3000 ms cap."""
+    """AC13 successor (P2 step 3): the cap moved to the format card —
+    pin the production card value the old source-text pin guarded."""
 
-    def test_compute_pause_budget_docstring_matches_cap(self):
-        """Constant and prose agree: cap is 3000 ms (2026-06-11)."""
-        import promo.core.script.pause_budget as pb
-        source = open(pb.__file__).read()
-        assert "PER_GAP_CAP_MS = 3000" in source
+    def test_long_card_pause_cap_is_3000(self):
+        """2026-06-11 (Leo): 7000 → 3000 with the word-budget raise.
+        Tuning the card is a conscious edit of this pin too."""
+        from promo.core.format_profiles import LONG_PROFILE
+        assert LONG_PROFILE.pause_cap_ms == PAUSE_CAP_MS
 
 class TestSprint09bC7WPMCalibration:
     """Sprint 09b C7 (ACs 28-31): load_calibrated_wpm reads measured

@@ -68,14 +68,10 @@ from promo.core.schema import Script, WordTimestamp
 
 logger = logging.getLogger(__name__)
 
-# Hard ceiling. Clips are ≥5s; 4s keeps a ≥1s trim window free for the
-# packer's source-window rotation even on the shortest clips.
-DEFAULT_MAX_BEAT_SEC = 4.0
-
-# Soft floor: fragments shorter than this merge with a neighbour when
-# the merge respects the ceiling. Keeps the cut rhythm from getting
-# flashy AND bounds per-video clip burn (review trade-off).
-DEFAULT_MIN_BEAT_SEC = 2.0
+# P2 step 3: the beat ceiling/floor are the format card's
+# ``pacing.beat_max_sec`` / ``pacing.beat_min_sec`` (skeleton YAML),
+# threaded in by the caller — no module defaults. Tuning rationale
+# (clip-physics ceiling, clip-burn floor) lives on the card.
 
 # How far (seconds) a punctuation boundary may sit from the ideal grid
 # point and still win, when force-splitting an over-long beat.
@@ -236,12 +232,13 @@ def plan_beats(
     script: Script,
     word_timestamps: list[WordTimestamp],
     *,
-    max_beat_sec: float = DEFAULT_MAX_BEAT_SEC,
-    min_beat_sec: float = DEFAULT_MIN_BEAT_SEC,
+    max_beat_sec: float,
+    min_beat_sec: float,
     max_beats: int | None = None,
 ) -> list[Beat]:
     """Split every segment into semantic-first beats of ≤ ``max_beat_sec``
-    display time (soft floor ``min_beat_sec``).
+    display time (soft floor ``min_beat_sec``). Both bounds come from
+    the format card (``pacing.beat_max_sec`` / ``pacing.beat_min_sec``).
 
     Returns beats in emission order, tiling each segment contiguously
     (validator invariant by construction). ``max_beats`` is the adaptive

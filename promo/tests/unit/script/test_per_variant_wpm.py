@@ -59,8 +59,8 @@ class TestPerVariantWPMResolution:
         monkeypatch.setattr(
             steps,
             "compute_pause_budget",
-            lambda segments, *, target_sec, wpm: compute_pause_budget_calls.append(
-                {"target_sec": target_sec, "wpm": wpm}
+            lambda segments, *, target_sec, wpm, pause_cap_ms: compute_pause_budget_calls.append(
+                {"target_sec": target_sec, "wpm": wpm, "pause_cap_ms": pause_cap_ms}
             ),
         )
 

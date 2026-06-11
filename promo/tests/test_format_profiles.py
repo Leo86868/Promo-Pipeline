@@ -97,30 +97,48 @@ class TestP2DurationRouting:
             get_promo_format_profile(50)
 
 
-class TestP2PersonalityBackfillPin:
-    """P2 step 1 byte-identical pin: the cards carry backfilled copies of
-    the pacing / asset-floor code constants. While consumers still read
-    the constants, card and constant MUST agree — any drift is a silent
-    two-sources-of-truth bug. P2 step 3 deletes the constants and
-    rewrites this pin to assert consumers read the card."""
+class TestP2CardIsSoleSource:
+    """P2 step 3: the personality constants are deleted — the card is
+    the only source. Guard the consumer signatures so a module default
+    can't silently reappear and become a second source of truth."""
 
-    def test_card_pacing_matches_code_constants(self):
+    def test_consumers_have_no_personality_defaults(self):
+        import inspect
+
+        from promo.core.assign.beat_planner import plan_beats
+        from promo.core.assign.packer import pack_clips
+        from promo.core.run_receipt import required_active_assets
+        from promo.core.script.pause_budget import compute_pause_budget
+
+        required = {
+            plan_beats: ("max_beat_sec", "min_beat_sec"),
+            pack_clips: ("max_beat_sec",),
+            compute_pause_budget: ("pause_cap_ms",),
+            required_active_assets: (
+                "base_min_assets_for_format", "extra_variation_asset_buffer",
+            ),
+        }
+        for fn, params in required.items():
+            sig = inspect.signature(fn)
+            for name in params:
+                assert sig.parameters[name].default is inspect.Parameter.empty, (
+                    f"{fn.__name__}({name}=...) grew a default — the card "
+                    "must stay the only source"
+                )
+
+    def test_deleted_constants_stay_deleted(self):
+        from promo.core import run_receipt
         from promo.core.assign import beat_planner
-        from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE
         from promo.core.script import pause_budget
 
-        for p in (SHORT_PROFILE, LONG_PROFILE):
-            assert p.beat_min_sec == beat_planner.DEFAULT_MIN_BEAT_SEC
-            assert p.beat_max_sec == beat_planner.DEFAULT_MAX_BEAT_SEC
-            assert p.pause_cap_ms == pause_budget.PER_GAP_CAP_MS
-
-    def test_card_asset_floor_matches_code_constants(self):
-        from promo.core import run_receipt
-        from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE
-
-        for p in (SHORT_PROFILE, LONG_PROFILE):
-            assert p.assets_base_min == run_receipt.DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT
-            assert p.assets_per_extra == run_receipt.DEFAULT_EXTRA_VARIATION_ASSET_BUFFER
+        for mod, name in (
+            (beat_planner, "DEFAULT_MAX_BEAT_SEC"),
+            (beat_planner, "DEFAULT_MIN_BEAT_SEC"),
+            (pause_budget, "PER_GAP_CAP_MS"),
+            (run_receipt, "DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT"),
+            (run_receipt, "DEFAULT_EXTRA_VARIATION_ASSET_BUFFER"),
+        ):
+            assert not hasattr(mod, name), f"{mod.__name__}.{name} resurrected"
 
     def test_card_descriptions_are_distinct_nonempty(self):
         from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE

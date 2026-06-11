@@ -8,11 +8,18 @@ duration hard-constraint.
 
 import pytest
 
-from promo.core.assign.beat_planner import (
-    DEFAULT_MAX_BEAT_SEC,
-    beat_text,
-    plan_beats,
-)
+from promo.core.assign.beat_planner import beat_text, plan_beats
+
+# P2 step 3: plan_beats has no defaults — bounds always come from the
+# format card. Tests pin the production long-card values.
+MAX_BEAT_SEC = 4.0
+MIN_BEAT_SEC = 2.0
+
+
+def _plan(script, word_timestamps, **kwargs):
+    kwargs.setdefault("max_beat_sec", MAX_BEAT_SEC)
+    kwargs.setdefault("min_beat_sec", MIN_BEAT_SEC)
+    return plan_beats(script, word_timestamps, **kwargs)
 
 
 def _uniform_words(n, *, word_sec=0.4, start=0.0, tokens=None):
@@ -49,17 +56,17 @@ def _beat_spans(beats, word_timestamps):
 def test_short_segment_is_a_single_beat():
     script = _script("a b c d e")
     wts = _uniform_words(5)  # 2.0s narration
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert beats == [{"segment": 1, "start_word_idx": 0, "end_word_idx": 4}]
 
 
 def test_long_segment_splits_into_bounded_beats():
     script = _script(" ".join(f"w{i}" for i in range(25)))
     wts = _uniform_words(25)  # 10.0s → expect ceil(10/4) = 3 beats
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert len(beats) == 3
     for span in _beat_spans(beats, wts):
-        assert span <= DEFAULT_MAX_BEAT_SEC + 0.4  # word granularity slack
+        assert span <= MAX_BEAT_SEC + 0.4  # word granularity slack
 
 
 def test_beats_tile_every_segment_contiguously():
@@ -68,7 +75,7 @@ def test_beats_tile_every_segment_contiguously():
         " ".join(f"b{i}" for i in range(20)),
     )
     wts = _uniform_words(32)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     by_seg = {}
     for b in beats:
         by_seg.setdefault(b["segment"], []).append(b)
@@ -87,7 +94,7 @@ def test_semantic_cut_lands_exactly_on_punctuation():
     tokens = [f"w{i}," if i == 8 else f"w{i}" for i in range(20)]
     script = _script(" ".join(tokens))
     wts = _uniform_words(20, tokens=tokens)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert beats[0]["end_word_idx"] == 8   # cut AT the comma, not near a grid
     assert beats[1]["start_word_idx"] == 9
     assert len(beats) == 3
@@ -103,7 +110,7 @@ def test_clause_rhythm_produces_varied_beat_lengths():
     )
     script = _script(" ".join(tokens))
     wts = _uniform_words(20, tokens=tokens)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert [(b["start_word_idx"], b["end_word_idx"]) for b in beats] == [
         (0, 5), (6, 13), (14, 19),
     ]
@@ -117,7 +124,7 @@ def test_soft_floor_merges_short_fragment():
     tokens = ["a0", "a1", "a2,"] + [f"b{i}" for i in range(5)]
     script = _script(" ".join(tokens))
     wts = _uniform_words(8, tokens=tokens)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert beats == [{"segment": 1, "start_word_idx": 0, "end_word_idx": 7}]
 
 
@@ -127,7 +134,7 @@ def test_soft_floor_yields_to_hard_ceiling():
     tokens = [f"a{i}" for i in range(8)] + ["a8,"] + ["b0", "b1", "b2"]
     script = _script(" ".join(tokens))
     wts = _uniform_words(12, tokens=tokens)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert len(beats) == 2
     assert beats[1] == {"segment": 1, "start_word_idx": 9, "end_word_idx": 11}
     assert _beat_spans(beats, wts)[1] == pytest.approx(1.2)
@@ -137,7 +144,7 @@ def test_min_beat_validation():
     script = _script("a b c")
     wts = _uniform_words(3)
     with pytest.raises(ValueError, match="min_beat_sec"):
-        plan_beats(script, wts, min_beat_sec=5.0)
+        _plan(script, wts, min_beat_sec=5.0)
 
 
 def test_intersegment_silence_charged_to_last_beat_of_segment():
@@ -146,7 +153,7 @@ def test_intersegment_silence_charged_to_last_beat_of_segment():
     # last beat, exactly like the validator does.
     wts = _uniform_words(5) + _uniform_words(5, start=3.5)
     script = _script("a b c d e", "f g h i j")
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     spans = _beat_spans(beats, wts)
     seg1_last_span = spans[len([b for b in beats if b["segment"] == 1]) - 1]
     assert seg1_last_span == pytest.approx(3.5 - 0.0, abs=1e-6)
@@ -155,8 +162,8 @@ def test_intersegment_silence_charged_to_last_beat_of_segment():
 def test_seatbelt_stretches_beats_to_fit_pool():
     script = _script(" ".join(f"w{i}" for i in range(40)))
     wts = _uniform_words(40)  # 16s → nominal 4 beats
-    assert len(plan_beats(script, wts)) == 4
-    beats = plan_beats(script, wts, max_beats=2)
+    assert len(_plan(script, wts)) == 4
+    beats = _plan(script, wts, max_beats=2)
     assert len(beats) == 2
 
 
@@ -164,28 +171,28 @@ def test_seatbelt_below_segment_count_raises():
     script = _script("a b", "c d", "e f")
     wts = _uniform_words(6)
     with pytest.raises(ValueError, match="segment count"):
-        plan_beats(script, wts, max_beats=2)
+        _plan(script, wts, max_beats=2)
 
 
 def test_token_timestamp_mismatch_raises():
     script = _script("a b c")
     wts = _uniform_words(5)
     with pytest.raises(ValueError, match="alignment drift"):
-        plan_beats(script, wts)
+        _plan(script, wts)
 
 
 def test_empty_segment_raises():
     script = _script("a b", "   ")
     wts = _uniform_words(2)
     with pytest.raises(ValueError, match="no words"):
-        plan_beats(script, wts)
+        _plan(script, wts)
 
 
 def test_beat_text_joins_covered_words():
     tokens = ["Sunset", "views,", "private", "balconies"]
     script = _script(" ".join(tokens))
     wts = _uniform_words(4, tokens=tokens)
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert beat_text(beats[0], wts) == "Sunset views, private balconies"
 
 
@@ -202,7 +209,7 @@ def test_planned_beats_pass_the_production_validator():
         " ".join(f"c{i}" for i in range(14)),
     )
     wts = _uniform_words(54)  # 21.6s narration across 3 segments
-    beats = plan_beats(script, wts)
+    beats = _plan(script, wts)
     assert len(beats) >= 6
 
     clip_durations = {f"{i:04d}": 5.0 for i in range(1, len(beats) + 1)}
@@ -239,8 +246,8 @@ def test_seatbelt_reviewer_counterexample_7_1_1():
         "b0 b1",
         "c0 c1",
     )
-    assert len(plan_beats(script, wts)) > 3  # unconstrained plan is bigger
-    beats = plan_beats(script, wts, max_beats=3)
+    assert len(_plan(script, wts)) > 3  # unconstrained plan is bigger
+    beats = _plan(script, wts, max_beats=3)
     assert len(beats) <= 3
     # Tiling survives the seatbelt path.
     by_seg = {}
@@ -261,17 +268,17 @@ def test_overlong_beat_warns_loudly(caplog):
     wts = _uniform_words(5) + _uniform_words(5, start=8.5)  # 6.5s pause gap
     script = _script("a b c d e", "f g h i j")
     with caplog.at_level(logging.WARNING, logger="promo.core.assign.beat_planner"):
-        beats = plan_beats(script, wts)
+        beats = _plan(script, wts)
     spans = _beat_spans(beats, wts)
-    assert max(spans) > DEFAULT_MAX_BEAT_SEC  # the over-ceiling beat exists
+    assert max(spans) > MAX_BEAT_SEC  # the over-ceiling beat exists
     assert any("exceed" in rec.message for rec in caplog.records)
 
 
 def test_empty_inputs_raise():
     with pytest.raises(ValueError, match="no segments"):
-        plan_beats({"segments": []}, _uniform_words(1))
+        _plan({"segments": []}, _uniform_words(1))
     with pytest.raises(ValueError, match="word_timestamps is empty"):
-        plan_beats(_script("a b"), [])
+        _plan(_script("a b"), [])
 
 
 def test_fuzz_realistic_shapes_hold_invariants():
@@ -311,9 +318,9 @@ def test_fuzz_realistic_shapes_hold_invariants():
         max_beats = None
         if rng.random() < 0.4:
             max_beats = rng.randint(n_segments, n_segments + 10)
-        beats = plan_beats(script, wts, max_beats=max_beats)
+        beats = _plan(script, wts, max_beats=max_beats)
 
-        assert beats == plan_beats(script, wts, max_beats=max_beats)  # deterministic
+        assert beats == _plan(script, wts, max_beats=max_beats)  # deterministic
         if max_beats is not None:
             assert len(beats) <= max_beats
         # Tiling: contiguous per segment, exact coverage.

@@ -18,6 +18,7 @@ from promo.core.assets.retrieval import (
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
 )
+from promo.core.format_profiles import get_promo_format_profile
 from promo.core.run_receipt import required_active_assets
 from promo.core.source_resolution_policy import (
     SourceResolutionPolicy,
@@ -350,7 +351,14 @@ def build_selection_payload(
     allow_shortage: bool = False,
     source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    min_active_assets = required_active_assets(videos_per_poi)
+    # P2 step 3: the asset floor comes from the format card routed by
+    # the batch's target duration.
+    gate_profile = get_promo_format_profile(target_duration_sec)
+    min_active_assets = required_active_assets(
+        videos_per_poi,
+        base_min_assets_for_format=gate_profile.assets_base_min,
+        extra_variation_asset_buffer=gate_profile.assets_per_extra,
+    )
     resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     summary = summarize_pois(
         rows,

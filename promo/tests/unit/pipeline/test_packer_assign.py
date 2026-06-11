@@ -3,7 +3,15 @@
 import pytest
 
 from promo.core.assign.usage_windows import UsageWindowError, UsedWindow
-from promo.core.pipeline.steps import _assign_clips_packer
+from promo.core.format_profiles import LONG_PROFILE
+from promo.core.pipeline.steps import _assign_clips_packer as _real_assign_clips_packer
+
+
+# P2 step 3: the packer path takes its pacing knobs from the format
+# card; tests run against the production long card.
+def _assign_clips_packer(*args, **kwargs):
+    kwargs.setdefault("profile", LONG_PROFILE)
+    return _real_assign_clips_packer(*args, **kwargs)
 
 
 def _words(n, word_sec=0.4):

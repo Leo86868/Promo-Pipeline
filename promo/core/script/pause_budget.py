@@ -14,7 +14,8 @@ Sprint 08.5 policy (see design memo
   ElevenLabs call, where the model's natural prosody carries the beat.
 - Each weight≥2 gap's silence duration is inflated by
   ``SILENCE_BUFFER_SCALE`` (1.10) to give the final pause a little extra
-  room; the inflated total is capped at ``PER_GAP_CAP_MS``.
+  room; the inflated total is capped at the format card's
+  ``pacing.pause_cap_ms``.
 
 Sprint 10 C4 removed the tail-safety cap (previously
 ``narration_end ≤ target_sec − tail_source_sec + safety_buffer_sec``). The
@@ -76,21 +77,15 @@ def bootstrap_wpm_for_backend(backend: str) -> int:
 
 DEFAULT_TARGET_COVERAGE = 0.90
 
-# Per-gap pause ceiling. Sprint 08 uses per-batch TTS + ffmpeg silence
-# concat (no SSML break involvement), so there's no engine-side cap. The
-# cap here is a pacing sanity rail. 2026-06-11 (Leo): lowered 7000 →
-# 3000 together with the LONG skeleton's word budget raise (130-140 →
-# 155-170): videos fill 65 s with MORE NARRATION instead of stuffed
-# silence. The old 7 s ceiling let a mid-script pause inflate one visual
-# beat past every clip's physical length (a 3 s sentence + 7 s pause =
-# a 10 s shot no 8 s clip can cover) and produced tiring >4 s lingering
-# shots; leftover duration now belongs to the renderer's tail bridges.
-PER_GAP_CAP_MS = 3000
+# P2 step 3: the per-gap pause ceiling is the format card's
+# ``pacing.pause_cap_ms`` (skeleton YAML), threaded in by the caller —
+# there is no module default. Cap history/rationale lives on the card.
 
 # Silence buffer (Sprint 08.5, Item 4): each weight>=2 gap's silence gets
 # an extra 10% beyond the raw distribution. Operator's "multi-给一点空间"
 # directive — a slightly longer hold at an intentional beat lands better
-# than a cramped one. Scaled output is still capped at PER_GAP_CAP_MS.
+# than a cramped one. Scaled output is still capped at the card's
+# ``pause_cap_ms``.
 SILENCE_BUFFER_SCALE = 1.10
 
 
@@ -205,15 +200,15 @@ def load_calibrated_wpm(
     return None
 
 
-def _apply_silence_buffer(ms: int) -> int:
-    """Return ``ms * SILENCE_BUFFER_SCALE`` rounded, capped at ``PER_GAP_CAP_MS``.
+def _apply_silence_buffer(ms: int, *, cap_ms: int) -> int:
+    """Return ``ms * SILENCE_BUFFER_SCALE`` rounded, capped at ``cap_ms``.
 
     Exposed for unit testing the AC10 scaling semantics directly.
     """
     if ms <= 0:
         return 0
     scaled = int(round(ms * SILENCE_BUFFER_SCALE))
-    return min(scaled, PER_GAP_CAP_MS)
+    return min(scaled, cap_ms)
 
 
 def compute_pause_budget(
@@ -221,6 +216,8 @@ def compute_pause_budget(
     target_sec: float,
     wpm: int = OBSERVED_ELEVENLABS_WPM,
     target_coverage: float = DEFAULT_TARGET_COVERAGE,
+    *,
+    pause_cap_ms: int,
 ) -> list[dict]:
     """Populate ``pause_after_ms`` on each segment.
 
@@ -234,7 +231,7 @@ def compute_pause_budget(
     - Raw required budget = ``target_end - predicted_spoken_sec``, then
       divided by ``SILENCE_BUFFER_SCALE`` to reserve room for the buffer.
     - Per-gap ms is ``_apply_silence_buffer(raw_share)`` (capped at
-      ``PER_GAP_CAP_MS``).
+      ``pause_cap_ms``, the format card's ``pacing.pause_cap_ms``).
 
     Sprint 10 C4: ``tail_source_sec`` / ``safety_buffer_sec`` kwargs
     removed. The tail-cap branch was load-bearing only when one-pass
@@ -300,8 +297,8 @@ def compute_pause_budget(
     capped_count = 0
     for idx, w in hard_gaps:
         raw_share = int(round(raw_required_ms * (w / total_weight)))
-        scaled = _apply_silence_buffer(raw_share)
-        if scaled == PER_GAP_CAP_MS and int(round(raw_share * SILENCE_BUFFER_SCALE)) > PER_GAP_CAP_MS:
+        scaled = _apply_silence_buffer(raw_share, cap_ms=pause_cap_ms)
+        if scaled == pause_cap_ms and int(round(raw_share * SILENCE_BUFFER_SCALE)) > pause_cap_ms:
             capped_count += 1
         segments[idx]["pause_after_ms"] = scaled
         scaled_assigned_ms += scaled
@@ -313,7 +310,7 @@ def compute_pause_budget(
             "Pause budget: %d/%d hard gap(s) capped at %dms — total silence "
             "%dms vs requested %dms (shortfall %dms ≈ %.2fs). Video may fall "
             "short of target coverage.",
-            capped_count, len(hard_gaps), PER_GAP_CAP_MS,
+            capped_count, len(hard_gaps), pause_cap_ms,
             scaled_assigned_ms, requested_scaled_ms, shortfall_ms,
             shortfall_ms / 1000.0,
         )
