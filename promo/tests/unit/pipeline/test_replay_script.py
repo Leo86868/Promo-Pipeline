@@ -134,6 +134,19 @@ def test_clip_assignments_row_records_script():
     assert "pause_weight" in source
 
 
+def test_clip_assignments_row_records_both_hook_fields():
+    """P2 step 5: provenance separates the DEALT card (assigned_hook)
+    from Gemini's self-label (self_reported_hook). Only the assigned
+    field can prove the per-video rotation works."""
+    import inspect
+
+    from promo.core.pipeline import variant_loop
+
+    source = inspect.getsource(variant_loop)
+    assert '"assigned_hook": script.get("assigned_hook_technique")' in source
+    assert '"self_reported_hook": script.get("hook_technique")' in source
+
+
 # --- 2026-06-11 review: A/B validity + sticky-switch interlock --------------
 
 

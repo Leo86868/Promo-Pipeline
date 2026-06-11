@@ -821,6 +821,77 @@ def test_run_batch_rejects_parallel_jobs_until_safe(tmp_path):
         )
 
 
+def test_plan_batch_items_hook_seed_rotates_without_base_seed(tmp_path):
+    """P2 step 5: production receipts show ``seed: None`` — the hook deal
+    must NOT depend on --seed. hook_seed = canonical POI-major ordinal,
+    so a POI's videos walk consecutive cards (music convention)."""
+    from promo.cli.run_batch import BatchPoi, plan_batch_items
+
+    pois = [
+        BatchPoi(name=f"Hotel {i}", location="X", poi_id=f"poi_{i}", canonical_key=None)
+        for i in range(1, 3)
+    ]
+    items = plan_batch_items(
+        pois=pois,
+        videos_per_poi=2,
+        target_duration_sec=65,
+        output_root=str(tmp_path),
+        voices=["jarnathan"],
+        music_ids=[],
+        base_seed=None,
+    )
+
+    assert all(item.seed is None for item in items)  # selector entropy untouched
+    by_poi = {}
+    for item in items:
+        by_poi.setdefault(item.poi.poi_id, []).append((item.video_index, item.hook_seed))
+    assert sorted(by_poi["poi_1"]) == [(1, 0), (2, 1)]
+    assert sorted(by_poi["poi_2"]) == [(1, 2), (2, 3)]
+
+
+def test_plan_batch_items_hook_seed_offsets_by_base_seed(tmp_path):
+    from promo.cli.run_batch import BatchPoi, plan_batch_items
+
+    items = plan_batch_items(
+        pois=[BatchPoi(name="Hotel", location="X", poi_id="poi_1", canonical_key=None)],
+        videos_per_poi=3,
+        target_duration_sec=65,
+        output_root=str(tmp_path),
+        voices=["jarnathan"],
+        music_ids=[],
+        base_seed=100,
+    )
+
+    assert [item.hook_seed for item in items] == [100, 101, 102]
+    assert [item.seed for item in items] == [100, 101, 102]
+
+
+def test_build_compile_command_threads_hook_seed(tmp_path):
+    from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
+
+    item = BatchItem(
+        poi=BatchPoi(name="Hotel", location="X", poi_id="poi_1", canonical_key=None),
+        video_index=2,
+        output_dir=str(tmp_path),
+        output_path=str(tmp_path / "promo.mp4"),
+        voice_key="hope",
+        music_id=None,
+        seed=None,
+        hook_seed=7,
+    )
+
+    command = build_compile_command(
+        item=item,
+        target_duration_sec=65,
+        use_music_library=False,
+        script_candidates=1,
+        tts_speed=0.95,
+    )
+
+    assert command[command.index("--hook-seed") + 1] == "7"
+    assert "--seed" not in command  # hook_seed rides its own channel
+
+
 def test_build_compile_command_uses_canonical_key_and_music_library(tmp_path):
     from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
 

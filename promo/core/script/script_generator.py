@@ -129,6 +129,7 @@ def generate_script_variants(
     persona: NarratorPersona | None = None,
     personas: list[NarratorPersona] | None = None,
     asset_visual_brief: dict | None = None,
+    hook_seed: int | None = None,
 ) -> list[Script]:
     """Generate one or more script variants over a shared analyzed clip pool.
 
@@ -196,8 +197,10 @@ def generate_script_variants(
     seen_texts: set[str] = set()
     per_variant_budget = max(n_candidates, 1) * (1 + max_retries)
 
-    # Build diversity plans for each variant
-    variant_plans = _build_variant_plans(n_variants, clips_metadata)
+    # Build diversity plans for each variant. ``hook_seed`` rotates the
+    # hook deal per video (P2 step 5) — without it, production's
+    # one-variant-per-compile shape pins every video to the first card.
+    variant_plans = _build_variant_plans(n_variants, clips_metadata, hook_seed=hook_seed)
     for i, plan in enumerate(variant_plans):
         logger.info(
             "VariantPlan %d/%d: hook=%s, first_clip=%s",
@@ -276,6 +279,10 @@ def generate_script_variants(
                 "target_duration_sec": variant_sidecar_duration,
                 "format_mode": current_profile.mode,
                 "variant_index": variant_index,
+                # P2 step 5 — the DEALT card, distinct from the model's
+                # self-reported ``hook_technique`` in ``raw`` (Gemini may
+                # label its hook freely; provenance records both).
+                "assigned_hook_technique": (plan or {}).get("hook_technique"),
             }
             accepted.append(result)
             variant_accepted = True

@@ -379,6 +379,42 @@ class TestLongFormGenerationContract:
             "below LONG floor" in rec.getMessage() for rec in caplog.records
         ), "expected LONG floor hard-rejection in retry attempt warnings"
 
+    def test_assigned_hook_recorded_distinct_from_self_report(self, tmp_path, monkeypatch):
+        """P2 step 5: the accepted script carries the DEALT card
+        (``assigned_hook_technique``, rotates with ``hook_seed``)
+        alongside the model's self-reported ``hook_technique``. Only the
+        assigned value proves the dealer works — Gemini labels its hook
+        freely, so asserting the self-report alone can go green while
+        the dealer is broken."""
+        from promo.core.script.script_generator import generate_script_variants
+        from promo.core.script.script_prompt_builder import HOOK_TECHNIQUES
+
+        persona_path = self._write_persona(tmp_path, wpm=175)
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        clips_metadata = [{"id": f"{i:04d}", "category": "scenic", "scene_description": "clip"} for i in range(1, 15)]
+
+        with patch("promo.core.script.script_generator.resolve_gemini_model", return_value=object()), \
+             patch(
+                 "promo.core.script.script_generator._generate_one",
+                 return_value=self._valid_long_raw_script(),
+             ):
+            scripts = generate_script_variants(
+                poi_name="Test Hotel",
+                location="Nowhere",
+                clips_metadata=clips_metadata,
+                persona_path=persona_path,
+                n_variants=1,
+                n_candidates=1,
+                max_retries=0,
+                target_duration_sec=65,
+                hook_seed=3,
+            )
+
+        assert scripts[0]["assigned_hook_technique"] == HOOK_TECHNIQUES[3]
+        # Fixture self-reports "specific_number" — must pass through untouched.
+        assert scripts[0]["hook_technique"] == "specific_number"
+        assert scripts[0]["assigned_hook_technique"] != scripts[0]["hook_technique"]
+
     def test_generate_script_variants_rejects_partial_delivery(self, tmp_path, monkeypatch):
         from promo.core.script.script_generator import generate_script_variants
 
@@ -410,6 +446,63 @@ class TestLongFormGenerationContract:
                     max_retries=0,
                     target_duration_sec=65,
                 )
+
+class TestP2HookDealer:
+    """P2 step 5: hook rotation keys off a per-VIDEO seed. Production
+    compiles each video independently with --n-variants 1, so the
+    variant ordinal is constant 1 — without hook_seed every video gets
+    the same first card (nine-video sample showed 2/6 techniques, and
+    that 2 was model self-labeling noise, not rotation)."""
+
+    _CLIPS = [{"id": "0001", "category": "scenic"}]
+
+    def test_assigned_hook_rotates_with_per_video_seed(self):
+        """同店三 seed → 三种 technique, production single-variant shape."""
+        from promo.core.script.script_prompt_builder import (
+            HOOK_TECHNIQUES,
+            build_variant_plans,
+        )
+
+        dealt = [
+            build_variant_plans(1, self._CLIPS, hook_seed=s)[0]["hook_technique"]
+            for s in (0, 1, 2)
+        ]
+        assert dealt == HOOK_TECHNIQUES[:3]
+        assert len(set(dealt)) == 3
+
+    def test_hook_seed_is_deterministic_and_wraps(self):
+        from promo.core.script.script_prompt_builder import (
+            HOOK_TECHNIQUES,
+            build_variant_plans,
+        )
+
+        deck = len(HOOK_TECHNIQUES)
+        first = build_variant_plans(1, self._CLIPS, hook_seed=2)[0]["hook_technique"]
+        again = build_variant_plans(1, self._CLIPS, hook_seed=2)[0]["hook_technique"]
+        wrapped = build_variant_plans(1, self._CLIPS, hook_seed=2 + deck)[0]["hook_technique"]
+        assert first == again == wrapped == HOOK_TECHNIQUES[2]
+
+    def test_no_hook_seed_keeps_legacy_variant_rotation(self):
+        from promo.core.script.script_prompt_builder import (
+            HOOK_TECHNIQUES,
+            build_variant_plans,
+        )
+
+        plans = build_variant_plans(3, self._CLIPS)
+        assert [p["hook_technique"] for p in plans] == HOOK_TECHNIQUES[:3]
+
+    def test_seed_offsets_compose_with_variant_rotation(self):
+        from promo.core.script.script_prompt_builder import (
+            HOOK_TECHNIQUES,
+            build_variant_plans,
+        )
+
+        plans = build_variant_plans(2, self._CLIPS, hook_seed=4)
+        assert [p["hook_technique"] for p in plans] == [
+            HOOK_TECHNIQUES[4],
+            HOOK_TECHNIQUES[5 % len(HOOK_TECHNIQUES)],
+        ]
+
 
 class TestSprint08NormalizeScript:
     """normalize_script strips openers, trims overflow, keeps safety clause."""

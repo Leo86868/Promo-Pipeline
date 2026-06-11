@@ -251,6 +251,7 @@ def full_pipeline(
     notable_details: str = "",
     seed: int | None = None,
     replay_script: dict | None = None,
+    hook_seed: int | None = None,
 ) -> bool:
     """Run the full promo pipeline end-to-end.
 
@@ -423,6 +424,7 @@ def full_pipeline(
                 variant_personas=variant_personas,
                 asset_visual_brief=asset_visual_brief,
                 replay_script=replay_script,
+                hook_seed=hook_seed,
             )
         except RuntimeError as exc:
             logger.error("Variant-pack generation failed: %s", exc)

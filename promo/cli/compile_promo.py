@@ -250,6 +250,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "OS entropy; pin a seed for reproducible variant mixes."
         ),
     )
+    parser.add_argument(
+        "--hook-seed", type=int, default=None,
+        help="Per-video hook-rotation offset (P2 step 5): run_batch passes "
+             "(base seed or 0) + canonical ordinal; unset = legacy rotation.",
+    )
 
     return parser
 
@@ -371,6 +376,7 @@ def main():
             script_candidates=args.script_candidates,
             tts_speed=args.tts_speed,
             seed=args.seed,
+            hook_seed=args.hook_seed,
         )
     except MimoAnalysisError as exc:
         logger.error(

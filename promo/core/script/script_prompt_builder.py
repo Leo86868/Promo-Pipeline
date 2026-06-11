@@ -41,13 +41,25 @@ HOOK_TECHNIQUES = arsenal_loader.load_script_hooks()
 def build_variant_plans(
     n_variants: int,
     clips_metadata: list[ClipMetadata],
+    *,
+    hook_seed: int | None = None,
 ) -> list[dict[str, str]]:
     """Build pre-assigned diversity plans for each variant.
 
     Each plan contains:
       - hook_technique: a seed string from HOOK_TECHNIQUES (rotated)
       - first_clip_id: a different clip ID for segment 1, clip 1 per variant
+
+    ``hook_seed`` (P2 step 5) offsets the hook rotation per VIDEO.
+    Production compiles each video independently with ``--n-variants 1``,
+    so the variant ordinal is constant 1 and variant-only rotation deals
+    the same card to every video; ``run_batch`` threads
+    ``(base_seed or 0) + canonical_ordinal`` here (the music-rotation
+    convention), so consecutive videos walk the deck deterministically.
+    ``None`` (manual dev compile) keeps the legacy variant-only rotation
+    starting at card 0.
     """
+    hook_offset = int(hook_seed) % len(HOOK_TECHNIQUES) if hook_seed is not None else 0
     plans = []
     # Pick distinct first clips from different categories for maximum diversity
     clip_ids_by_category: dict[str, list[str]] = {}
@@ -79,7 +91,7 @@ def build_variant_plans(
 
     for i in range(n_variants):
         plans.append({
-            "hook_technique": HOOK_TECHNIQUES[i % len(HOOK_TECHNIQUES)],
+            "hook_technique": HOOK_TECHNIQUES[(hook_offset + i) % len(HOOK_TECHNIQUES)],
             "first_clip_id": first_clip_pool[i % len(first_clip_pool)],
         })
 

@@ -141,6 +141,7 @@ def _step_generate_script(
     variant_personas: "list[NarratorPersona] | None" = None,
     asset_visual_brief: dict | None = None,
     replay_script: dict | None = None,
+    hook_seed: int | None = None,
 ) -> list[dict]:
     """Run Gemini #1 + resolve per-variant effective_wpm + apply
     compute_pause_budget on each accepted script. Returns ``scripts``
@@ -203,6 +204,7 @@ def _step_generate_script(
             "total_words": sum(seg["word_count"] for seg in replayed_segments),
             "format_mode": replay_script.get("format_mode"),
             "hook_technique": replay_script.get("hook_technique"),
+            "assigned_hook_technique": replay_script.get("assigned_hook"),
             "target_duration_sec": target_duration_sec,
             # Review bug ② companion: every downstream record of a replayed
             # render declares itself (clip_assignments row picks this up).
@@ -248,6 +250,7 @@ def _step_generate_script(
             profiles=variant_profiles,
             personas=variant_personas,
             asset_visual_brief=asset_visual_brief,
+            hook_seed=hook_seed,
         )
     if len(scripts) != n_variants:
         raise RuntimeError(

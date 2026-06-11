@@ -96,6 +96,10 @@ class BatchItem:
     voice_key: str
     music_id: str | None
     seed: int | None
+    # P2 step 5 — always set: (base_seed or 0) + canonical_ordinal.
+    # Unlike ``seed`` it does NOT require --seed, so the hook deck
+    # rotates in unseeded production batches too (music convention).
+    hook_seed: int = 0
 
 
 @dataclass(frozen=True)
@@ -383,6 +387,7 @@ def plan_batch_items(
                     voice_key=voices[(video_index - 1) % len(voices)],
                     music_id=music_id,
                     seed=seed,
+                    hook_seed=(base_seed or 0) + canonical_ordinal,
                 )
             )
     return items
@@ -429,6 +434,7 @@ def build_compile_command(
             command.append("--supabase-music-library")
     if item.seed is not None:
         command.extend(["--seed", str(item.seed)])
+    command.extend(["--hook-seed", str(item.hook_seed)])
     resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     if resolved_source_policy.mode != "best_available":
         command.extend([

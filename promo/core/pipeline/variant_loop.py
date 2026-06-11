@@ -329,7 +329,14 @@ def _run_variant_loop(
                     for i, seg in enumerate(script["segments"])
                 ],
                 "format_mode": script.get("format_mode"),
+                # ``hook_technique`` stays for the replay-loader contract.
+                # P2 step 5 splits provenance: the card the dealer DEALT
+                # vs the label Gemini self-reported in its JSON — only the
+                # assigned value proves the rotation works (the model may
+                # label its hook freely).
                 "hook_technique": script.get("hook_technique"),
+                "assigned_hook": script.get("assigned_hook_technique"),
+                "self_reported_hook": script.get("hook_technique"),
             },
         })
 

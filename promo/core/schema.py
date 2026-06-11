@@ -227,6 +227,9 @@ class Script(TypedDict):
     location: NotRequired[str]
     variant_index: NotRequired[int]
     hook_technique: NotRequired[str]
+    # P2 step 5 — the hook card DEALT by build_variant_plans, distinct
+    # from ``hook_technique`` (the model's self-report in its JSON).
+    assigned_hook_technique: NotRequired[str | None]
     unique_detail: NotRequired[str]
 
 
