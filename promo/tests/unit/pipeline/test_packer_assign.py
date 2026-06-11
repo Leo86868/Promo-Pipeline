@@ -115,25 +115,96 @@ def test_packer_without_asset_mapping_skips_ledger(monkeypatch):
     assert prov["usage_ledger"] == "no_asset_mapping"
 
 
-def test_packer_requires_embedding_sidecar(monkeypatch):
+def test_packer_requires_some_embedding_source(monkeypatch):
     from promo.core.assign import clip_embedder
 
     script, narration, metadata, durations = _two_segment_fixture()
     monkeypatch.setattr(
         clip_embedder, "load_embeddings_for_poi", lambda cache_dir: None,
     )
-    with pytest.raises(RuntimeError, match="no embedding sidecar"):
+    # No inline vectors, no sidecar, no asset mapping → fail loud.
+    with pytest.raises(RuntimeError, match="found no embeddings"):
         _assign_clips_packer(
             script, narration, metadata, durations,
             embedding_cache_dir="/fake/cache",
             shared_assets=None,
         )
-    with pytest.raises(RuntimeError, match="embedding_cache_dir is unset"):
-        _assign_clips_packer(
-            script, narration, metadata, durations,
-            embedding_cache_dir=None,
-            shared_assets=None,
-        )
+
+
+class _FakeEmbeddingTable:
+    """Supabase chain stub for poi_asset_embeddings."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def table(self, name):
+        assert name == "poi_asset_embeddings"
+        return self
+
+    def select(self, _cols):
+        return self
+
+    def in_(self, _col, _vals):
+        return self
+
+    def eq(self, _col, _val):
+        return self
+
+    def order(self, _col):
+        return self
+
+    def execute(self):
+        class R:
+            data = self._rows
+
+        return R()
+
+
+def test_packer_platform_embedding_fallback(monkeypatch):
+    """Production shape: no sidecar, vectors live in poi_asset_embeddings."""
+    from promo.core.assign import clip_embedder
+
+    script, narration, metadata, durations = _two_segment_fixture()
+    monkeypatch.setattr(
+        clip_embedder, "load_embeddings_for_poi", lambda cache_dir: None,
+    )
+    rows = [
+        {"asset_id": f"asset_{cid}", "embedding_vector": [0.1] * 1536,
+         "embedding_model": "text-embedding-3-small", "status": "ready"}
+        for cid in ("0001", "0002", "0003")
+    ]
+    _, _, assignments, prov = _assign_clips_packer(
+        script, narration, metadata, durations,
+        embedding_cache_dir=None,
+        shared_assets=[
+            {"clip_id": cid, "asset_id": f"asset_{cid}"}
+            for cid in ("0001", "0002", "0003")
+        ],
+        rank_fn=_rank_all,
+        windows_fetcher=lambda client, ids: {},
+        usage_client_factory=lambda: _FakeEmbeddingTable(rows),
+    )
+    assert len(assignments) == 2
+    assert prov["embedding_source"] == "platform"
+    assert prov["usage_ledger"] == "loaded"
+
+
+def test_packer_prefers_inline_embeddings(monkeypatch):
+    """candidate_only_mode may already carry vectors on metadata —
+    highest rung of the ladder, no sidecar/platform lookup."""
+    script, narration, metadata, durations = _two_segment_fixture()
+    metadata = [{**m, "embedding": [0.2, 0.8]} for m in metadata]
+
+    _, _, assignments, prov = _assign_clips_packer(
+        script, narration, metadata, durations,
+        embedding_cache_dir=None,
+        shared_assets=None,
+        rank_fn=_rank_all,
+        windows_fetcher=lambda *a: pytest.fail("no mapping → no ledger"),
+        usage_client_factory=lambda: pytest.fail("client must not be built"),
+    )
+    assert len(assignments) == 2
+    assert prov["embedding_source"] == "inline"
 
 
 def test_window_rotation_threads_through_to_trim(monkeypatch):

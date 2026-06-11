@@ -800,6 +800,48 @@ def _default_usage_client() -> Any:
     return create_client(url, key)
 
 
+def _attach_platform_embeddings(
+    client: Any,
+    clips_metadata: list[dict],
+    clip_to_asset: dict[str, str],
+) -> tuple[list[dict], list[Any]]:
+    """Fetch ready vectors from ``poi_asset_embeddings`` (the production
+    embedding source) and attach them per clip via the asset mapping.
+    Same model+dim as the local sidecar path, so the packer's cosine
+    against ``clip_embedder.embed_texts`` beat queries stays valid.
+    Query errors propagate (fail-closed, 设计契约 ② spirit)."""
+    from promo.core.assets.retrieval import (
+        EMBEDDING_MODEL,
+        parse_embedding_vector,
+    )
+
+    asset_ids = sorted(set(clip_to_asset.values()))
+    rows = (
+        client.table("poi_asset_embeddings")
+        .select("asset_id,embedding_vector,embedding_model,status")
+        .in_("asset_id", asset_ids)
+        .eq("status", "ready")
+        .eq("embedding_model", EMBEDDING_MODEL)
+        .order("asset_id")
+        .execute()
+        .data
+    ) or []
+    vector_by_asset = {
+        str(row["asset_id"]): list(parse_embedding_vector(row["embedding_vector"]))
+        for row in rows
+    }
+    embedded: list[dict] = []
+    dropped: list[Any] = []
+    for meta in clips_metadata:
+        asset_id = clip_to_asset.get(str(meta.get("id")).zfill(4))
+        vector = vector_by_asset.get(asset_id) if asset_id else None
+        if vector is not None:
+            embedded.append({**meta, "embedding": vector})
+        else:
+            dropped.append(meta.get("id"))
+    return embedded, dropped
+
+
 def _assign_clips_packer(
     script: dict,
     narration: dict,
@@ -820,10 +862,15 @@ def _assign_clips_packer(
     single renderer-contract arbiter regardless of assigner.
 
     Embeddings are REQUIRED (the packer ranks by cosine; there is no
-    full-pool prompt to fall back to). Usage-window reads are fail-closed
-    per 设计契约 ②: ledger errors abort the variant (``--resume``
-    recovers); dev runs without an asset mapping skip rotation with a
-    provenance flag instead.
+    full-pool prompt to fall back to) and resolve through a three-step
+    ladder: vectors already inline on ``clips_metadata`` → the local
+    ``.embedding_cache`` sidecar (dev/build_embedding_index) → the
+    platform ``poi_asset_embeddings`` table via the clip→asset mapping
+    (the production supabase-backed shape; same model+dim as the local
+    path, ``text-embedding-3-small``@1536). Usage-window reads are
+    fail-closed per 设计契约 ②: ledger errors abort the variant
+    (``--resume`` recovers); dev runs without an asset mapping skip
+    rotation with a provenance flag instead.
 
     ``rank_fn`` / ``windows_fetcher`` / ``usage_client_factory`` are test
     seams only — production always uses the real implementations.
@@ -837,28 +884,69 @@ def _assign_clips_packer(
     from promo.core.assign.usage_windows import fetch_used_windows
 
     word_timestamps = narration["word_timestamps"]
-    if embedding_cache_dir is None:
-        raise RuntimeError(
-            "PROMO_CLIP_ASSIGNER=packer requires the embedding sidecar "
-            "(embedding_cache_dir is unset — run build_embedding_index)"
+    clip_to_asset = {
+        str(row.get("clip_id")).zfill(4): str(row.get("asset_id"))
+        for row in (shared_assets or [])
+        if row.get("clip_id") is not None and row.get("asset_id")
+    }
+    # Production metadata (candidate_only_mode) carries asset_id per clip;
+    # use it when the backend exposes no shared_assets mapping.
+    if not clip_to_asset:
+        clip_to_asset = {
+            str(m.get("id")).zfill(4): str(m["asset_id"])
+            for m in clips_metadata
+            if m.get("id") is not None and m.get("asset_id")
+        }
+    client: Any | None = None
+
+    def _client() -> Any:
+        nonlocal client
+        if client is None:
+            client = (usage_client_factory or _default_usage_client)()
+        return client
+
+    sidecar_sha1 = None
+    embedded_metadata = [m for m in clips_metadata if "embedding" in m]
+    if embedded_metadata:
+        embedding_source = "inline"
+        dropped_clip_ids = [
+            m.get("id") for m in clips_metadata if "embedding" not in m
+        ]
+    else:
+        sidecar = (
+            clip_embedder.load_embeddings_for_poi(embedding_cache_dir)
+            if embedding_cache_dir is not None
+            else None
         )
-    sidecar = clip_embedder.load_embeddings_for_poi(embedding_cache_dir)
-    if sidecar is None:
-        raise RuntimeError(
-            f"PROMO_CLIP_ASSIGNER=packer: no embedding sidecar at "
-            f"{embedding_cache_dir} — run build_embedding_index for this POI"
-        )
-    embedded_metadata, dropped_clip_ids = clip_embedder.attach_embeddings_to_metadata(
-        clips_metadata, sidecar,  # type: ignore[arg-type]
-    )
+        if sidecar is not None:
+            embedding_source = "sidecar"
+            sidecar_sha1 = sidecar.get("mimo_prompt_sha1")
+            embedded_metadata, dropped_clip_ids = (
+                clip_embedder.attach_embeddings_to_metadata(
+                    clips_metadata, sidecar,  # type: ignore[arg-type]
+                )
+            )
+        elif clip_to_asset:
+            embedding_source = "platform"
+            embedded_metadata, dropped_clip_ids = _attach_platform_embeddings(
+                _client(), clips_metadata, clip_to_asset,
+            )
+        else:
+            raise RuntimeError(
+                "PROMO_CLIP_ASSIGNER=packer found no embeddings: none inline, "
+                f"no sidecar at {embedding_cache_dir!r}, and no clip→asset "
+                "mapping for a platform lookup — run build_embedding_index "
+                "for local clips, or use a platform-backed POI"
+            )
     if not embedded_metadata:
         raise RuntimeError(
-            "PROMO_CLIP_ASSIGNER=packer: embedding sidecar matched zero clips"
+            f"PROMO_CLIP_ASSIGNER=packer: embedding source '{embedding_source}' "
+            "matched zero clips"
         )
     if dropped_clip_ids:
         logger.warning(
             "packer: %d clip(s) lack embeddings and are outside the ranking "
-            "pool: %s (rebuild the index to include them)",
+            "pool: %s",
             len(dropped_clip_ids), dropped_clip_ids,
         )
 
@@ -870,19 +958,13 @@ def _assign_clips_packer(
     queries = [beat_text(beat, word_timestamps) for beat in beats]
     rankings = (rank_fn or clip_retriever.rank_per_query)(queries, embedded_metadata)
 
-    clip_to_asset = {
-        str(row.get("clip_id")).zfill(4): str(row.get("asset_id"))
-        for row in (shared_assets or [])
-        if row.get("clip_id") is not None and row.get("asset_id")
-    }
     used_windows: dict = {}
     ledger_state = "no_asset_mapping"
     if clip_to_asset:
-        client = (usage_client_factory or _default_usage_client)()
         # 设计契约 ② — UsageWindowError propagates: the variant aborts and
         # --resume recovers. Never silently degrade to trim-0 reruns.
         used_windows = (windows_fetcher or fetch_used_windows)(
-            client, sorted(set(clip_to_asset.values())),
+            _client(), sorted(set(clip_to_asset.values())),
         )
         ledger_state = "loaded"
     else:
@@ -913,7 +995,8 @@ def _assign_clips_packer(
         "assigner": "packer",
         "embedded_pool_size": len(embedded_metadata),
         "reduced_pool_size": len(embedded_metadata),
-        "mimo_prompt_sha1": sidecar.get("mimo_prompt_sha1"),
+        "mimo_prompt_sha1": sidecar_sha1,
+        "embedding_source": embedding_source,
         "usage_ledger": ledger_state,
         "packer": pack_provenance,
     })
