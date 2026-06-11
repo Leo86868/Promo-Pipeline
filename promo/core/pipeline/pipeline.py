@@ -36,6 +36,7 @@ from promo.core.pipeline.steps import (
     _build_variant_selections,
     _step_generate_script,
     _step_prepare_clips,
+    _wpm_search_dirs,
 )
 from promo.core.pipeline.variant_loop import _run_variant_loop
 from promo.core.render.remotion_renderer import REMOTION_DIR
@@ -405,13 +406,7 @@ def full_pipeline(
 
         # Step 3 (Sprint 10 C4): Gemini #1 + WPM calibration + pause budget,
         # extracted into _step_generate_script.
-        wpm_search_dirs: list[str] = []
-        try_dir = backend.output_dir() or os.path.dirname(output_path)
-        if isinstance(try_dir, str) and try_dir:
-            wpm_search_dirs.append(try_dir)
-            parent = os.path.dirname(try_dir)
-            if parent and parent != try_dir:
-                wpm_search_dirs.append(parent)
+        wpm_search_dirs = _wpm_search_dirs(backend, output_path)
         try:
             scripts = _step_generate_script(
                 poi_name=poi_name,

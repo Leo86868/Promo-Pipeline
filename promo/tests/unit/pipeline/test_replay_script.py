@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from promo.cli.compile_promo import load_replay_script
+from promo.core.pipeline.steps import load_replay_script
 from promo.core.pipeline.steps import _step_generate_script
 
 
@@ -86,8 +86,33 @@ def test_replay_skips_gemini_and_runs_pause_budget(monkeypatch):
     assert s["segments"][0]["text"] == "alpha beta gamma delta"
 
 
+def test_env_var_routes_replay(monkeypatch, tmp_path):
+    """PROMO_REPLAY_SCRIPT env var (paired with PROMO_CLIP_ASSIGNER) feeds
+    the replay path with zero CLI plumbing."""
+    import json as _json
+
+    from promo.core.script import script_generator
+
+    monkeypatch.setattr(
+        script_generator, "generate_script_variants",
+        lambda **kwargs: pytest.fail("Gemini #1 must not be called"),
+    )
+    f = tmp_path / "script.json"
+    f.write_text(_json.dumps({
+        "segments": [{"segment": 1, "text": "one two three", "pause_weight": 1}],
+    }), encoding="utf-8")
+    monkeypatch.setenv("PROMO_REPLAY_SCRIPT", str(f))
+    scripts = _step_generate_script(
+        poi_name="Test Hotel", location="", clips_metadata=[],
+        n_variants=1, script_candidates=1, target_duration_sec=65.0,
+        hotel_description="", notable_details="",
+        wpm_search_dirs=[], resolved_voice_keys=["jarnathan"],
+    )
+    assert scripts[0]["total_words"] == 3
+
+
 def test_replay_rejects_multi_variant():
-    with pytest.raises(ValueError, match="n_variants=1"):
+    with pytest.raises(ValueError, match="n-variants 1|n_variants=1"):
         _step_generate_script(
             poi_name="x", location="", clips_metadata=[],
             n_variants=2, script_candidates=1, target_duration_sec=65.0,

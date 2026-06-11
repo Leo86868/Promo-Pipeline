@@ -95,35 +95,6 @@ def render_from_props_file(props_path: str, output_path: str) -> bool:
 #  CLI
 # ---------------------------------------------------------------------------
 
-def load_replay_script(path: str) -> dict:
-    """翻转二 B6 — load a recorded script for ``--replay-script``.
-
-    Accepts either a ``clip_assignments_*.json`` sidecar (uses
-    ``variants[0]["script"]`` — the FINAL accepted script recorded at
-    render time) or a bare ``{"segments": [...]}`` script JSON. Raises
-    ``ValueError`` with an operator-readable message on any other shape.
-    """
-    payload = json.loads(open(path, encoding="utf-8").read())
-    if isinstance(payload, dict) and isinstance(payload.get("variants"), list):
-        variants = payload["variants"]
-        if not variants or not isinstance(variants[0], dict):
-            raise ValueError(f"{path}: clip_assignments file has no variants")
-        script = variants[0].get("script")
-        if not isinstance(script, dict):
-            raise ValueError(
-                f"{path}: variant row carries no 'script' field — the run "
-                "predates script recording (2026-06-11); re-render the "
-                "source video on current code first"
-            )
-        return script
-    if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
-        return payload
-    raise ValueError(
-        f"{path}: expected a clip_assignments sidecar or a "
-        "{'segments': [...]} script JSON"
-    )
-
-
 def _build_backend(args) -> PromoBackend:
     """Construct the appropriate backend from CLI arguments.
 
@@ -212,17 +183,6 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Skip MiMo clip analysis (use blank descriptions)")
     parser.add_argument("--render-props", type=str, default=None,
                         help="Render from existing props.json (skips all pipeline stages)")
-    parser.add_argument(
-        "--replay-script",
-        type=str,
-        default=None,
-        help=(
-            "Replay a recorded script instead of calling Gemini #1 (翻转二 B6 "
-            "same-script A/B). Accepts a clip_assignments_*.json sidecar "
-            "(takes variants[0].script) or a bare {segments: [...]} JSON. "
-            "Requires --n-variants 1."
-        ),
-    )
     parser.add_argument(
         "--target-duration-sec",
         type=float,
@@ -394,15 +354,6 @@ def main():
         if not bgm_paths:
             parser.error(f"No .mp3 files found in --bgm-dir: {args.bgm_dir}")
 
-    replay_script = None
-    if args.replay_script:
-        try:
-            replay_script = load_replay_script(args.replay_script)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            parser.error(f"--replay-script: {exc}")
-        if args.n_variants != 1:
-            parser.error("--replay-script requires --n-variants 1")
-
     # Sprint 09b C4 (Codex #6): surface MimoAnalysisError as a user-facing
     # exit rather than a raw traceback. The error message names the
     # failing clip_id so the operator can diagnose which source file broke.
@@ -421,7 +372,6 @@ def main():
             script_candidates=args.script_candidates,
             tts_speed=args.tts_speed,
             seed=args.seed,
-            replay_script=replay_script,
         )
     except MimoAnalysisError as exc:
         logger.error(

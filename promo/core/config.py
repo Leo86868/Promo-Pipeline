@@ -251,6 +251,18 @@ def promo_format_selector() -> str:
     return value
 
 
+def replay_script_path() -> Optional[str]:
+    """Path to a recorded script for replay (翻转二 B6 same-script A/B).
+
+    When set, ``_step_generate_script`` skips Gemini #1 and replays the
+    recorded script (a ``clip_assignments_*.json`` sidecar or a bare
+    ``{"segments": [...]}`` JSON). Pairs with ``PROMO_CLIP_ASSIGNER``:
+    the A/B runner sets both env vars and renders; no CLI plumbing.
+    """
+    value = os.getenv("PROMO_REPLAY_SCRIPT", "").strip()
+    return value or None
+
+
 _ALLOWED_CLIP_ASSIGNERS = ("gemini2", "packer")
 
 

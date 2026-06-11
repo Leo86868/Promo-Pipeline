@@ -82,6 +82,55 @@ def analyze_clips_for_script(
 # with explicit kwargs so tests can drive them directly.
 
 
+def load_replay_script(path: str, *, n_variants: int = 1) -> dict:
+    """翻转二 B6 — load a recorded script for ``compile_promo --replay-script``.
+
+    Accepts either a ``clip_assignments_*.json`` sidecar (uses
+    ``variants[0]["script"]`` — the FINAL accepted script recorded at the
+    success-gated commit point in ``variant_loop``) or a bare
+    ``{"segments": [...]}`` script JSON. Raises ``ValueError`` with an
+    operator-readable message on any other shape, and when
+    ``n_variants != 1`` (a replay is one fixed script, not a variant pack).
+    """
+    import json
+
+    if n_variants != 1:
+        raise ValueError(f"--replay-script requires --n-variants 1 (got {n_variants})")
+    payload = json.loads(open(path, encoding="utf-8").read())
+    if isinstance(payload, dict) and isinstance(payload.get("variants"), list):
+        variants = payload["variants"]
+        if not variants or not isinstance(variants[0], dict):
+            raise ValueError(f"{path}: clip_assignments file has no variants")
+        script = variants[0].get("script")
+        if not isinstance(script, dict):
+            raise ValueError(
+                f"{path}: variant row carries no 'script' field — the run "
+                "predates script recording (2026-06-11); re-render the "
+                "source video on current code first"
+            )
+        return script
+    if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
+        return payload
+    raise ValueError(
+        f"{path}: expected a clip_assignments sidecar or a "
+        "{'segments': [...]} script JSON"
+    )
+
+
+def _wpm_search_dirs(backend: "PromoBackend", output_path: str) -> list[str]:
+    """Sidecar dirs to probe for calibrated-WPM files: the run's output
+    dir and its parent (extracted from ``full_pipeline`` to keep its
+    body under the Sprint 10 C4 400-line ceiling)."""
+    dirs: list[str] = []
+    try_dir = backend.output_dir() or os.path.dirname(output_path)
+    if isinstance(try_dir, str) and try_dir:
+        dirs.append(try_dir)
+        parent = os.path.dirname(try_dir)
+        if parent and parent != try_dir:
+            dirs.append(parent)
+    return dirs
+
+
 def _step_generate_script(
     *,
     poi_name: str,
@@ -130,9 +179,14 @@ def _step_generate_script(
     Raises ``RuntimeError`` on variant-pack under-delivery or if
     ``generate_script_variants`` itself gives up.
     """
+    from promo.core import config as promo_config
     from promo.core.narrate.tts_engine import VOICE_CATALOG
     from promo.core.script.script_generator import generate_script_variants
 
+    if replay_script is None:
+        env_path = promo_config.replay_script_path()
+        if env_path:
+            replay_script = load_replay_script(env_path, n_variants=n_variants)
     if replay_script is not None:
         if n_variants != 1:
             raise ValueError(
