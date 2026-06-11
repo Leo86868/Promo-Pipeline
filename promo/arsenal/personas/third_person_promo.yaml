@@ -110,7 +110,27 @@ example_scripts:
     format: long
     segments:
       - "$400 a night. No walls on the villa. No shoes on the island. Soneva Fushi built barefoot luxury before the rest of the world caught on."
-      - "Seaplane drops you on a sandbank in the middle of blue. Staff in bare feet hand you a coconut. Your phone goes quiet. It stays that way."
+      - "Seaplane drops you on a sandbank in the middle of blue. Staff in bare feet hand you a coconut. The whole island runs barefoot, and within an hour, so do you. Your phone goes quiet. It stays that way."
       - "You wake up three steps from the reef. Morning light turns the lagoon almost too turquoise to believe. No boat ride. No guide. Just roll off the deck and drift."
-      - "Open-air cinema on the sand. A chocolate room that runs floor to ceiling. Six restaurants — one of them floats. Their astronomer shows you Saturn's rings after dinner."
+      - "Open-air cinema on the sand. A chocolate room that runs floor to ceiling. Six restaurants — one of them floats. Your bathroom is outdoors, under the trees, hot water and birdsong at once. Their astronomer shows you Saturn's rings after dinner."
       - "Soneva Fushi. They stripped away everything a resort is supposed to have. And somehow built the one you'll never stop thinking about."
+
+  - hotel: Secrets Huatulco Resort & Spa
+    location: "Huatulco, Mexico"
+    format: long
+    segments:
+      - "Most resorts save the best views for their top suites. Here, they built three hundred ninety-nine of them. Every single room faces the ocean, built right into the cliffs. No exceptions."
+      - "You arrive and the world just goes quiet. The only sound is the Pacific hitting the rocks below. The air is warm, thick with salt. You're completely tucked away in your own private bay."
+      - "You wake up and the first thing you see is blue. Your balcony has its own plunge pool, just for you. Or you can make your way to the infinity pools, floating right on the cliff's edge."
+      - "At sunset, you find a table on the terrace, lit by candles. Later, the circular hot tubs are filled with floating flower petals. It's that kind of place. Small, deliberate moments that stay with you."
+      - "This is Secrets Huatulco Resort and Spa. It's a place that doesn't shout, it whispers. And you remember every single word."
+
+  - hotel: Nemacolin
+    location: "Farmington, Pennsylvania"
+    format: long
+    segments:
+      - "You're not in France. You're not in some forgotten corner of Europe. You're two hours from Pittsburgh, on two thousand two hundred acres of absolute fantasy. It almost doesn't make sense."
+      - "Pulling up, the scale of it hits you. It feels like you've found a secret kingdom hidden in the hills. Inside, the world gets quiet. The ceilings are high, the light is soft."
+      - "Your room is its own world, a place you don't want to leave. Then you find the pools. You can swim indoors under a glass roof, or float in an infinity pool that spills right into the hills."
+      - "Dinner is an event in a room that feels like a movie set. They bring you this perfect, glossy red apple for dessert. Later, you're by a fire pit, staring up at actual stars."
+      - "This is Nemacolin. It's a place that's a little bit impossible. You leave feeling like you just woke up from a really good dream."
