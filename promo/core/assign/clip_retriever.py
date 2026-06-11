@@ -1,19 +1,14 @@
-"""Sprint 12a — stateless top-k retrieval over pre-embedded clip metadata.
+"""Stateless cosine ranking over pre-embedded clip metadata.
 
-Pairs with ``clip_embedder``: the embedder persists a per-POI sidecar of
-clip vectors, and this retriever ranks those vectors against one or more
-phrase queries via numpy cosine similarity.
+Pairs with ``clip_embedder``/the platform embedding table: vectors come
+pre-computed, and this module ranks them against beat-text queries for
+the packer (``rank_per_query``). The legacy Gemini #2 inventory-narrowing
+API (``top_k``/``union_of_top_k``) retired with that chain on 2026-06-11.
 
-**Stateless by design.** ``top_k`` and ``union_of_top_k`` both re-read
-``clip_metadata`` and re-embed the query on every call — no lru_cache,
-no module-level memo. This is load-bearing for Sprint 12b's F3 retry
-path: when Gemini #1 regenerates the script on retry, the phrase queries
-change, and any memoization would surface stale top-k results.
-
-No file I/O inside ``top_k``. Query embedding is delegated via the
-``embed_query_fn`` parameter, which defaults to
-``clip_embedder.embed_texts`` in production but is trivially injectable
-in tests.
+**Stateless by design** — no lru_cache, no module memo; every call
+re-embeds and re-ranks. Query embedding is delegated via the
+``embed_query_fn`` parameter (defaults to ``clip_embedder.embed_texts``;
+trivially injectable in tests).
 """
 
 from __future__ import annotations
@@ -74,72 +69,6 @@ def _cosine_rank(
     return [(ids[i], float(sims[i])) for i in order]
 
 
-def top_k_by_vector(
-    query_vec: list[float] | np.ndarray,
-    clip_metadata: list[dict],
-    k: int = 6,
-) -> list[str]:
-    """Pure-numpy top-k. Exposed for callers that already hold a query vector
-    (e.g. 12b's ``union_of_top_k`` batches query embedding upstream).
-
-    No network I/O. No file I/O. No memoization.
-    """
-    if k <= 0:
-        raise ValueError(f"k must be positive (got {k})")
-    if not clip_metadata:
-        raise ValueError("clip_metadata is empty — no pool to retrieve from")
-
-    ids, matrix = _extract_clip_vectors(clip_metadata)
-    pool_size = len(ids)
-    effective_k = k
-    if k > pool_size:
-        logger.debug(
-            "top_k clamped: k=%d > pool_size=%d; returning %d",
-            k, pool_size, pool_size,
-        )
-        effective_k = pool_size
-
-    q = np.asarray(query_vec, dtype=np.float32)
-    ranked = _cosine_rank(q, matrix, ids)
-    return [cid for cid, _ in ranked[:effective_k]]
-
-
-def top_k(
-    phrase_query: str,
-    clip_metadata: list[dict],
-    k: int = 6,
-    *,
-    embed_query_fn: Optional[EmbedQueryFn] = None,
-) -> list[str]:
-    """Return up to ``k`` clip_ids ranked by cosine similarity to ``phrase_query``.
-
-    ``clip_metadata`` must be a list of dicts each carrying at minimum
-    ``id`` and ``embedding`` (1-D float list). The embedding dimension
-    must match across entries.
-
-    ``embed_query_fn`` — accepts ``list[str]`` and returns ``list[list[float]]``.
-    Defaults to ``clip_embedder.embed_texts`` at first call (lazy import).
-    Tests inject a stub to avoid network I/O.
-
-    **Raises**
-      - ``ValueError`` on ``k <= 0`` or empty ``clip_metadata``.
-
-    **Clamps** ``k`` to ``len(clip_metadata)`` with a DEBUG log when ``k > pool_size``.
-
-    **No memoization.** A repeated call issues a fresh embed + rank.
-    """
-    if k <= 0:
-        raise ValueError(f"k must be positive (got {k})")
-    if not clip_metadata:
-        raise ValueError("clip_metadata is empty — no pool to retrieve from")
-
-    embed_fn = embed_query_fn or _default_embed_query_fn
-    query_vecs = embed_fn([phrase_query])
-    if not query_vecs:
-        raise RuntimeError("embed_query_fn returned no vectors")
-    return top_k_by_vector(query_vecs[0], clip_metadata, k=k)
-
-
 def rank_per_query(
     queries: list[str],
     clip_metadata: list[dict],
@@ -177,59 +106,3 @@ def rank_per_query(
         _cosine_rank(np.asarray(qvec, dtype=np.float32), matrix, ids)
         for qvec in query_vecs
     ]
-
-
-def union_of_top_k(
-    narration_queries: list[str],
-    clip_metadata: list[dict],
-    k: int = 6,
-    *,
-    embed_query_fn: Optional[EmbedQueryFn] = None,
-) -> tuple[list[str], int]:
-    """Return ``(deduped_clip_ids, union_size)`` — first-occurrence-ordered.
-
-    Batches the query embedding into a single ``embed_query_fn`` call for
-    efficiency (one OpenAI round-trip instead of N).
-
-    Parameter is ``narration_queries`` because Sprint 12b feeds this the
-    per-segment narration text (``script["segments"][i]["text"]``), not
-    phrase-level sub-spans. Phrase boundaries are an EMITTED product of
-    Gemini #2 (``start_word_idx``/``end_word_idx`` in the assignment
-    output), so they do not exist at retrieval time, which runs BEFORE
-    Gemini #2. Segment text is the narration unit available pre-Gemini-#2.
-
-    Sprint 12b consumer: feeds the deduped list into the Gemini #2 inventory
-    block. ``union_size`` lets 12b implement the "union_size ≥ phrase_count
-    OR fall back to full pool" rule the advisor flagged as hazard #2.
-
-    **No memoization.** Each call re-embeds queries and re-ranks. Load-bearing
-    for F3 retry correctness: Gemini #1 may rewrite the script on retry,
-    changing ``narration_queries``; a memoized top-k would return stale
-    results.
-    """
-    if k <= 0:
-        raise ValueError(f"k must be positive (got {k})")
-    if not clip_metadata:
-        raise ValueError("clip_metadata is empty — no pool to retrieve from")
-    if not narration_queries:
-        raise ValueError(
-            "narration_queries is empty — upstream pipeline error "
-            "(Gemini #1 should never produce a zero-segment script)"
-        )
-
-    embed_fn = embed_query_fn or _default_embed_query_fn
-    query_vecs = embed_fn(narration_queries)
-    if len(query_vecs) != len(narration_queries):
-        raise RuntimeError(
-            f"embed_query_fn returned {len(query_vecs)} vectors "
-            f"for {len(narration_queries)} queries"
-        )
-
-    seen: set[str] = set()
-    union: list[str] = []
-    for qvec in query_vecs:
-        for cid in top_k_by_vector(qvec, clip_metadata, k=k):
-            if cid not in seen:
-                seen.add(cid)
-                union.append(cid)
-    return union, len(union)

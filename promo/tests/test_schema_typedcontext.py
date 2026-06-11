@@ -82,19 +82,19 @@ def test_public_functions_on_six_modules_keep_their_names():
     """N1: runtime-parity guardrail — public entry points exist with unchanged names."""
     # Minimum set exercised downstream of the refactor. If any of these
     # symbols moves/renames, compile_promo's orchestrator breaks.
-    from promo.core.assign.clip_assigner import assign_clips, assign_clips_with_f3_retry
+    from promo.core.assign.beat_planner import plan_beats
     from promo.core.assign.clip_embedder import attach_embeddings_to_metadata, embed_clips_for_poi
-    from promo.core.assign.clip_retriever import top_k, union_of_top_k
+    from promo.core.assign.clip_retriever import rank_per_query
+    from promo.core.assign.packer import pack_clips
     from promo.core.render.remotion_renderer import build_props_from_script
     from promo.core.script.script_generator import generate_script_variants
     from promo.core.narrate.tts_engine import generate_narration
 
-    assert assign_clips.__name__ == "assign_clips"
-    assert assign_clips_with_f3_retry.__name__ == "assign_clips_with_f3_retry"
+    assert plan_beats.__name__ == "plan_beats"
+    assert pack_clips.__name__ == "pack_clips"
+    assert rank_per_query.__name__ == "rank_per_query"
     assert attach_embeddings_to_metadata.__name__ == "attach_embeddings_to_metadata"
     assert embed_clips_for_poi.__name__ == "embed_clips_for_poi"
-    assert top_k.__name__ == "top_k"
-    assert union_of_top_k.__name__ == "union_of_top_k"
     assert build_props_from_script.__name__ == "build_props_from_script"
     assert generate_script_variants.__name__ == "generate_script_variants"
     assert generate_narration.__name__ == "generate_narration"
@@ -108,8 +108,6 @@ def test_ac14_signature_grep_residual_at_zero():
     defense-in-depth guardrail against L-004 annotation drift.
     """
     targets = [
-        "promo/core/assign/clip_assigner.py",
-        "promo/core/assign/clip_assignment_gemini.py",
         "promo/core/assign/clip_assignment_sidecar.py",
         "promo/core/assign/clip_assignment_validator.py",
         "promo/core/script/script_generator.py",

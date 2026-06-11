@@ -19,7 +19,7 @@ This module is the CLI shell. Pipeline orchestration lives in
 ``promo.core.pipeline`` (promo-handoff-readiness Sprint 4 A-001 narrow
 decomposition). Private helpers that the test suite imports directly
 (``_variant_output_path``, ``_discover_bgm_files``, ``_write_sidecar``,
-``_step_tts_narration``, ``_step_assign_clips``, ``_filter_clips_by_ids``)
+``_step_tts_narration``, ``_step_assign_clips``)
 are re-exported from their new subpackage locations to keep the
 ``from promo.cli.compile_promo import ...`` import surface stable.
 """
@@ -61,7 +61,6 @@ from promo.core.pipeline.sidecar_writer import (
 )
 from promo.core.pipeline.steps import (
     _build_variant_selections as _build_variant_selections,
-    _filter_clips_by_ids as _filter_clips_by_ids,
     _step_assign_clips as _step_assign_clips,
     _step_generate_script as _step_generate_script,
     _step_prepare_clips as _step_prepare_clips,

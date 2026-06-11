@@ -39,12 +39,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Sprint 12b / Sprint 13 post-audit DC-6: retrieval top-k for the Gemini #2
-# inventory-narrowing union. Tuning this is a calibration choice; previously
-# hardcoded in 3 call sites inside _step_assign_clips. A single constant keeps
-# the closure's log line, the union_of_top_k call, and any future analytical
-# consumer in lockstep.
-RETRIEVAL_TOP_K = 6
 TTS_ASSEMBLY_DRIFT_MAX_ATTEMPTS = 2
 TTS_ASSEMBLY_DRIFT_RETRY_MAX_SEC = 1.0
 _TTS_ASSEMBLY_DRIFT_MARKER = "Narration assembly drift too large"
@@ -525,20 +519,6 @@ def _build_variant_tts_metrics(
     }
 
 
-def _filter_clips_by_ids(
-    clips_metadata: list[dict], reduced_ids: list[str],
-) -> list[dict]:
-    """Filter ``clips_metadata`` to entries whose ``id`` is in ``reduced_ids``,
-    preserving ``reduced_ids`` insertion order (not ``clips_metadata`` order).
-
-    Sprint 12b — ``union_of_top_k`` returns ranked-then-deduped clip_ids;
-    preserving that order when feeding Gemini #2 carries the retrieval
-    signal through to the prompt (primacy in the inventory block).
-    """
-    by_id = {str(clip["id"]): clip for clip in clips_metadata}
-    return [by_id[cid] for cid in reduced_ids if cid in by_id]
-
-
 def _step_assign_clips(
     script: dict,
     narration: dict,
@@ -563,230 +543,32 @@ def _step_assign_clips(
     asset_visual_brief: dict | None = None,
     shared_assets: list[dict] | None = None,
 ) -> tuple[dict, dict, list[dict], dict]:
-    """Gemini #2 clip assignment with F3 single-retry policy.
+    """Deterministic clip assignment (翻转二, sole engine since 2026-06-11).
 
-    Sprint 10 C4: extraction of the F3 retry block from ``full_pipeline``.
-    Builds ``regenerate_script_fn`` + ``regenerate_narration_fn`` closures
-    over the variant's context and delegates to
-    :func:`clip_assigner.assign_clips_with_f3_retry`.
+    Beat planner → per-beat retrieval → packer → the production validator,
+    via :func:`_assign_clips_packer`. Script and narration pass through
+    untouched; the unused per-variant kwargs (voice/tmp-dir/profile/...)
+    are kept so the caller contract is stable — they belonged to the
+    retired Gemini #2 + F3 script-regen chain (removed 2026-06-11 after
+    the same-script A/B verdict; see ROADMAP-2026-06.md §执行日志).
 
-    Returns ``(final_script, final_narration, assignments, retrieval_provenance)``
-    on success. Raises :class:`ClipAssignmentError` when Gemini #2 violates
-    the hard constraint on its second attempt, or :class:`RuntimeError`
-    when the Gemini #1 regeneration call itself exhausts its attempt
-    budget — both are variant-abort conditions at the caller.
-
-    Sprint 12b — when ``embedding_cache_dir`` is supplied, builds a
-    retrieval closure (``union_of_top_k`` over segment-text queries at
-    k=6) that narrows ``clips_metadata`` before each Gemini #2 attempt.
-    Falls back to the full pool with a WARNING log when either the
-    sidecar's embedded pool shrank below the MiMo pool, or the
-    per-segment union came out shorter than the segment count.
-
-    Sprint 13 AC19 (D-004) — the retrieval closure updates the
-    ``retrieval_provenance`` dict returned to the caller so the
-    ``clip_assignments`` sidecar can record retrieval_active,
-    embedded_pool_size, reduced_pool_size, mimo_prompt_sha1, and
-    fallback_reason at run-end. Post-hoc quality regression attribution
-    no longer has to mine the log files for these signals.
-
-    Sprint 18 F — retrieval is a **soft hint** (advisory). The four
-    fallback codes (``no_sidecar``, ``m4_attach_shrinkage``,
-    ``h2_union_shortfall``, ``retrieval_exception``) encode cases where
-    retrieval did not even reach Gemini #2 with a narrowed pool and the
-    full ``clips_metadata`` was used instead; even when retrieval *did*
-    produce a narrowed pool, ``assign_clips_with_f3_retry`` does not
-    reject a Gemini #2 reply whose ``clip_id`` falls outside the
-    retrieved subset. The provenance dict carries
-    ``retrieval_contract: "soft_hint"`` (seeded by
-    ``_empty_retrieval_provenance``) so the ``clip_assignments_*.json``
-    sidecar declares the contract explicitly. See
-    ``docs/schemas/clip_assignments.md`` "Soft hint contract" + the
-    matching block in ``clip_assigner.assign_clips_with_f3_retry``'s
-    docstring for the design rationale.
+    Returns ``(script, narration, assignments, provenance)``. Raises
+    ``ClipAssignmentError`` (no coverable candidate), ``UsageWindowError``
+    (ledger read failed — fail-closed per 设计契约 ②), or ``RuntimeError``
+    (no embedding source) — all variant-abort conditions at the caller.
     """
-    from promo.core.assign.clip_assigner import assign_clips_with_f3_retry
-    from promo.core.script.script_generator import regenerate_single_variant_with_hint
-    from promo.core.narrate.tts_engine import generate_narration
-
-    from promo.core import config as promo_config
-
-    # 翻转二 B5 — PROMO_CLIP_ASSIGNER=packer routes to the deterministic
-    # chain (beat planner → per-beat retrieval → packer → same validator).
-    # No F3 machinery: with beats targeting ≤4s vs clips ≥5s the duration
-    # hard-constraint loses its normal failure mode — though long authored
-    # pauses can still produce over-ceiling beats, which surface loudly
-    # (planner WARNING + provenance["packer"]["overlong_beats"]) instead
-    # of being retried.
-    if promo_config.clip_assigner() == "packer":
-        return _assign_clips_packer(
-            script,
-            narration,
-            clips_metadata,
-            clip_durations,
-            embedding_cache_dir=embedding_cache_dir,
-            shared_assets=shared_assets,
-        )
-
-    def _regen_script(hint: str) -> dict:
-        # Sprint 16 — F3 regen uses the SAME profile + persona the original
-        # variant was built with, threaded from the variant-loop selectors.
-        # TypedDict boundary (same reasoning as ``_step_generate_script``):
-        # pipeline carries ``list[dict]``; script_generator narrows internally.
-        return regenerate_single_variant_with_hint(  # type: ignore[return-value]
-            poi_name=poi_name,
-            location=location,
-            clips_metadata=clips_metadata,  # type: ignore[arg-type]
-            hotel_description=hotel_description,
-            notable_details=notable_details,
-            variant_index=variant_index,
-            n_variants=n_variants_total,
-            variant_plan=None,
-            tighten_hint=hint,
-            n_candidates=script_candidates,
-            target_duration_sec=target_duration_sec,
-            profile=variant_profile,
-            persona=variant_persona,
-            asset_visual_brief=asset_visual_brief,
-        )
-
-    def _regen_narration(new_script: dict) -> dict:
-        compute_pause_budget(
-            new_script["segments"],
-            target_sec=target_duration_sec,
-            wpm=effective_wpm,
-        )
-        retry_dir = os.path.join(variant_tmp_dir, "f3_retry")
-        os.makedirs(retry_dir, exist_ok=True)
-        return generate_narration(  # type: ignore[return-value]
-            segments=new_script["segments"],
-            voice_key=variant_voice_key,
-            output_dir=retry_dir,
-            speed=tts_speed,
-        )
-
-    # Sprint 13 AC19 — retrieval provenance. Default = "inactive"; the
-    # reduced_pool_size default of full-pool is meaningful for the
-    # "retrieval never ran" path (no embedding_cache_dir threaded).
-    retrieval_provenance = _empty_retrieval_provenance()
-    retrieval_provenance["reduced_pool_size"] = len(clips_metadata)
-    retrieve_clips_fn = None
-    if embedding_cache_dir is not None:
-        from promo.core.assign import clip_embedder, clip_retriever
-
-        sidecar = clip_embedder.load_embeddings_for_poi(embedding_cache_dir)
-        if sidecar is None:
-            retrieval_provenance["fallback_reason"] = "no_sidecar"
-            logger.warning(
-                "Sprint 12b retrieval disabled: no embedding sidecar at %s "
-                "(run build_embedding_index for this POI). Falling back to "
-                "full-pool Gemini #2 (Sprint 11 behavior).",
-                embedding_cache_dir,
-            )
-        else:
-            embedded_metadata, dropped_clip_ids = (
-                clip_embedder.attach_embeddings_to_metadata(
-                    clips_metadata, sidecar,  # type: ignore[arg-type]
-                )
-            )
-            retrieval_provenance["retrieval_active"] = True
-            retrieval_provenance["embedded_pool_size"] = len(embedded_metadata)
-            # Sprint 13 post-audit D-004: an embedding sidecar missing
-            # `mimo_prompt_sha1` (externally-modified or hand-crafted) would
-            # otherwise silently record sha1=null alongside retrieval_active=
-            # true — inconsistent for the cross-reference to the sidecar
-            # filename. Warn + record None so the provenance is at least
-            # diagnosable.
-            sha1 = sidecar.get("mimo_prompt_sha1")
-            if sha1 is None:
-                logger.warning(
-                    "Sprint 13 provenance gap: embedding sidecar at %s is "
-                    "missing 'mimo_prompt_sha1'; clip_assignments record "
-                    "will store mimo_prompt_sha1=null. Rebuild the index to "
-                    "restore the cross-reference to .embedding_cache/.",
-                    embedding_cache_dir,
-                )
-            retrieval_provenance["mimo_prompt_sha1"] = sha1
-            # Sprint 13 post-audit D-006: suppress duplicate `m4_attach_shrinkage`
-            # WARNINGs on F3 retry. The shrinkage condition is a static property
-            # of the loaded sidecar — if it held on the first attempt, it will
-            # hold on the F3 retry too, and the unified WARNING should fire ONCE
-            # per variant.
-            _retrieve_state = {"m4_warned": False}
-
-            def _retrieve(current_script: dict) -> list[dict]:
-                try:
-                    if len(embedded_metadata) < len(clips_metadata):
-                        # Sprint 13 AC18 (D-002): unified fallback WARNING folds
-                        # counts + dropped_ids + fallback reason into one record.
-                        if not _retrieve_state["m4_warned"]:
-                            logger.warning(
-                                "Sprint 12b retrieval fallback [m4_attach_shrinkage]: "
-                                "embedded pool shrunk from %d to %d clips (dropped: %s); "
-                                "using full clips_metadata for Gemini #2 attempt.",
-                                len(clips_metadata), len(embedded_metadata),
-                                dropped_clip_ids,
-                            )
-                            _retrieve_state["m4_warned"] = True
-                        retrieval_provenance["fallback_reason"] = "m4_attach_shrinkage"
-                        retrieval_provenance["reduced_pool_size"] = len(clips_metadata)
-                        return clips_metadata
-                    narration_queries = [
-                        seg["text"] for seg in current_script.get("segments", [])
-                    ]
-                    reduced_ids, union_size = clip_retriever.union_of_top_k(
-                        narration_queries, embedded_metadata, k=RETRIEVAL_TOP_K,  # type: ignore[arg-type]
-                    )
-                    if union_size < len(narration_queries):
-                        logger.warning(
-                            "Sprint 12b retrieval fallback [h2_union_shortfall]: "
-                            "union size %d < %d narration queries (heavy overlap "
-                            "at k=%d); using full clips_metadata for Gemini #2 attempt.",
-                            union_size, len(narration_queries), RETRIEVAL_TOP_K,
-                        )
-                        retrieval_provenance["fallback_reason"] = "h2_union_shortfall"
-                        retrieval_provenance["reduced_pool_size"] = len(clips_metadata)
-                        return clips_metadata
-                    reduced = _filter_clips_by_ids(clips_metadata, reduced_ids)
-                    logger.info(
-                        "Sprint 12b retrieval narrowed Gemini #2 inventory: "
-                        "%d clips → %d clips (union of top-%d over %d segments)",
-                        len(clips_metadata), len(reduced), RETRIEVAL_TOP_K,
-                        len(narration_queries),
-                    )
-                    retrieval_provenance["fallback_reason"] = None
-                    retrieval_provenance["reduced_pool_size"] = len(reduced)
-                    return reduced
-                except Exception:
-                    # Sprint 13 post-audit L-001: `assign_clips_with_f3_retry`
-                    # swallows any exception from this closure and falls back
-                    # to the full pool (design intent preserved). Record the
-                    # exception in retrieval_provenance so the sidecar does not
-                    # falsely advertise a clean retrieval when a fallback
-                    # actually fired.
-                    retrieval_provenance["fallback_reason"] = "retrieval_exception"
-                    retrieval_provenance["reduced_pool_size"] = len(clips_metadata)
-                    raise
-
-            retrieve_clips_fn = _retrieve
-
-    # TypedDict boundary — ``assign_clips_with_f3_retry`` narrows
-    # ``script``/``narration``/``clips_metadata`` to their TypedDict forms
-    # internally; the pipeline carries the loose ``dict``/``list[dict]``
-    # shapes that matched the pre-Sprint-14 public surface. Same pattern as
-    # ``_step_generate_script``: runtime identical; ignore preserves the
-    # ``list[dict]`` pipeline contract until a future sprint retypes it.
-    final_script, final_narration, assignments = assign_clips_with_f3_retry(
-        script,  # type: ignore[arg-type]
-        narration,  # type: ignore[arg-type]
-        clips_metadata,  # type: ignore[arg-type]
+    del variant_index, poi_name, location, hotel_description, notable_details
+    del variant_voice_key, variant_tmp_dir, tts_speed, target_duration_sec
+    del effective_wpm, n_variants_total, script_candidates
+    del variant_profile, variant_persona, asset_visual_brief
+    return _assign_clips_packer(
+        script,
+        narration,
+        clips_metadata,
         clip_durations,
-        variant_index=variant_index,
-        regenerate_script_fn=_regen_script,  # type: ignore[arg-type]
-        regenerate_narration_fn=_regen_narration,  # type: ignore[arg-type]
-        retrieve_clips_fn=retrieve_clips_fn,  # type: ignore[arg-type]
+        embedding_cache_dir=embedding_cache_dir,
+        shared_assets=shared_assets,
     )
-    return final_script, final_narration, assignments, retrieval_provenance  # type: ignore[return-value]
 
 
 def _default_usage_client() -> Any:
@@ -801,8 +583,7 @@ def _default_usage_client() -> Any:
     if not url or not key:
         raise RuntimeError(
             "packer window rotation requires SUPABASE_URL + key in env "
-            "(fail-closed per 设计契约 ②; set PROMO_CLIP_ASSIGNER=gemini2 "
-            "to fall back to the legacy assigner)"
+            "(fail-closed per 设计契约 ②)"
         )
     from supabase import create_client
 
@@ -942,14 +723,14 @@ def _assign_clips_packer(
             )
         else:
             raise RuntimeError(
-                "PROMO_CLIP_ASSIGNER=packer found no embeddings: none inline, "
+                "clip assignment found no embeddings: none inline, "
                 f"no sidecar at {embedding_cache_dir!r}, and no clip→asset "
                 "mapping for a platform lookup — run build_embedding_index "
                 "for local clips, or use a platform-backed POI"
             )
     if not embedded_metadata:
         raise RuntimeError(
-            f"PROMO_CLIP_ASSIGNER=packer: embedding source '{embedding_source}' "
+            f"clip assignment: embedding source '{embedding_source}' "
             "matched zero clips"
         )
     if dropped_clip_ids:

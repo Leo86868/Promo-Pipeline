@@ -66,7 +66,6 @@ MOVED_DEFS = frozenset({
     "_variant_output_path",
     "_empty_retrieval_provenance",
     "_build_variant_tts_metrics",
-    "_filter_clips_by_ids",
     "analyze_clips_for_script",
     "_build_variant_selections",
 })
@@ -78,7 +77,6 @@ EXPECTED_COMPILE_PROMO_IMPORTS = frozenset({
     "_write_sidecar",
     "_step_tts_narration",
     "_step_assign_clips",
-    "_filter_clips_by_ids",
     "_build_parser",
 })
 
@@ -178,4 +176,26 @@ class TestSprint4N4NoNewAbstractions:
                 offenders.append(f"{py_path.name}: load_dotenv call")
         assert not offenders, (
             f"Forbidden abstractions / load_dotenv in pipeline: {offenders}"
+        )
+
+
+class TestFullPipelineBodyCeiling:
+    """Re-homed from the retired Sprint10C4 class (2026-06-11 legacy
+    sweep): full_pipeline's body stays under the 400-line decomposition
+    ceiling regardless of which assigner era we are in."""
+
+    def test_full_pipeline_body_under_400_lines(self):
+        import ast
+        import inspect
+
+        from promo.core.pipeline import pipeline as pipeline_module
+
+        tree = ast.parse(inspect.getsource(pipeline_module))
+        fn = next(
+            n for n in tree.body
+            if isinstance(n, ast.FunctionDef) and n.name == "full_pipeline"
+        )
+        body_lines = fn.end_lineno - fn.lineno
+        assert body_lines < 400, (
+            f"full_pipeline body is {body_lines} lines; ceiling is 400."
         )

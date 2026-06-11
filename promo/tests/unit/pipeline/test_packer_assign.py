@@ -248,13 +248,3 @@ def test_dispatch_env_routes_to_packer(monkeypatch):
     assert out is sentinel
 
 
-def test_config_rejects_unknown_assigner(monkeypatch):
-    from promo.core import config
-
-    monkeypatch.setenv("PROMO_CLIP_ASSIGNER", "gemini3")
-    with pytest.raises(config.ConfigError, match="PROMO_CLIP_ASSIGNER"):
-        config.clip_assigner()
-    monkeypatch.setenv("PROMO_CLIP_ASSIGNER", "packer")
-    assert config.clip_assigner() == "packer"
-    monkeypatch.delenv("PROMO_CLIP_ASSIGNER")
-    assert config.clip_assigner() == "gemini2"

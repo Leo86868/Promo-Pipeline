@@ -456,7 +456,7 @@ def test_full_pipeline_emits_local_run_manifest(tmp_path):
             "trim_start": 0.0,
             "display_span_sec": 0.8,
             "source_duration_sec": 5.0,
-        }]
+        }], {"assigner": "packer", "retrieval_contract": "soft_hint"}
 
     def fake_build_props(*_args, **kwargs):
         kwargs["timeline_entries"].append({
@@ -496,7 +496,7 @@ def test_full_pipeline_emits_local_run_manifest(tmp_path):
         "promo.core.narrate.tts_engine.generate_narration",
         return_value=narration,
     ), patch(
-        "promo.core.assign.clip_assigner.assign_clips_with_f3_retry",
+        "promo.core.pipeline.steps._assign_clips_packer",
         side_effect=fake_assign,
     ), patch(
         "promo.core.pipeline.variant_loop.build_props_from_script",

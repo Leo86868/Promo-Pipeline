@@ -158,7 +158,7 @@ def _run_variant_loop(
         # Step 4.5 (Sprint 10 C4): Gemini #2 clip assignment with F3
         # single-retry. ClipAssignmentError / RuntimeError on second
         # attempt abort this variant (other variants still render).
-        from promo.core.assign.clip_assigner import ClipAssignmentError
+        from promo.core.errors import ClipAssignmentError
         try:
             script, narration, variant_assignments, variant_retrieval = _step_assign_clips(
                 script,

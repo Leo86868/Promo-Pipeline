@@ -1,0 +1,22 @@
+[
+  {
+    "id": "usage_only_revert",
+    "prompt": "Use the pgc-production-batch skill. Revert usage for manifest manifest_X.",
+    "expected": "Treat as usage-only revert: query usage rows and linked release_candidates, preview event/asset counts and linked candidate status, STOP for approval, then revert usage and recompute asset counters. If an approved release candidate remains, explicitly report it may still appear in release_unassigned_candidates."
+  },
+  {
+    "id": "zero_usage_approved_candidate",
+    "prompt": "Use the pgc-production-batch skill. Check whether manifest manifest_X has already been reverted; usage rows are zero but there may be a linked approved release candidate.",
+    "expected": "Do not stop at no usage revert needed. Still query/report linked release_candidates, check release_unassigned_candidates visibility, and clearly state whether the remaining state is only usage-reverted or fully removed from PGC product candidates."
+  },
+  {
+    "id": "smoke_identifier_cleanup_preview",
+    "prompt": "Use the pgc-production-batch skill. Revert the live_smoke_20260609 test run for manifest manifest_X.",
+    "expected": "Because the run identifier contains live_smoke, prepare a full smoke/test cleanup preview instead of silently treating it as usage-only. Query usage, linked release_candidates, and distribution_status; stop for explicit approval before reverting usage or marking the candidate rejected."
+  },
+  {
+    "id": "full_smoke_cleanup",
+    "prompt": "Use the pgc-production-batch skill. Fully clean up the live smoke batch for manifest manifest_X so it no longer appears as a PGC product.",
+    "expected": "Treat as full smoke/test cleanup: query usage rows, linked release_candidate, and distribution_status; STOP if already distributed; preview candidate ID/status/Drive URI and usage impact; after approval revert usage, recompute counters, mark the candidate rejected, verify it is gone from release_unassigned_candidates, and do not touch distribution_status."
+  }
+]

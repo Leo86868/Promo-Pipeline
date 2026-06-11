@@ -256,29 +256,8 @@ def replay_script_path() -> Optional[str]:
 
     When set, ``_step_generate_script`` skips Gemini #1 and replays the
     recorded script (a ``clip_assignments_*.json`` sidecar or a bare
-    ``{"segments": [...]}`` JSON). Pairs with ``PROMO_CLIP_ASSIGNER``:
-    the A/B runner sets both env vars and renders; no CLI plumbing.
+    ``{"segments": [...]}`` JSON). The A/B-era companion switch
+    ``PROMO_CLIP_ASSIGNER`` retired with the Gemini #2 chain (2026-06-11).
     """
     value = os.getenv("PROMO_REPLAY_SCRIPT", "").strip()
     return value or None
-
-
-_ALLOWED_CLIP_ASSIGNERS = ("gemini2", "packer")
-
-
-def clip_assigner() -> str:
-    """Which clip-assignment engine ``_step_assign_clips`` runs (翻转二 B5).
-
-    Default ``"gemini2"`` is the production path (Gemini #2 + F3 retry +
-    split-repair). ``"packer"`` opts into the deterministic chain
-    (beat planner → per-beat retrieval → packer → same validator) — A/B
-    only until the 2026-06-10 设计契约 switch gate passes. Unknown values
-    raise :class:`ConfigError`.
-    """
-    value = os.getenv("PROMO_CLIP_ASSIGNER", "gemini2").strip().lower()
-    if value not in _ALLOWED_CLIP_ASSIGNERS:
-        raise ConfigError(
-            f"PROMO_CLIP_ASSIGNER must be one of {_ALLOWED_CLIP_ASSIGNERS}; "
-            f"got {value!r}."
-        )
-    return value

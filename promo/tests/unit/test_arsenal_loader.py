@@ -26,36 +26,6 @@ PROMO_PKG = Path(__file__).resolve().parents[2]
 ARSENAL_ROOT = PROMO_PKG / "arsenal"
 
 
-class TestGemini1F3RetryByteIdentity:
-    """The F3-retry feedback block is composed by
-    ``script_generator._build_prompt`` from the MD template + caller-
-    restored trailing newline. Pin the composed bytes against the
-    pre-extraction inline-literal form to catch a refactor that drops
-    the ``+ "\\n"`` restoration."""
-
-    def test_composed_feedback_block_byte_identical_to_pre_extraction_form(self):
-        from string import Template
-
-        tighten_hint = "Segment 3 must drop 5 words."
-        # Pre-extraction inline literal (script_generator.py:303-309 at
-        # commit b84402f) — kept verbatim here as the byte-identity gold.
-        expected = (
-            "\n\nFEEDBACK FROM PIPELINE (on your previous draft):\n"
-            f"{tighten_hint.strip()}\n"
-            "Tighten the named segment — either shorten its phrasing or "
-            "redistribute words across neighboring segments — so the downstream "
-            "clip assigner can fit real footage to every phrase.\n"
-        )
-        # Production composition (mirrors script_generator._build_prompt
-        # lines 280-286 verbatim).
-        template = Template(arsenal_loader.load_system_prompt("gemini1_f3_retry"))
-        composed = template.substitute(tighten_hint=tighten_hint.strip()) + "\n"
-        assert composed == expected, (
-            "F3 retry feedback_block byte-identity broken — refactor "
-            "that drops the trailing `+ '\\n'` is the most likely cause"
-        )
-
-
 class TestPersonaLoaderShapes:
     """``load_persona`` accepts both a bare stem (resolves under
     ``arsenal/personas/``) and a path (loaded literally). Both shapes

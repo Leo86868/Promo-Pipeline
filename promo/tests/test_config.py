@@ -66,8 +66,8 @@ class TestSprint13ConfigResolvers:
         core_dir = os.path.join(os.path.dirname(__file__), "..", "core")
         for name in (
             "analyze/clip_analyzer.py",
-            "assign/clip_assigner.py",
-            "assign/clip_assignment_gemini.py",
+            "assign/beat_planner.py",
+            "assign/packer.py",
             "assign/clip_assignment_sidecar.py",
             "assign/clip_assignment_validator.py",
             "assign/clip_embedder.py",
@@ -92,7 +92,7 @@ class TestSprint13ConfigResolvers:
 class TestSprint13ResolveGeminiModel:
     """``resolve_gemini_model`` replaces the 3× duplicated
     ``configure_gemini`` + ``GenerativeModel`` + ``logger.info`` blocks
-    that used to live in ``clip_assigner._call_gemini2`` and
+    that used to live in the retired Gemini #2 caller and
     ``script_generator``'s ``generate_script_variants`` +
     ``regenerate_single_variant_with_hint``.
     """

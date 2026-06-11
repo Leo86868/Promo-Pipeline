@@ -107,8 +107,6 @@ def test_built_wheel_contains_runtime_packages_and_arsenal_data(tmp_path: Path) 
         "promo/arsenal/system_prompts/__init__.py",
         "promo/arsenal/system_prompts/mimo_clip_analysis_v1.md",
         "promo/arsenal/system_prompts/gemini1_script_v1.md",
-        "promo/arsenal/system_prompts/gemini1_f3_retry_v1.md",
-        "promo/arsenal/system_prompts/gemini2_assign_v1.md",
         "promo/arsenal/voices/__init__.py",
         "promo/arsenal/voices/catalog.yaml",
         "promo/arsenal/script_skeletons/__init__.py",

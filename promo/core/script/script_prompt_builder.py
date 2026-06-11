@@ -308,19 +308,10 @@ def build_prompt(
 
     target_word_midpoint = (profile.total_words_min + profile.total_words_max) // 2
 
-    # Sprint Arsenal Externalization (Commit 3): the F3 retry feedback
-    # block is loaded from `arsenal/system_prompts/gemini1_f3_retry_v1.md`.
-    # The MD template's literal body is everything between the leading
-    # `\n\n` and the trailing `\n` that the caller (this code) puts back —
-    # `arsenal_loader.load_system_prompt(...)` returns the rstripped form,
-    # so we restore the trailing newline here to preserve the byte-level
-    # output of the previous inline implementation.
+    # F3 script-regen retired 2026-06-11 with the Gemini #2 chain; no
+    # caller passes tighten_hint any more (param kept for signature
+    # stability until the next contract bump).
     feedback_block = ""
-    if tighten_hint:
-        feedback_template = Template(arsenal_loader.load_system_prompt("gemini1_f3_retry"))
-        feedback_block = feedback_template.substitute(
-            tighten_hint=tighten_hint.strip(),
-        ) + "\n"
 
     # Sprint Arsenal Externalization (Commit 3): caller pre-renders the
     # 2 conditional description blocks so the MD template can stay flat

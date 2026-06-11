@@ -15,7 +15,7 @@ run_batch(总管,一个进程)
  └─ 对每条视频,依次:
      ├─ ① 渲染:起一个子进程跑 compile_promo
      │     (子进程内部:Gemini#1 写文案 → ElevenLabs 配音 → MiMo 分析素材
-     │      → Gemini#2 选片 → Remotion 渲染 → 写 manifest)
+     │      → 确定性选片[切幻灯片→检索→排片员] → Remotion 渲染 → 写 manifest)
      └─ ② autopilot 尾巴(总管自己做):
            WaveSpeed 升级 → Drive 上传 → usage 写回 → release candidate 注册
 ```
@@ -150,7 +150,9 @@ planned → rendering → rendered_manifest_audited → complete
 
 `batch_selection._fetch_all_rows` 翻页前强制 `ORDER BY` 唯一键(clips 按 asset_id、usage 按 event_id)。没有排序时 PostgREST 不保证页间稳定,并发写入会让某行"换页"被跳过 → cooldown 漏判 → 同 POI 三天发两条。
 
-## 9. F3 split-repair(句子太长就拆两半)
+## 9. F3 split-repair(已退役,2026-06-11)
+
+> **退役说明**:本节描述的拆分修补和它服务的 Gemini #2 选片链已于 2026-06-11 整体退役(A/B 裁决后按 Leo 决定跳过陪跑期直接删除,回滚靠 git revert)。替代者是确定性新链(切幻灯片 ≤4s → 检索 → 排片员),"句子太长素材盖不住"在新链里结构性罕见且会大声告警。以下保留作历史记录。
 
 **奶奶版**:一句话要 7.6 秒画面、素材只有 7 秒?把这句话的画面在某个词处切开,前半用原素材、后半补一段没用过的。文案和配音一个字不动(拆的只是"画面在哪个词切换")。
 

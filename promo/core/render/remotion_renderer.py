@@ -31,7 +31,7 @@ import subprocess
 import uuid
 from typing import Any
 
-from promo.core.assign.clip_assigner import HARD_CONSTRAINT_TOL_SEC
+from promo.core.assign.clip_assignment_validator import HARD_CONSTRAINT_TOL_SEC
 from promo.core.schema import (
     ClipAssignment,
     Narration,

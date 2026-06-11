@@ -312,14 +312,13 @@ clip_assignments sidecar (normal renders carry `null`).
 
 ## Clip assigner cutover (2026-06-11)
 
-Leo judged the same-script A/B: the packer arm wins. Production runs
-with `PROMO_CLIP_ASSIGNER=packer` set in the VPS worktree `.env` (the
-CODE default stays `gemini2` until the legacy chain is deleted — this
-keeps the test suite untouched and makes rollback a one-line .env
-edit). Coexistence period ≈1-2 weeks of production batches; if no
-regressions, retire the Gemini #2 chain (assignment prompt + F3
-script-regen + split-repair) in one sweep and flip the code default.
-Rollback at any time: delete the .env line.
+Leo judged the same-script A/B: the packer arm wins. Per Leo's call the
+coexistence period was skipped and the Gemini #2 chain (assignment
+prompt + F3 script-regen + split-repair) was DELETED the same day —
+the deterministic chain is the only engine. `PROMO_CLIP_ASSIGNER` no
+longer exists (a leftover .env line is a harmless no-op; remove it when
+touching .env). Rollback, if ever needed: `git revert` the deletion
+commit and redeploy a worktree (~15 min).
 
 ## Approved Existing Masters Handoff
 
