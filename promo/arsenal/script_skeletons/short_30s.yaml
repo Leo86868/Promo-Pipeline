@@ -8,6 +8,16 @@
 mode: short
 target_duration_sec: 30
 duration_label: "25-30 second"
+description: "30s short-form promo (TikTok / Reels): 4 segments, 50-80 words, rapid-fire delivery."
+
+# Per-type personality (P2) — see long_65s.yaml for field semantics.
+pacing:
+  beat_min_sec: 2.0
+  beat_max_sec: 4.0
+  pause_cap_ms: 3000
+assets:
+  base_min: 50
+  per_extra: 10
 segment_count: 4
 total_words_min: 50
 total_words_max: 80

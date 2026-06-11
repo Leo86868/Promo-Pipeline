@@ -126,6 +126,14 @@ class TestResetForTests:
             "min_effective_wpm: 100\n"
             "max_effective_wpm: 120\n"
             "max_narration_ratio: 0.9\n"
+            "description: synthetic rotated-only template\n"
+            "pacing:\n"
+            "  beat_min_sec: 2.0\n"
+            "  beat_max_sec: 4.0\n"
+            "  pause_cap_ms: 3000\n"
+            "assets:\n"
+            "  base_min: 50\n"
+            "  per_extra: 10\n"
             "sentence_rule: ''\n"
             "extra_rules: []\n"
             "segment_plans:\n"
@@ -202,6 +210,89 @@ class TestLoadFormatTemplateSingular:
         plural = arsenal_loader.load_format_templates()
         for key in plural:
             assert arsenal_loader.load_format_template(key) is plural[key]
+
+
+class TestP2PersonalityBlocksFailLoud:
+    """P2: a card without its personality blocks (description / pacing /
+    assets) must fail at load — never silently inherit another type's
+    behavior. Loader is the only PromoFormatProfile constructor."""
+
+    _BASE_CARD = (
+        "mode: synthetic\n"
+        "target_duration_sec: 45\n"
+        "duration_label: '45 second'\n"
+        "segment_count: 1\n"
+        "total_words_min: 50\n"
+        "total_words_max: 80\n"
+        "per_segment_min: 50\n"
+        "per_segment_max: 80\n"
+        "min_clip_pool_size: 1\n"
+        "recommended_clip_pool_size: 1\n"
+        "min_effective_wpm: 100\n"
+        "max_effective_wpm: 120\n"
+        "max_narration_ratio: 0.9\n"
+        "description: synthetic test card\n"
+        "pacing:\n"
+        "  beat_min_sec: 2.0\n"
+        "  beat_max_sec: 4.0\n"
+        "  pause_cap_ms: 3000\n"
+        "assets:\n"
+        "  base_min: 50\n"
+        "  per_extra: 10\n"
+        "segment_plans:\n"
+        "  - label: ALL\n"
+        "    approx_words: 65\n"
+        "    min_clips: 1\n"
+        "    max_clips: 1\n"
+        "    guidance: synthetic\n"
+    )
+
+    def _load_card(self, tmp_path, monkeypatch, card_text):
+        skel_dir = tmp_path / "skel"
+        skel_dir.mkdir()
+        (skel_dir / "synthetic.yaml").write_text(card_text)
+        monkeypatch.setattr(
+            arsenal_loader,
+            "_arsenal_path",
+            lambda *parts: skel_dir if parts == ("script_skeletons",)
+            else arsenal_loader._ARSENAL_ROOT.joinpath(*parts),
+        )
+        arsenal_loader.load_format_templates.cache_clear()
+        try:
+            return arsenal_loader.load_format_templates()
+        finally:
+            arsenal_loader.load_format_templates.cache_clear()
+
+    def _strip_block(self, header):
+        lines = self._BASE_CARD.splitlines(keepends=True)
+        out, skipping = [], False
+        for line in lines:
+            if line.startswith(header):
+                skipping = True
+                continue
+            if skipping and line.startswith("  "):
+                continue
+            skipping = False
+            out.append(line)
+        return "".join(out)
+
+    @pytest.mark.parametrize("block", ["description", "pacing", "assets"])
+    def test_missing_personality_block_raises(self, tmp_path, monkeypatch, block):
+        card = self._strip_block(f"{block}:")
+        with pytest.raises(ValueError, match=block):
+            self._load_card(tmp_path, monkeypatch, card)
+
+    def test_inverted_beat_bounds_raise(self, tmp_path, monkeypatch):
+        card = self._BASE_CARD.replace("beat_min_sec: 2.0", "beat_min_sec: 5.0")
+        with pytest.raises(ValueError, match="beat_min_sec < beat_max_sec"):
+            self._load_card(tmp_path, monkeypatch, card)
+
+    def test_complete_card_loads_personality(self, tmp_path, monkeypatch):
+        templates = self._load_card(tmp_path, monkeypatch, self._BASE_CARD)
+        p = templates["synthetic"]
+        assert p.description == "synthetic test card"
+        assert (p.beat_min_sec, p.beat_max_sec, p.pause_cap_ms) == (2.0, 4.0, 3000)
+        assert (p.assets_base_min, p.assets_per_extra) == (50, 10)
 
 
 class TestLoadScriptHooks:

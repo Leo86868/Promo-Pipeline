@@ -78,6 +78,20 @@ class PromoFormatProfile:
     max_effective_wpm: int
     max_narration_ratio: float
     segment_plans: tuple[SegmentPlan, ...]
+    # P2 (2026-06-11) — per-type personality lives ON the card. The
+    # skeleton YAML is the single source of truth for these knobs;
+    # ``arsenal_loader._build_format_profile`` is the only constructor.
+    # ``description`` is the operator-facing one-liner ("make type B"
+    # resolves through it). ``beat_*_sec`` bound the visual beat
+    # planner's cut lengths; ``pause_cap_ms`` caps one authored pause;
+    # the POI selection floor is ``assets_base_min + assets_per_extra ×
+    # (videos_per_poi − 1)``.
+    description: str
+    beat_min_sec: float
+    beat_max_sec: float
+    pause_cap_ms: int
+    assets_base_min: int
+    assets_per_extra: int
     # Sprint Arsenal Externalization (Commit 6a) — skeleton-owned
     # per-mode strings that previously lived as inline conditional
     # branches in `script_generator._build_prompt`. ``sentence_rule``

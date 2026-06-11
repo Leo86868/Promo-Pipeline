@@ -5,6 +5,19 @@
 mode: long
 target_duration_sec: 65
 duration_label: "65 second"
+description: "Flagship 65s long-form hotel promo: 5 segments, 150-170 words, semantic 2-4s visual beats."
+
+# Per-type personality (P2): the card is the single source of truth
+# for these knobs. beat_*_sec bound the visual beat planner's cut
+# lengths; pause_cap_ms caps a single authored pause; the POI
+# selection floor is base_min + per_extra × (videos_per_poi − 1).
+pacing:
+  beat_min_sec: 2.0
+  beat_max_sec: 4.0
+  pause_cap_ms: 3000
+assets:
+  base_min: 50
+  per_extra: 10
 segment_count: 5
 total_words_min: 150
 total_words_max: 170

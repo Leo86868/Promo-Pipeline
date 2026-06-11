@@ -73,3 +73,36 @@ class TestSprint08FormatProfilesDerived:
         sp_one = SegmentPlan("CLOSE", 10, 1, 1, "x")
         assert sp_one.clip_range_display == "1 clip"
 
+
+class TestP2PersonalityBackfillPin:
+    """P2 step 1 byte-identical pin: the cards carry backfilled copies of
+    the pacing / asset-floor code constants. While consumers still read
+    the constants, card and constant MUST agree — any drift is a silent
+    two-sources-of-truth bug. P2 step 3 deletes the constants and
+    rewrites this pin to assert consumers read the card."""
+
+    def test_card_pacing_matches_code_constants(self):
+        from promo.core.assign import beat_planner
+        from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE
+        from promo.core.script import pause_budget
+
+        for p in (SHORT_PROFILE, LONG_PROFILE):
+            assert p.beat_min_sec == beat_planner.DEFAULT_MIN_BEAT_SEC
+            assert p.beat_max_sec == beat_planner.DEFAULT_MAX_BEAT_SEC
+            assert p.pause_cap_ms == pause_budget.PER_GAP_CAP_MS
+
+    def test_card_asset_floor_matches_code_constants(self):
+        from promo.core import run_receipt
+        from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE
+
+        for p in (SHORT_PROFILE, LONG_PROFILE):
+            assert p.assets_base_min == run_receipt.DEFAULT_BASE_MIN_ASSETS_FOR_FORMAT
+            assert p.assets_per_extra == run_receipt.DEFAULT_EXTRA_VARIATION_ASSET_BUFFER
+
+    def test_card_descriptions_are_distinct_nonempty(self):
+        from promo.core.format_profiles import SHORT_PROFILE, LONG_PROFILE
+
+        assert SHORT_PROFILE.description
+        assert LONG_PROFILE.description
+        assert SHORT_PROFILE.description != LONG_PROFILE.description
+

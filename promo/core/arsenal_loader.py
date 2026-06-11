@@ -165,6 +165,18 @@ _FORMAT_REQUIRED_FIELDS: frozenset[str] = frozenset({
     "min_clip_pool_size", "recommended_clip_pool_size",
     "min_effective_wpm", "max_effective_wpm", "max_narration_ratio",
     "segment_plans",
+    # P2 personality blocks — REQUIRED, no silent defaults: a card that
+    # forgets to declare its pacing or asset floor must fail at load,
+    # not inherit another type's behavior.
+    "description", "pacing", "assets",
+})
+
+_PACING_REQUIRED_FIELDS: frozenset[str] = frozenset({
+    "beat_min_sec", "beat_max_sec", "pause_cap_ms",
+})
+
+_ASSETS_REQUIRED_FIELDS: frozenset[str] = frozenset({
+    "base_min", "per_extra",
 })
 
 _SEGMENT_PLAN_REQUIRED_FIELDS: frozenset[str] = frozenset({
@@ -211,6 +223,38 @@ def _build_format_profile(raw: dict[str, Any], *, ctx: str) -> PromoFormatProfil
         raise ValueError(
             f"{ctx}: extra_rules must be a list; got {type(extra_rules).__name__}"
         )
+    description = raw["description"]
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"{ctx}: description must be a non-empty string")
+    pacing = raw["pacing"]
+    if not isinstance(pacing, dict):
+        raise ValueError(f"{ctx}: pacing must be a mapping; got {type(pacing).__name__}")
+    missing_pacing = _PACING_REQUIRED_FIELDS - pacing.keys()
+    if missing_pacing:
+        raise ValueError(f"{ctx}: pacing missing required fields: {sorted(missing_pacing)}")
+    beat_min_sec = float(pacing["beat_min_sec"])
+    beat_max_sec = float(pacing["beat_max_sec"])
+    if not 0 < beat_min_sec < beat_max_sec:
+        raise ValueError(
+            f"{ctx}: pacing requires 0 < beat_min_sec < beat_max_sec "
+            f"(got {beat_min_sec}, {beat_max_sec})"
+        )
+    pause_cap_ms = int(pacing["pause_cap_ms"])
+    if pause_cap_ms <= 0:
+        raise ValueError(f"{ctx}: pacing.pause_cap_ms must be positive (got {pause_cap_ms})")
+    assets = raw["assets"]
+    if not isinstance(assets, dict):
+        raise ValueError(f"{ctx}: assets must be a mapping; got {type(assets).__name__}")
+    missing_assets = _ASSETS_REQUIRED_FIELDS - assets.keys()
+    if missing_assets:
+        raise ValueError(f"{ctx}: assets missing required fields: {sorted(missing_assets)}")
+    assets_base_min = int(assets["base_min"])
+    assets_per_extra = int(assets["per_extra"])
+    if assets_base_min <= 0 or assets_per_extra < 0:
+        raise ValueError(
+            f"{ctx}: assets requires base_min > 0 and per_extra >= 0 "
+            f"(got {assets_base_min}, {assets_per_extra})"
+        )
     return PromoFormatProfile(
         mode=raw["mode"],
         target_duration_sec=int(raw["target_duration_sec"]),
@@ -226,6 +270,12 @@ def _build_format_profile(raw: dict[str, Any], *, ctx: str) -> PromoFormatProfil
         max_effective_wpm=int(raw["max_effective_wpm"]),
         max_narration_ratio=float(raw["max_narration_ratio"]),
         segment_plans=plans,
+        description=description.strip(),
+        beat_min_sec=beat_min_sec,
+        beat_max_sec=beat_max_sec,
+        pause_cap_ms=pause_cap_ms,
+        assets_base_min=assets_base_min,
+        assets_per_extra=assets_per_extra,
         sentence_rule=raw.get("sentence_rule", ""),
         extra_rules=tuple(extra_rules),
     )
