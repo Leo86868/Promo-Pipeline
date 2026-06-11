@@ -166,6 +166,15 @@
   - **timings 第一课**:upscale ~700s **>** 渲染 ~430-490s,尾巴流水线化收益高于预估,优先级上调;
   - 部署教训:新 worktree 必须 `npm install`(promo/remotion/),应进部署清单。
 - 当前状态:main = `39caa85` 已推送并部署;696 tests passed。
+
+### 2026-06-11
+
+- **翻转二 B1-B6 全部建成并通过三轮对抗审查**(全程藏在 `PROMO_CLIP_ASSIGNER` 开关后,默认 gemini2):B1 语意优先切分(标点成刀、<2s 软合并、4s 硬顶、安全带最大余数法);B3 账本读方(过期窗口钳制);B4 排片员;B5 接线;B6 文案留底+回放(`PROMO_REPLAY_SCRIPT`)。审查共抓 2+3+2 个 blocking 全修复:安全带数学、账本假窗口、超长 beat 静默、回放掉 word_count 标签(B 臂多灌 5.6s 静音、考试作废级)、回放开关泄漏(批次入口双拒绝闸 + `replay_source` 留痕)。763 tests。
+- **wpm 根因**(`8973d91`):persona 声明 140 wpm vs 实测 177-182 → 文案被掐在 131 词、塞 14-17s 静音 = F3 肥停顿与无聊长镜头的共同病根。字数 155-170、停顿 cap 3s、wpm 175。Leo 耳测已认证。**F3 旧账分代解释:批次 1 新配方 F3 = 0/5。**
+- **架构裁决落槌**:Gemini #2 vs 排片员不再由 F3 统计决定——五条架构论证(账本盲区/同源信息/免疫系统成本/工程四项/叙事规则已显式化)定案排片员胜;**A/B 降级为质检员**(验 MiMo 描述质量够不够),已解锁待渲。
+- **中台契约**:AIGC-Main 合并 `asset_platform/CONTRACT.md` v1——PGC 全部平台依赖(valid_clips 列、embedding v1 四元组、存储路径模板、两个 usage RPC、release_candidates 键)成为书面承诺,破坏性变更先 PR 后通知;新增平台依赖须先走 contract PR;`usage_windows.py` 被定为**全家族窗口查询标准**(music remix 将换装);PGC 合规,唯一过渡项 = LocalBackend 本地缓存(已在退役计划内)。
+- 下一拍:A/B 考试(规程写入 SKILL.md)→ Leo 判卷 → 切换决策。
+
 - 下一步候选(按数据就绪度):尾巴流水线化(timings 已到手)> 720p 真超分 A/B > beat planner + packer(F3 触发率持续积累中,窗口数据已就绪)。
 
 ### 2026-06-10(续)
