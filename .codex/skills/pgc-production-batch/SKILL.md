@@ -277,6 +277,39 @@ captions, CTA, audio mix, timeline entries, and manifest/usage semantics.
 For repair/debug against a known POI list, `run_batch --batch "$batch_json"` is
 still supported.
 
+## Same-Script A/B (assigner exam)
+
+When Leo says "对这条视频开 A/B" (or names a POI/video), run the packer arm
+against that video's recorded script. No one needs to remember variable
+names — this section IS the procedure (2026-06-11, reviewer-mandated):
+
+1. **Copy the A arm's parameters verbatim** from its receipt: the
+   `videos[i].render.command` field of the batch's `RUN_RECEIPT.json` is the
+   exact compile command (voice/music/seed/tts-speed/duration/source policy
+   all included). Change ONLY `--output`.
+2. **Replay path** = the A arm's `clip_assignments_*.json` sidecar (lives
+   next to the video; it carries the recorded script).
+3. Run the copied command with exactly two env vars added:
+
+```bash
+export PROMO_REPLAY_SCRIPT=/path/to/clip_assignments_<slug>_65s.json
+export PROMO_CLIP_ASSIGNER=packer
+python3 -m promo.cli.compile_promo <copied A-arm args> --output <ab_dir>/B_packer_<slug>.mp4
+```
+
+4. **Compare PRE-upscale masters** (the render output mp4s, not the
+   WaveSpeed 1080p files) — upscale adds noise unrelated to clip choice.
+5. **Unset both env vars immediately after** (`unset PROMO_REPLAY_SCRIPT
+   PROMO_CLIP_ASSIGNER`). A forgotten replay var cannot hurt a batch —
+   `run_batch`/`resume_batch` refuse to start while it is set — but unsetting
+   is the discipline.
+6. Copy both masters to Leo's `~/Downloads/`, filenames labelled
+   `A_gemini2_*` / `B_packer_*`. Leo judges by eye; the only question is
+   "新厨师的菜,观感有没有输?".
+
+Replayed renders self-declare via `replayed_from` in their
+clip_assignments sidecar (normal renders carry `null`).
+
 ## Approved Existing Masters Handoff
 
 When Leo says something like "continue the approved batch handoff" for existing
