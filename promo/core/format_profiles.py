@@ -43,16 +43,29 @@ LONG_PROFILE = FORMAT_TEMPLATES["long"]
 
 
 def get_promo_format_profile(target_duration_sec: float | int | None) -> PromoFormatProfile:
-    """Return the promo structure profile for a requested duration.
+    """Route a requested duration to its format card (P2 step 2).
 
-    The first long-form target is 65s. Anything materially above short-form
-    thresholds uses the long profile for now.
+    Pure duration → card lookup over the skeleton library: every card
+    declares ``target_duration_sec``, one card per duration (collisions
+    fail loudly at load in ``arsenal_loader``). An unknown duration is a
+    loud error listing the deck — supporting a new duration means
+    dropping a new skeleton YAML, not widening a threshold here.
+
+    ``None`` preserves the legacy "no duration requested" contract and
+    returns the short card.
     """
     if target_duration_sec is None:
-        return SHORT_PROFILE
-    if float(target_duration_sec) >= 50:
-        return LONG_PROFILE
-    return SHORT_PROFILE
+        return FORMAT_TEMPLATES["short"]
+    requested = float(target_duration_sec)
+    for profile in FORMAT_TEMPLATES.values():
+        if float(profile.target_duration_sec) == requested:
+            return profile
+    known = sorted(p.target_duration_sec for p in FORMAT_TEMPLATES.values())
+    raise ValueError(
+        f"no format card declares target_duration_sec={target_duration_sec!r}; "
+        f"known durations: {known} — add a skeleton YAML under "
+        "promo/arsenal/script_skeletons/ to support a new duration"
+    )
 
 
 def get_clip_pool_messages(

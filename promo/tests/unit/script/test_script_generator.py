@@ -163,7 +163,13 @@ class TestPacingValidation:
         # WPM >= 110 requires duration <= (62/110)*60 = 33.8s
         # narration < 90% requires duration >= (62/130*60)/0.9 = 31.8s
         # Sweet spot: 32s. WPM = (62/32)*60 = 116. ratio = 28.6/32 = 0.89
-        warnings = validate_pacing(script, target_duration=32.0, wpm=130)
+        # P2 step 2: 32.0 is a synthetic duration with no card — pass the
+        # short profile explicitly, duration stays for the ratio math.
+        from promo.core.format_profiles import SHORT_PROFILE
+
+        warnings = validate_pacing(
+            script, target_duration=32.0, wpm=130, profile=SHORT_PROFILE
+        )
         assert len(warnings) == 0, f"Unexpected warnings: {warnings}"
 
     def test_long_profile_warns_when_narration_too_dense(self):

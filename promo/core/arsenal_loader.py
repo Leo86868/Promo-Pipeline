@@ -302,6 +302,26 @@ def load_format_templates() -> dict[str, PromoFormatProfile]:
         if profile.mode in profiles:
             raise ValueError(f"duplicate format mode {profile.mode!r} in {yaml_path}")
         profiles[profile.mode] = profile
+    # P2 step 2 — ONE CARD PER DURATION. Duration is the routing key
+    # (``get_promo_format_profile`` does an exact lookup), so two cards
+    # claiming the same duration would make routing ambiguous: fail
+    # loudly at load, never pick one silently. When two cards must
+    # legitimately share a duration (e.g. a 65s "type B"), do NOT add a
+    # selection policy here — upgrade the routing key from duration to
+    # explicit type identity (``mode``): the operator/SKILL brief names
+    # the card, duration becomes a card attribute. That change touches
+    # ``get_promo_format_profile``'s lookup, the SKILL.md brief entry,
+    # and per-type example tags.
+    by_duration: dict[int, str] = {}
+    for profile in profiles.values():
+        prev = by_duration.get(profile.target_duration_sec)
+        if prev is not None:
+            raise ValueError(
+                f"duration collision: cards {prev!r} and {profile.mode!r} both "
+                f"declare target_duration_sec={profile.target_duration_sec} — "
+                "one card per duration (see comment above for the unlock path)"
+            )
+        by_duration[profile.target_duration_sec] = profile.mode
     return profiles
 
 

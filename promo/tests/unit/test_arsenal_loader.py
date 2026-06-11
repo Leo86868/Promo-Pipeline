@@ -294,6 +294,29 @@ class TestP2PersonalityBlocksFailLoud:
         assert (p.beat_min_sec, p.beat_max_sec, p.pause_cap_ms) == (2.0, 4.0, 3000)
         assert (p.assets_base_min, p.assets_per_extra) == (50, 10)
 
+    def test_duration_collision_fails_loud_at_load(self, tmp_path, monkeypatch):
+        """P2 step 2: one card per duration — two cards declaring the
+        same target_duration_sec must fail at load, never be silently
+        disambiguated."""
+        skel_dir = tmp_path / "skel"
+        skel_dir.mkdir()
+        (skel_dir / "a.yaml").write_text(self._BASE_CARD)
+        (skel_dir / "b.yaml").write_text(
+            self._BASE_CARD.replace("mode: synthetic", "mode: synthetic_twin")
+        )
+        monkeypatch.setattr(
+            arsenal_loader,
+            "_arsenal_path",
+            lambda *parts: skel_dir if parts == ("script_skeletons",)
+            else arsenal_loader._ARSENAL_ROOT.joinpath(*parts),
+        )
+        arsenal_loader.load_format_templates.cache_clear()
+        try:
+            with pytest.raises(ValueError, match="duration collision"):
+                arsenal_loader.load_format_templates()
+        finally:
+            arsenal_loader.load_format_templates.cache_clear()
+
 
 class TestLoadScriptHooks:
     def test_load_script_hooks_returns_ordered_hook_techniques(self):

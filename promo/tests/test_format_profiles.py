@@ -74,6 +74,29 @@ class TestSprint08FormatProfilesDerived:
         assert sp_one.clip_range_display == "1 clip"
 
 
+class TestP2DurationRouting:
+    """P2 step 2: routing is an exact duration → card lookup. Pins the
+    full real input domain (None / 30 / 65, int and float forms) to the
+    pre-P2 behavior, and pins the intentional change: an unknown
+    duration now fails loudly instead of silently falling into a
+    threshold bucket."""
+
+    def test_real_input_domain_routes_unchanged(self):
+        from promo.core.format_profiles import get_promo_format_profile
+
+        assert get_promo_format_profile(None).mode == "short"
+        assert get_promo_format_profile(30).mode == "short"
+        assert get_promo_format_profile(30.0).mode == "short"
+        assert get_promo_format_profile(65).mode == "long"
+        assert get_promo_format_profile(65.0).mode == "long"
+
+    def test_unknown_duration_fails_loud_listing_deck(self):
+        from promo.core.format_profiles import get_promo_format_profile
+
+        with pytest.raises(ValueError, match=r"known durations: \[30, 65\]"):
+            get_promo_format_profile(50)
+
+
 class TestP2PersonalityBackfillPin:
     """P2 step 1 byte-identical pin: the cards carry backfilled copies of
     the pacing / asset-floor code constants. While consumers still read
