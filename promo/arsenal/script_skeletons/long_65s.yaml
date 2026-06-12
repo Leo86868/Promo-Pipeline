@@ -76,5 +76,5 @@ segment_plans:
     approx_words: 24
     min_clips: 2
     max_clips: 3
-    guidance: "Give the hotel name and one final line that lingers without sounding like an ad."
+    guidance: "Give the hotel name, then end on one concrete image or fact and stop — no moral-of-the-story summary, no 'it's a place that...' style reflection."
     preferred_categories: [exterior, aerial, scenic]
