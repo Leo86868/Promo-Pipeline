@@ -77,6 +77,13 @@ pause_guidelines: |
 
   The last segment's `pause_weight` is ignored by the pipeline.
 
+# 范文法规 (P2 step 4): every format this persona serves needs ≥2
+# examples tagged with that format — the model imitates examples over
+# instruction numbers (the 143-word accident), so the prompt builder
+# fails loudly rather than borrow another format's examples. Keep each
+# example's word count INSIDE its format card's words_min/max.
+# Future home: when a new type ships its own example set, examples
+# migrate from here into the type's skeleton YAML card.
 example_scripts:
   - hotel: Amangiri
     location: "Canyon Point, Utah"

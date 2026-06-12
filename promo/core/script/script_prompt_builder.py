@@ -205,16 +205,42 @@ def format_asset_visual_brief(asset_visual_brief: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# P2 step 4 (范文法规): every format mode the persona serves must carry
+# at least this many format-tagged examples. The model imitates examples
+# over instruction numbers (2026-06-11 word-friction root cause: the
+# only long example was 143 words — below the 150 floor — and the model
+# wrote 143-word scripts no matter what the prompt said), so a missing
+# or cross-format example set silently rewrites the card's personality.
+MIN_EXAMPLES_PER_FORMAT = 2
+
+
 def format_examples(persona: NarratorPersona, mode: str = "short") -> str:
     """Format example scripts from persona into prompt text.
 
-    Filters examples by format tag matching the requested mode.
-    Falls back to all examples if no matching examples exist.
+    Filters examples by format tag matching the requested mode. A
+    persona that carries examples but fewer than
+    ``MIN_EXAMPLES_PER_FORMAT`` for the requested mode FAILS LOUDLY —
+    the pre-P2 silent fallback (mix in other formats' examples) is
+    exactly the trap that caused the word-friction accident: short
+    examples pull long scripts under the floor.
+
+    A persona with NO examples at all returns an empty block (a
+    deliberate minimal persona, no conflicting signal to leak).
+
+    Future home (预留之路): when per-type cards grow their own example
+    sets, examples move OUT of the persona into the skeleton YAML and
+    this filter becomes a plain card read — keep the ≥2 rule there.
     """
+    if not persona.example_scripts:
+        return ""
     matching = [ex for ex in persona.example_scripts if ex.get("format", "short") == mode]
-    if not matching:
-        logger.warning("No examples with format=%s found, using all examples as fallback", mode)
-        matching = persona.example_scripts
+    if len(matching) < MIN_EXAMPLES_PER_FORMAT:
+        raise ValueError(
+            f"persona {persona.id!r} has {len(matching)} example_scripts tagged "
+            f"format={mode!r} but the {mode!r} card requires at least "
+            f"{MIN_EXAMPLES_PER_FORMAT} (范文法规: a new type ships with 2-3 "
+            "format-tagged examples; never silently borrow another format's)"
+        )
 
     blocks = []
     for ex in matching:

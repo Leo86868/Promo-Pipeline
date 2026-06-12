@@ -447,6 +447,78 @@ class TestLongFormGenerationContract:
                     target_duration_sec=65,
                 )
 
+class TestP2ExampleLaw:
+    """P2 step 4 (范文法规): the prompt never silently borrows another
+    format's examples — that fallback caused the 143-word accident
+    (model imitates examples over instruction numbers)."""
+
+    def _persona(self, example_scripts):
+        from promo.core.schema import NarratorPersona
+
+        return NarratorPersona(
+            id="test_persona",
+            display_name="Test",
+            perspective="third_person",
+            wpm=175,
+            voice_id="",
+            system_prompt="x",
+            example_scripts=example_scripts,
+        )
+
+    @staticmethod
+    def _example(hotel, fmt):
+        return {"hotel": hotel, "location": "X", "format": fmt,
+                "segments": ["one.", "two."]}
+
+    def test_long_card_only_feeds_long_examples(self):
+        from promo.core.script.script_prompt_builder import format_examples
+
+        persona = self._persona([
+            self._example("Short A", "short"),
+            self._example("Short B", "short"),
+            self._example("Long A", "long"),
+            self._example("Long B", "long"),
+        ])
+        text = format_examples(persona, mode="long")
+        assert "Long A" in text and "Long B" in text
+        assert "Short A" not in text and "Short B" not in text
+
+    def test_missing_format_examples_fail_loud(self):
+        from promo.core.script.script_prompt_builder import format_examples
+
+        persona = self._persona([
+            self._example("Short A", "short"),
+            self._example("Short B", "short"),
+        ])
+        with pytest.raises(ValueError, match="format='long'"):
+            format_examples(persona, mode="long")
+
+    def test_one_example_is_below_the_law(self):
+        from promo.core.script.script_prompt_builder import format_examples
+
+        persona = self._persona([
+            self._example("Short A", "short"),
+            self._example("Short B", "short"),
+            self._example("Lonely Long", "long"),
+        ])
+        with pytest.raises(ValueError, match="at least 2"):
+            format_examples(persona, mode="long")
+
+    def test_examples_free_persona_yields_empty_block(self):
+        from promo.core.script.script_prompt_builder import format_examples
+
+        assert format_examples(self._persona([]), mode="long") == ""
+
+    def test_production_persona_satisfies_the_law_for_both_cards(self):
+        from promo.core.format_profiles import FORMAT_TEMPLATES
+        from promo.core.script.script_generator import load_persona, _DEFAULT_PERSONA_PATH
+        from promo.core.script.script_prompt_builder import format_examples
+
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        for mode in FORMAT_TEMPLATES:
+            assert format_examples(persona, mode=mode)  # raises if law broken
+
+
 class TestP2HookDealer:
     """P2 step 5: hook rotation keys off a per-VIDEO seed. Production
     compiles each video independently with --n-variants 1, so the
