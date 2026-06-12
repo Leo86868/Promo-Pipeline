@@ -319,8 +319,12 @@ class TestP2PersonalityBlocksFailLoud:
 
 
 class TestLoadScriptHooks:
-    def test_load_script_hooks_returns_ordered_hook_techniques(self):
-        assert arsenal_loader.load_script_hooks() == [
+    def test_load_script_hooks_returns_ordered_cards(self):
+        """V1-2: bare labels became cards. Order is the rotation key —
+        this pin makes reordering a conscious act (historical seed→card
+        mappings die with it)."""
+        cards = arsenal_loader.load_script_hooks()
+        assert [c["name"] for c in cards] == [
             "contradiction",
             "sensory",
             "specific_number",
@@ -328,11 +332,16 @@ class TestLoadScriptHooks:
             "time_anchor",
             "superlative",
         ]
+        for card in cards:
+            assert card["technique"].strip()
+            assert card["must_not"].strip()
 
     def test_script_prompt_builder_re_exports_loaded_hook_techniques(self):
         from promo.core.script import script_prompt_builder
 
-        assert script_prompt_builder.HOOK_TECHNIQUES == arsenal_loader.load_script_hooks()
+        cards = arsenal_loader.load_script_hooks()
+        assert script_prompt_builder.HOOK_CARDS == cards
+        assert script_prompt_builder.HOOK_TECHNIQUES == [c["name"] for c in cards]
 
     def test_malformed_script_hooks_raise_value_error(self, tmp_path, monkeypatch):
         bad_hooks = tmp_path / "script_hooks.yaml"

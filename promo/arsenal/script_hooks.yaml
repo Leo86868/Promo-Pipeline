@@ -1,9 +1,54 @@
-# Script hook seeds used to diversify multi-variant Gemini #1 openings.
-# Order matters: build_variant_plans rotates through this list by variant index.
+# Hook cards used to steer per-video Gemini #1 openings (V1-2 牌面增肥,
+# 2026-06-12: bare labels upgraded to cards — production data showed the
+# model ignores a bare label; each card now carries one line of technique
+# and one MUST-NOT guardrail, sourced from the 2026-06-12 copywriting
+# survey, grounded to our footage-only constraint).
+#
+# Order matters: build_variant_plans rotates through this list — per
+# VIDEO via --hook-seed (canonical ordinal) in production, per variant
+# index within one compile. REPRODUCIBILITY NOTE: the rotation is
+# seed % len(list); adding/removing/reordering cards invalidates the
+# historical seed→card mapping (same rule as the music library).
 hook_techniques:
-  - contradiction
-  - sensory
-  - specific_number
-  - second_person
-  - time_anchor
-  - superlative
+  - name: contradiction
+    technique: >-
+      Open on a tension between two things that shouldn't coexist in one
+      place — let the second half of the sentence undercut the first.
+    must_not: >-
+      Do not open with the resort's name, and do not reuse the stock
+      "X, but Y" template with luxury cliches (paradise/hidden gem).
+  - name: sensory
+    technique: >-
+      Open inside one physical sensation the viewer can feel — heat,
+      water, wind, sound underfoot — before they know where they are.
+    must_not: >-
+      Never start with "Imagine" or a visual checklist; one sensation,
+      felt in the body, not described from a distance.
+  - name: specific_number
+    technique: >-
+      Lead with one startling, concrete number and let it sit before
+      explaining it.
+    must_not: >-
+      Only numbers grounded in the footage or the provided details —
+      never invent statistics, ratings, or unverified prices.
+  - name: second_person
+    technique: >-
+      Drop the viewer mid-action as "you" — already in the scene,
+      mid-moment, in medias res.
+    must_not: >-
+      No marketing future tense ("you will love") and no setup
+      preamble; the first word should land inside the moment.
+  - name: time_anchor
+    technique: >-
+      Anchor the opening to one precise moment of the day and what is
+      happening right then.
+    must_not: >-
+      Avoid the generic "imagine waking up" sunrise template; pick a
+      specific, less-used hour or transition.
+  - name: superlative
+    technique: >-
+      Make one bold, definitive claim about a single concrete detail of
+      this place.
+    must_not: >-
+      The claim must be defensible from the footage — no empty "best
+      hotel ever" hype, no superlatives about things not shown.

@@ -335,9 +335,21 @@ def load_format_template(key: str) -> PromoFormatProfile:
     return profiles[key]
 
 
+_HOOK_CARD_REQUIRED_FIELDS: frozenset[str] = frozenset({
+    "name", "technique", "must_not",
+})
+
+
 @lru_cache(maxsize=1)
-def load_script_hooks() -> list[str]:
-    """Return ordered hook-technique seeds for script variant diversity."""
+def load_script_hooks() -> list[dict[str, str]]:
+    """Return ordered hook CARDS for per-video opening steering (V1-2).
+
+    Each card is ``{name, technique, must_not}`` — a bare label proved
+    too thin to steer the model (2026-06-12 production data), so every
+    card now ships one line of technique and one guardrail. Rotation
+    keys off list ORDER (``seed % len``): adding/removing/reordering
+    cards invalidates historical seed→card mappings (same rule as the
+    music library)."""
     path = _arsenal_path("script_hooks.yaml")
     if not path.exists():
         raise FileNotFoundError(f"missing arsenal script hooks: {path}")
@@ -348,12 +360,25 @@ def load_script_hooks() -> list[str]:
     hooks = raw.get("hook_techniques")
     if not isinstance(hooks, list) or not hooks:
         raise ValueError(f"{path}: hook_techniques must be a non-empty list")
+    cards: list[dict[str, str]] = []
     for idx, hook in enumerate(hooks):
-        if not isinstance(hook, str) or not hook.strip():
+        if not isinstance(hook, dict):
             raise ValueError(
-                f"{path}: hook_techniques[{idx}] must be a non-empty string"
+                f"{path}: hook_techniques[{idx}] must be a mapping with "
+                f"{sorted(_HOOK_CARD_REQUIRED_FIELDS)} (bare labels retired in V1-2)"
             )
-    return [hook.strip() for hook in hooks]
+        missing = _HOOK_CARD_REQUIRED_FIELDS - hook.keys()
+        if missing:
+            raise ValueError(
+                f"{path}: hook_techniques[{idx}] missing required fields: {sorted(missing)}"
+            )
+        for key in _HOOK_CARD_REQUIRED_FIELDS:
+            if not isinstance(hook[key], str) or not hook[key].strip():
+                raise ValueError(
+                    f"{path}: hook_techniques[{idx}].{key} must be a non-empty string"
+                )
+        cards.append({key: hook[key].strip() for key in _HOOK_CARD_REQUIRED_FIELDS})
+    return cards
 
 
 def reset_for_tests() -> None:

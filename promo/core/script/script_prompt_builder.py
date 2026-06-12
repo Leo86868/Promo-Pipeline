@@ -35,7 +35,14 @@ from promo.core.schema import ClipMetadata, NarratorPersona
 logger = logging.getLogger(__name__)
 
 
-HOOK_TECHNIQUES = arsenal_loader.load_script_hooks()
+# V1-2: hook cards ({name, technique, must_not}); HOOK_TECHNIQUES keeps
+# the historical name-list shape for rotation and consumers.
+# REPRODUCIBILITY: rotation is seed % len(HOOK_CARDS) — editing the card
+# list (add/remove/reorder) invalidates historical seed→card mappings,
+# same rule as the music library.
+HOOK_CARDS = arsenal_loader.load_script_hooks()
+HOOK_TECHNIQUES = [card["name"] for card in HOOK_CARDS]
+_HOOK_CARD_BY_NAME = {card["name"]: card for card in HOOK_CARDS}
 
 
 def build_variant_plans(
@@ -330,6 +337,12 @@ def build_prompt(
             f"- REQUIRED HOOK TECHNIQUE: Use a \"{hook}\" hook for segment 1. "
             f"This is your assigned technique — do not use a different one.\n"
         )
+        card = _HOOK_CARD_BY_NAME.get(hook)
+        if card:
+            variant_note += (
+                f"- TECHNIQUE: {card['technique']}\n"
+                f"- MUST NOT: {card['must_not']}\n"
+            )
 
     # Sprint Arsenal Externalization (Commit 6b): per-mode RULES content
     # comes from the skeleton YAML, not from inline `if profile.mode ==

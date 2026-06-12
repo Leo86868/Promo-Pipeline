@@ -610,6 +610,13 @@ class TestP2HookDealer:
 
         assert "REQUIRED HOOK TECHNIQUE" in prompt
         assert plan["hook_technique"] in prompt
+        # V1-2: the card's technique + guardrail ride along — a bare
+        # label proved too thin to steer the model.
+        from promo.core.script.script_prompt_builder import _HOOK_CARD_BY_NAME
+
+        card = _HOOK_CARD_BY_NAME[plan["hook_technique"]]
+        assert card["technique"] in prompt
+        assert card["must_not"] in prompt
         # First-clip steering stays a multi-variant-only device.
         assert "REQUIRED FIRST CLIP" not in prompt
 
