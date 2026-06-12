@@ -1,6 +1,6 @@
 # PGC Pipeline 下一阶段路线图(2026-06)
 
-> **新 session 自举(60 秒)**:① 读本文件(重点:§执行日志 最后一天 + §翻转二);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文;④ **已完成项的工作原理在根目录 `LEARNING.md`**(给 Leo 的学习手册,含 receipt 实时机制、resume 决策表、速度经济学)。**已完成勿重做**:第一二梯队全部落地;翻转一(轻量版)已实现并实战验证(per-step flush + timings + `--resume`),不需要再"实现翻转一"。**当前最大未做项**:尾巴流水线化(timings 数据已到手:upscale ~700s > render ~450s)和 翻转二(beat planner + packer,F3 触发率首样本 50%)。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
+> **新 session 自举(60 秒)**:① 读本文件(重点:§当前排期 + §执行日志 最后一天);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文;④ **已完成项的工作原理在根目录 `LEARNING.md`**(给 Leo 的学习手册;P2 的 type 卡片体系在 §14)。**已完成勿重做**(均已实战验证):第一二梯队、翻转一(receipt 状态机 + `--resume`)、尾巴流水线化(`--tail-workers`,双批 6 分/条实测)、**翻转二全链 + Gemini #2 遗产退役**(排片员是唯一选片引擎,回滚 = `git revert 1f28902`)、P1 范文冲突修复、**P2 type 卡片化七步**(性格进 skeleton YAML、路由查表、hook 发牌接 per-video seed、范文法规)。**下一步看 §当前排期**。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
 
 **写作日期**: 2026-06-09
 **当前 main HEAD**: `4453d78`(F3 split-repair 止血已落地)
@@ -15,6 +15,29 @@
 - 取而代之的纪律:**过手即终态**——路线图每碰一个区域,就把它留成终态质量(新模块 + 测试 + 该目录 architecture.md 更新)。走完路线,最烂的两个区域(`assign/` 的 Gemini #2 面、`run_batch` 的 autopilot 尾巴)自然就是全新的了。
 - 顺序:**第一梯队止损(约 2-3 天)→ receipt 状态机化 + resume → beat planner 替换 Gemini #2(先 A/B 后切换)**。
 - 反馈闭环(分发数据回流)P0 低,放最后;manifest 已记录每条视频的 script/clips/音乐,钩子已留好,无需现在动。
+
+---
+
+## 当前排期(2026-06-11 刷新)
+
+**主线(按序)**:
+1. **P3 根目录瘦身**:根级 5 份 .md 归 docs/、runtime 目录整合、自举路径同步;
+2. **P4 测试健康专项**:S5 测试解耦遗留 + memory 里的 test-health backlog(monkeypatch 内部符号 → I/O 契约化);
+3. **P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
+
+**等信号灯(有外部输入才动)**:
+- **价格政策 / POI 档案袋**:`hotel_description`/`notable_details` 通道常年为空、价格数字来自模型记忆未核实(LEARNING §14)——等 Leo 拍板(禁提价格 or 喂真实档案),纯 arsenal 一行;
+- **120s type**:开卡前先与 AIGC 对资产门槛(~90-100);
+- **停顿中切镜(mid-silence bridges)**:口味题,等 Leo 看片决定;
+- **720p 真超分 A/B**:过渡期税,素材库原生 1080 后作废,只在过渡期拖长时才值得;
+- **ffmpeg vs Remotion 调研**:upscale 消失后渲染重新成为大头时再启动。
+
+**远期**:翻转三(分发数据回流;manifest 钩子已留好,不关门即可)。
+
+**三块常转仪表(每个生产批顺手读)**:
+1. **字数摩擦率**:`81799ce` 范文修复的毕业考——抽词分布应上移、<150 抽次应归零;
+2. **F3 基线**:新配方 F3=0(批次 1 0/6)持续确认;
+3. **素材消耗**:packer provenance 的 `beat_count`/`unique_clip_count`(22-24 段/条)与窗口耗尽率;新增看 `assigned_hook` 是否随规范序号走牌(P2 step 5 的生产验证)。
 
 ---
 
@@ -201,3 +224,12 @@
 - **处女航(maiden_packer_3x1)**:纯新引擎首个生产批,3/3 complete。引擎零失分(packer 三上三中、账本加载、零耗尽);Zion 首跑死于字数闸(5 抽全落 150-153)→ 杠挪 155→150(`d9b6c78`)→ resume 一发过(2 skip/1 re-render)。**窗口轮换双向实证**:新店 trim=0(无账可避,正确);老店(Little Palm B 臂)10 个非零 trim 与账本合并窗口逐笔吻合(3.47/4.42/2.39/2.35/3.69)。注意:即便 150 杠,Zion 仍抽了 146/149 两次才过——素材薄的店笔锋聚在 146-153,若再现预算耗尽考虑 145。**正常批量已解锁**;生产 worktree = main_20260611T_soleengine @ d9b6c78。打包缺口:31 家店全部 ≥3 approved,零欠账。
 - **字数摩擦根因(Leo 的 conflicting-inputs 直觉命中)**:prompt 说"瞄 160 词",但唯一的 format=long 范文只有 143 词(低于下限!),另三篇 55-69 词的短范文进一步下拽——模型模仿范文胜过服从数字。修复(`81799ce`,纯 arsenal 零代码):Soneva 扩到 158 词 + 两篇真实成片(Secrets 158 / Nemacolin 160)入库为 long 范文。**迭代方法论**:文案行为不对先查 arsenal 信号一致性(指令 vs 范文 vs 配速带),再动代码。
 - **P2 方向已与 Leo 对齐(待新 session 实施)**:type 个性全部进 skeleton YAML(节奏 beat min/max、停顿上限、资产门槛),时长/身份路由数据化——加 type = 丢一张 YAML + 补该 format 范文,零 Python;operator 自然语言说"做 type B",skill 按卡片找配方。P3 根目录瘦身排后。
+
+### 2026-06-11(P2 落地,七步七 commit)
+
+- **第 1-3 步(`b8b71ec`→`6dda9a9`→`de15a7a`,orchestrator 复验放行)**:卡片扩 schema(`description`+`pacing`+`assets`,现值回填,loader 必填拒载)→ 路由"时长→卡"精确查表(一时长一张卡,撞车加载时报错;**有意的行为变化**:未知时长从静默落 long 改为大声报错列牌堆)→ 消费端(beat_planner/packer/pause_budget/选店门槛)改读卡,五个代码常量删净 + 签名守卫防默认值复活。旋钮依据(4s 顶的素材物理、3s 停顿帽的 7000→3000 历史)全部迁到卡上注释。
+- **第 5 步(`30b1dd6`,先于第 4 步提交,因两步同文件、保 commit 原子)**:hook 发牌接 per-video seed。根因 = 批次架构(每视频独立 compile + `--n-variants 1` → variant 序号恒 1,永远发第一张牌;first-valid-wins 是 variant 内候选层,另一层楼)。新 `--hook-seed` 通道 = `(base_seed or 0) + 规范序号`(音乐惯例,生产 receipt seed:None 也照转;`--seed` 的选择器熵语义不动)。provenance 拆 `assigned_hook`(发的牌)/`self_reported_hook`(Gemini 自报)——回归测试只认 assigned 随 seed 轮换。
+- **第 4 步(`3235c76`)**:范文法规。`format_examples` 的静默跨 format fallback(143 词事故的温床)改为大声报错;persona 服务的每个 format ≥2 篇打标范文;生产 persona 双卡钉绿;范文"迁入卡片"之路注释预留。
+- **第 6 步(`5721108`)**:arsenal README 旋钮索引 + LEARNING §14(三抽屉/三层差异/简报链路 + 两条 Leo 批注口径 + 事实通道防失传:hotel_description/notable_details 空通道、价格来自模型记忆、政策待拍板)。
+- **第 7 步**:三块仪表写进 §当前排期(字数摩擦毕业考 / F3 基线 / 素材消耗+走牌验证),下一生产批顺手读。
+- 全程 693 tests passed(668 起步,+25);每步独立 commit,行为不变步骤有回归钉。
