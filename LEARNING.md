@@ -209,3 +209,33 @@ planned → rendering → rendered_manifest_audited → complete
 **那一下(2026-06-10)**:查了真账——5,041 行里,可对照的 4,532 行**零条旧账**(其余 509 行的素材已退役/到使用上限,正常)。保险买在没着火的时候;**但也别把"可能着火"讲成"正在着火"**——Claude 这次自己犯过这个错(给钳制修复编了一个"素材会被重新编码变短"的不存在机制),已在代码注释和本手册纠正。
 
 代码:`promo/core/assign/usage_windows.py`(fetch 钳制 + 空隙长度先钳后判,各一处,均有反例回归测试)。
+
+## 14. P2:type 即卡片(三抽屉 / 三层差异 / 简报链路)
+
+**奶奶版**:以前这家厨房的"菜性格"一半写在菜谱卡上,一半刻在厨房墙上(Python 常量)。P2 把墙上的字全抄回了卡片盒,墙上只留一条规矩:"照卡做菜"。从此加一种新菜 = 往盒里丢一张新卡 + 给厨师两三张这道菜的成品照片,不请泥瓦匠。
+
+### 三抽屉(输入分三处放,改什么开哪个抽屉)
+
+1. **type 卡**(`arsenal/script_skeletons/*.yaml`):一种视频的全部性格——结构(段数/字数)、节奏(`pacing.beat_min/max_sec`、`pause_cap_ms`)、门槛(`assets.base_min/per_extra`)、自述(`description`)。**卡是唯一信号源**:代码里的对应常量已删除,且有签名守卫测试防止默认值复活。
+2. **persona**(`arsenal/personas/*.yaml`):声音人格——语气、禁用词、**范文**。范文法规:persona 服务的每个 format ≥2 篇打标范文,prompt 构建器**拒绝跨 format 借范文**(143 词事故的结构性预防;远期范文将迁入 type 卡)。
+3. **零件库**:hooks(`script_hooks.yaml`)、声音(`voices/catalog.yaml`)、音乐(平台曲库)。
+
+抽屉标签 = `arsenal/README.md` 的"旋钮索引"表。
+
+### 三层差异(防雷同的三层,各有各的轮子)
+
+- **type 层**:不同卡不同结构。路由是"时长→卡"精确查表,一时长一张卡,撞车在加载时大声报错;将来同时长多 type 的解法是把路由键升级为 type 身份,**不是**加选卡策略(注释写在 `arsenal_loader` 撞车检查处)。
+- **video 层**:per-video 轮换。音乐按规范序号(POI-major)走,P2 第 5 步让 hook 发牌也接上同一惯例(`--hook-seed = (base_seed or 0) + 规范序号`)。
+  - **机制要写准(Leo 批注一)**:hook 以前钉死的直接原因是**批次架构**——生产每条视频独立 compile 且 `--n-variants 1`,variant 序号天生恒为 1,按 variant 轮换等于永远发第一张牌。first-valid-wins 是 **variant 内部候选层**的事,另一层楼,别焊在一起。
+  - **测试陷阱(Leo 批注二)**:sidecar 旧字段 `hook_technique` 是 Gemini 在 JSON 里**自报**的标签,模型可以自由发挥(九条样本"见过 2/6 套路"就是自报噪声)。P2 起 provenance 分两字段:`assigned_hook`(发牌机发出的)/ `self_reported_hook`(自报)。**验发牌机只能断言 assigned 值随 seed 轮换**——只验自报值,发牌机坏着测试也能绿。
+- **生成层**:温度、候选数。现状 best-of-N 实为 first-valid-wins(无打分);"生成 N→judge 挑选"是远期插槽,在 `script_generator` 候选循环。
+
+### 简报链路(operator 说人话 → 配方)
+
+Leo 说"做 type B" → skill 翻卡片盒读各卡 `description` 对号 → 该卡(结构+节奏+门槛)+ persona 里该 format 的范文 + 时长路由,配方齐活,零 Python。新时长档另需先与 AIGC 对资产门槛(120s ≈ 90-100)。
+
+### 事实通道(防失传的记录,2026-06-11)
+
+- `hotel_description` / `notable_details` 是**存在但常年为空**的"事实通道"(compile CLI → pipeline → prompt 一路打通,生产从未喂过值)。
+- 因此文案里的**价格等数字现状来自 Gemini 的模型记忆,未经核实**。
+- **价格政策待 Leo 拍板**(写进 prompt 禁提价格 / 或喂真实价格走事实通道)——拍板后是纯 arsenal 一行改动。
