@@ -575,6 +575,44 @@ class TestP2HookDealer:
             HOOK_TECHNIQUES[5 % len(HOOK_TECHNIQUES)],
         ]
 
+    def test_dealt_hook_reaches_prompt_in_production_shape(self):
+        """2026-06-12 regression: --n-variants 1 (production) must still
+        inject the REQUIRED HOOK block. Original bug: the block was gated
+        behind n_variants > 1, so the dealer rotated cards no production
+        prompt ever contained — sidecar accounting was green while the
+        model never saw a card."""
+        from promo.core.format_profiles import LONG_PROFILE
+        from promo.core.script.script_generator import (
+            _DEFAULT_PERSONA_PATH,
+            _build_prompt,
+            load_persona,
+        )
+        from promo.core.script.script_prompt_builder import build_variant_plans
+
+        clips = [
+            {"id": f"{i:04d}", "category": "scenic",
+             "scene_description": "clip", "source_duration_sec": 6.0}
+            for i in range(1, 15)
+        ]
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        plan = build_variant_plans(1, clips, hook_seed=4)[0]
+
+        prompt = _build_prompt(
+            poi_name="Test Hotel",
+            location="Nowhere",
+            clips_metadata=clips,
+            persona=persona,
+            profile=LONG_PROFILE,
+            variant_index=1,
+            n_variants=1,
+            variant_plan=plan,
+        )
+
+        assert "REQUIRED HOOK TECHNIQUE" in prompt
+        assert plan["hook_technique"] in prompt
+        # First-clip steering stays a multi-variant-only device.
+        assert "REQUIRED FIRST CLIP" not in prompt
+
 
 class TestSprint08NormalizeScript:
     """normalize_script strips openers, trims overflow, keeps safety clause."""

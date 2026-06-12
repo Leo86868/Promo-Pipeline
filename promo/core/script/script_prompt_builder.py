@@ -309,19 +309,27 @@ def build_prompt(
             f"- Keep the same hotel and clip inventory, but change the hook, sentence choices, "
             f"and clip usage enough that this feels like a genuinely different edit.\n"
         )
-        if variant_plan:
-            hook = variant_plan.get("hook_technique", "")
-            first_clip = variant_plan.get("first_clip_id", "")
-            if hook:
-                variant_note += (
-                    f"- REQUIRED HOOK TECHNIQUE: Use a \"{hook}\" hook for segment 1. "
-                    f"This is your assigned technique — do not use a different one.\n"
-                )
-            if first_clip:
-                variant_note += (
-                    f"- REQUIRED FIRST CLIP: Segment 1, clip 1 MUST be clip {first_clip}. "
-                    f"Write narration that matches what this clip shows.\n"
-                )
+        if variant_plan and variant_plan.get("first_clip_id"):
+            # First-clip steering is a multi-variant diversity device only;
+            # single-variant production ignores script clip suggestions
+            # (the packer owns clip choice).
+            variant_note += (
+                f"- REQUIRED FIRST CLIP: Segment 1, clip 1 MUST be clip "
+                f"{variant_plan['first_clip_id']}. "
+                f"Write narration that matches what this clip shows.\n"
+            )
+    # 2026-06-12 fix: the dealt hook card must reach the prompt in EVERY
+    # compile shape. Production runs --n-variants 1 (one video per compile,
+    # per-video rotation via --hook-seed), and the previous placement inside
+    # the n_variants > 1 block silently dropped the card from every
+    # production prompt — the dealer rotated cards nobody ever saw.
+    if variant_plan and variant_plan.get("hook_technique"):
+        hook = variant_plan["hook_technique"]
+        variant_note += (
+            f"\nHOOK ASSIGNMENT:\n"
+            f"- REQUIRED HOOK TECHNIQUE: Use a \"{hook}\" hook for segment 1. "
+            f"This is your assigned technique — do not use a different one.\n"
+        )
 
     # Sprint Arsenal Externalization (Commit 6b): per-mode RULES content
     # comes from the skeleton YAML, not from inline `if profile.mode ==
