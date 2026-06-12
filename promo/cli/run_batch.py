@@ -321,6 +321,12 @@ def resolve_music_ids(
     the same shortest tracks. Returning the full eligible pool lets
     ``plan_batch_items`` cycle every track; ``shuffle_seed`` varies the
     rotation order across batches.
+
+    REPRODUCIBILITY (外审路标②): rotation is ``ordinal % len(pool)`` —
+    seeded reproducibility holds only while the LIBRARY CONTENT is
+    frozen. Adding/removing tracks changes the pool and invalidates
+    every historical seed→track mapping (same rule as the hook cards in
+    ``script_hooks.yaml``).
     """
     client = client_factory()
     tracks = SupabaseMusicLibrary(
@@ -373,6 +379,11 @@ def plan_batch_items(
             # (2) it keeps seed→(music, seed) per video identical to the
             # pre-pipelining serial code, so seeded batches stay comparable
             # across versions.
+            # 外审路标③: the LOOP is video-major (round-robin execution
+            # order); this ordinal is POI-major (canonical order) — the
+            # two orderings are deliberately different, see the comment
+            # block above. ``base_seed or 0`` below treats None as 0 on
+            # purpose: hook rotation must work in unseeded batches.
             canonical_ordinal = poi_ordinal * videos_per_poi + (video_index - 1)
             music_id = None
             if music_ids:
@@ -1222,6 +1233,18 @@ def _rebuild_item_from_video(video: dict[str, Any]) -> BatchItem:
     verbatim from the record, so an empty value here is harmless.
     """
     render = video.get("render") or {}
+    # 外审路标① (2026-06-12): hook_seed is not a per-video receipt field —
+    # recover it from the recorded compile command so any future caller
+    # that REBUILDS a command from this item deals the same hook card.
+    # Today's resume replays the recorded command string verbatim, so
+    # this is a latent-trap fix, not a behavior change. Receipts from
+    # before --hook-seed existed fall back to 0 (the pre-P2 deal).
+    command = list(render.get("command") or [])
+    hook_seed = 0
+    try:
+        hook_seed = int(command[command.index("--hook-seed") + 1])
+    except (ValueError, IndexError):
+        pass
     return BatchItem(
         poi=BatchPoi(
             name=str(video.get("poi_name") or ""),
@@ -1235,6 +1258,7 @@ def _rebuild_item_from_video(video: dict[str, Any]) -> BatchItem:
         voice_key=str(video.get("voice_key") or ""),
         music_id=video.get("music_id"),
         seed=video.get("seed"),
+        hook_seed=hook_seed,
     )
 
 

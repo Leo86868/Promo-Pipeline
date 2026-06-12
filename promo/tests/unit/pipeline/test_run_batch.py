@@ -866,6 +866,34 @@ def test_plan_batch_items_hook_seed_offsets_by_base_seed(tmp_path):
     assert [item.seed for item in items] == [100, 101, 102]
 
 
+def test_rebuild_item_from_video_recovers_hook_seed(tmp_path):
+    """外审路标① regression: resume's BatchItem rebuild must recover
+    hook_seed from the recorded command. Today resume replays the
+    command string verbatim, but any future caller that REBUILDS a
+    command from the rebuilt item would silently deal card 0."""
+    from promo.cli.run_batch import _rebuild_item_from_video
+
+    video = {
+        "poi_name": "Hotel",
+        "poi_id": "poi_1",
+        "video_index": 2,
+        "voice_key": "hope",
+        "seed": None,
+        "render": {
+            "output_dir": str(tmp_path),
+            "output_path": str(tmp_path / "promo.mp4"),
+            "command": ["python3", "-m", "promo.cli.compile_promo",
+                        "--poi", "Hotel", "--hook-seed", "7"],
+        },
+    }
+    assert _rebuild_item_from_video(video).hook_seed == 7
+
+    # Pre-hook-seed receipts (no flag in the recorded command) fall
+    # back to the pre-P2 deal.
+    video["render"]["command"] = ["python3", "-m", "promo.cli.compile_promo"]
+    assert _rebuild_item_from_video(video).hook_seed == 0
+
+
 def test_build_compile_command_threads_hook_seed(tmp_path):
     from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
 
