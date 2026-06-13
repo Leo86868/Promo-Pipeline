@@ -34,6 +34,40 @@ clips/                        → MiMo V2 Omni            → scene descriptions
 - **Understand it** → start with [`promo/core/architecture.md`](promo/core/architecture.md) — folder-level navigator that threads the 8 subfolders + 8 root modules in plain English.
 - **Change internals** → [`architecture.md`](architecture.md) — engineer-facing project bible (two-space invariant, sidecar producer/consumer table, LLM quarantine charter, module graph, extension points).
 
+## Repository layout
+
+```
+pgc-pipeline/
+├── README.md             ← you are here: what it is + how to run a batch
+├── architecture.md       ← engineer-facing project bible + data-flow diagram
+├── pyproject.toml · requirements.{txt,lock} · .env.example · LICENSE
+│
+├── promo/                ← the pipeline package
+│   ├── arsenal/             operator-extensible data (prompts · personas · voices · skeletons · hooks)
+│   ├── core/               the engine, split by stage:
+│   │   ├── analyze/ script/ narrate/ assign/ render/   the pipeline stages
+│   │   ├── pipeline/ selection/ assets/                orchestration · selection · asset access
+│   │   └── llm/ model_adapters/                        provider plumbing (swap models here / via env)
+│   ├── cli/                command entry points (compile_promo · run_batch · revert_usage · …)
+│   ├── remotion/           Remotion render project (run `npm install` here)
+│   └── tests/              input/output contract tests
+│
+├── docs/                 ← documentation home (P3 folded the root .md in here)
+│   ├── ROADMAP.md (含「当前排期」) · LEARNING.md · BACKLOG.md · NOTES.md
+│   ├── operations/         daily runbook + production contract
+│   └── contracts/ · schemas/ · research/
+│
+├── .codex/skills/        ← operator skill (natural language → production commands)
+├── scripts/ · ci/        ← install helpers + CI gate
+├── workflow/             ← multi-session project archives (frozen records)
+│
+├── material/             ← operator clip pools, per POI   (gitignored except scaffold)
+├── runs/                 ← batch run dirs: receipts · previews · logs   (gitignored)
+└── output/               ← local single-render outputs   (gitignored)
+```
+
+Runtime data is gitignored and lives under `runs/` (batch runs, via `--output-dir`) and `output/` (one-off local renders); nothing runtime is tracked. There is **no `archive/`/`legacy/` directory** — retired code is deleted outright and git history is the cold storage (e.g. the Gemini #2 chain unfreezes with `git revert 1f28902`). Please don't reintroduce a cold-storage folder.
+
 ## Install
 
 Prerequisites:
