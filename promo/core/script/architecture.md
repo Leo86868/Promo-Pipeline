@@ -49,4 +49,4 @@ Pause-budget runs *after* this flow accepts a script: `pipeline` calls `pause_bu
 - **WPM bootstraps are voice-and-backend-specific** — calibrated against Gemini-2.5-Pro × ElevenLabs (speed=0.95) and Gemini-2.5-Pro × Kore (with directorial prompt). Either side swap requires recalibration via a fresh `tts_metrics` sidecar.
 - **Pacing gate severity is mode-conditional** — LONG-mode warnings promoted to `ValidationError` (per-attempt loop catches and re-rolls); SHORT-mode warnings are observational only.
 - **`HOOK_TECHNIQUES` is arsenal-resident** — loaded from `promo/arsenal/script_hooks.yaml`; changing the order changes variant rotation.
-- **`_DEFAULT_PERSONA_PATH` is duplicated** between `script_prompt_builder.py` and `selection/persona_selectors.py`; tracked in [`BACKLOG.md`](../../../BACKLOG.md).
+- **`_DEFAULT_PERSONA_PATH` is duplicated** between `script_prompt_builder.py` and `selection/persona_selectors.py`; tracked in [`BACKLOG.md`](../../../docs/BACKLOG.md).

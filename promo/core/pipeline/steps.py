@@ -557,7 +557,7 @@ def _step_assign_clips(
     per-variant kwargs (voice/tmp-dir/persona/...) are kept so the
     caller contract is stable — they belonged to the retired Gemini #2 +
     F3 script-regen chain (removed 2026-06-11 after the same-script A/B
-    verdict; see ROADMAP-2026-06.md §执行日志).
+    verdict; see docs/ROADMAP.md §执行日志).
 
     Returns ``(script, narration, assignments, provenance)``. Raises
     ``ClipAssignmentError`` (no coverable candidate), ``UsageWindowError``

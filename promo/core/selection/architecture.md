@@ -34,4 +34,4 @@ Two `runtime_checkable` Protocols (`FormatSelector`, `PersonaSelector`) plus def
 - **PRNG isolation** — every random-mode selector keeps its own `random.Random` via `make_seeded_random(seed)`. Never reach for the process-global `random` state.
 - **Sorted iteration over discoverable sets** — `RandomFormatSelector` calls `tuple(sorted(FORMAT_TEMPLATES))` so the `_rng.choice` sequence is deterministic for any seed regardless of dict insertion order. `RandomPersonaSelector` keeps the caller-supplied `persona_paths` order verbatim (operator owns the ordering).
 - **Loud failure on missing persona path** — `RandomPersonaSelector` raises `ConfigError` if a YAML listed in `persona_paths` doesn't exist; the bundled fallback is only used when `persona_paths` is empty.
-- **`_DEFAULT_PERSONA_PATH` is duplicated** between `selection/persona_selectors.py` and `script/script_prompt_builder.py` — drift risk; tracked in [`BACKLOG.md`](../../../BACKLOG.md).
+- **`_DEFAULT_PERSONA_PATH` is duplicated** between `selection/persona_selectors.py` and `script/script_prompt_builder.py` — drift risk; tracked in [`BACKLOG.md`](../../../docs/BACKLOG.md).
