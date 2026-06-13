@@ -36,16 +36,17 @@ class NoSuitableBGMError(RuntimeError):
 
 
 class ClipAssignmentError(RuntimeError):
-    """Raised by ``clip_assigner.assign_clips`` when Gemini #2's output
-    violates the hard constraint ``source_duration - trim_start ≥
-    display_span_sec`` for any phrase (TOL=0.05s).
+    """Raised in the deterministic assign stage when a phrase's clip cannot
+    cover its ``display_span_sec`` under the hard constraint
+    ``source_duration - trim_start ≥ display_span_sec`` (TOL=0.05s).
 
-    Sprint 10 C2 — the two-pass Gemini architecture's correctness guarantee:
-    Gemini #2 must never emit an assignment that would freeze its clip
-    before the narration phrase finishes. On violation, this error is
-    raised naming the first failing segment + phrase indices and the
-    arithmetic shortfall so the F3 retry can issue a targeted
-    "tighten segment X" hint to Gemini #1.
+    Two raise sites: the ``packer`` raises it when no coverable unused
+    candidate exists for a beat, and the ``clip_assignment_validator``
+    (``_enforce_hard_constraint_and_enrich``, the sole arbiter of packer
+    output) raises it if any emitted assignment would freeze its clip before
+    the narration phrase finishes. The error names the first failing segment +
+    phrase indices and the arithmetic shortfall. There is no retry — the
+    variant aborts and ``--resume`` re-renders.
 
     Attributes:
         segment_index: 1-indexed segment number that failed.
@@ -53,7 +54,7 @@ class ClipAssignmentError(RuntimeError):
         required_span: The phrase's computed ``display_span_sec``.
         actual_max_usable: ``source_duration - trim_start`` for the offending
             assignment.
-        clip_id: The clip_id Gemini #2 assigned to the failing phrase.
+        clip_id: The clip_id the packer assigned to the failing phrase.
     """
 
     def __init__(
