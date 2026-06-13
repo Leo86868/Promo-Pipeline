@@ -212,6 +212,34 @@ def _retrieve_shared_asset_candidates(
     )
 
 
+def _build_sampled_brief(
+    ready_pool: list[Any],
+    hook_seed: int | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """V2 brief sampler: per-video stratified display subset (stats stay
+    full-pool) so a constant brief stops seeding every script with the
+    same salient details. Seed rides the per-video canonical-ordinal
+    channel (--hook-seed), 0 when unset. Returns (brief, sample_info)."""
+    from promo.core.assets.retrieval import (
+        build_asset_visual_brief,
+        sample_brief_display_assets,
+    )
+
+    brief_seed = hook_seed or 0
+    display_pool = sample_brief_display_assets(ready_pool, seed=brief_seed)
+    brief = build_asset_visual_brief(
+        ready_pool,
+        display_assets=display_pool,
+        motif_seed=brief_seed,
+    )
+    sample_info = {
+        "seed": brief_seed,
+        "pool_size": len(ready_pool),
+        "displayed": len(display_pool),
+    }
+    return brief, sample_info
+
+
 def _merge_shared_asset_retrieval_provenance(
     run_retrieval_provenance: dict[str, Any],
     shared_asset_retrieval_provenance: dict[str, Any],
@@ -296,7 +324,6 @@ def full_pipeline(
         if candidate_only_mode:
             try:
                 from promo.core.assets.retrieval import (
-                    build_asset_visual_brief,
                     clip_metadata_from_ready_assets,
                 )
 
@@ -304,11 +331,13 @@ def full_pipeline(
                 clips_metadata = clip_metadata_from_ready_assets(shared_asset_ready_pool)
                 clip_durations = _clip_durations_from_metadata(clips_metadata)
                 clip_paths: dict[str, str] = {}
-                asset_visual_brief = build_asset_visual_brief(shared_asset_ready_pool)
+                asset_visual_brief, brief_sample_info = _build_sampled_brief(shared_asset_ready_pool, hook_seed)
                 logger.info(
-                    "Candidate-only shared asset mode: %d ready assets, %.1fs total",
+                    "Candidate-only shared asset mode: %d ready assets, %.1fs total; "
+                    "brief sampler showing %d (seed=%d)",
                     asset_visual_brief["eligible_asset_count"],
                     asset_visual_brief["eligible_total_seconds"],
+                    brief_sample_info["displayed"], brief_sample_info["seed"],
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Candidate-only shared asset setup failed: %s", exc)
@@ -439,6 +468,8 @@ def full_pipeline(
                         scripts=scripts,
                     )
                 )
+                # V2: 显眼项复读 ruler reads which subset the brief showed.
+                shared_asset_retrieval_provenance["brief_sample"] = brief_sample_info
                 download_asset_ids = shared_asset_retrieval_provenance[
                     "download_asset_ids"
                 ]

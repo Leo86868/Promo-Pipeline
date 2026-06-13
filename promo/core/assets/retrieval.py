@@ -302,13 +302,94 @@ def _count_values(
     ]
 
 
+def sample_brief_display_assets(
+    assets: list[ReadyAsset] | list[BriefAsset],
+    *,
+    seed: int,
+    target_min: int = 50,
+    target_max: int = 60,
+    category_weights: dict[str, float] | None = None,
+) -> list[Any]:
+    """V2 brief sampler (A 层): per-video stratified sample of the pool.
+
+    The brief's WHOLE-POOL stats stay truthful elsewhere; this only
+    decides which CONCRETE scenes each video's brief gets to show, so a
+    constant library stops seeding every script with the same salient
+    details (the fire-pit / "two and a half acres" convergence).
+
+    - Stratified by category, proportional allocation (largest
+      remainder), floor 1 per non-empty category — coverage structure
+      is preserved, only the members rotate.
+    - ``seed`` rides the per-video canonical-ordinal channel (same as
+      the hook deal): deterministic and reproducible, never global
+      randomness.
+    - ``category_weights`` is the reserved C-slot (题材发牌): None means
+      plain proportional; a future topic-card dealer supplies per-
+      category multipliers — only the weight SOURCE changes, not this
+      function's shape.
+    - Pools at or under ``target_min`` are returned whole (small stores
+      keep their full brief).
+    """
+    import random
+
+    if target_min <= 0 or target_max < target_min:
+        raise AssetRetrievalError("invalid brief sampler targets")
+    if len(assets) <= target_min:
+        return list(assets)
+    target = min(target_max, len(assets))
+
+    grouped: dict[str, list[Any]] = {}
+    for asset in assets:
+        grouped.setdefault(asset.category or "unknown", []).append(asset)
+
+    weights = {
+        category: len(members) * float((category_weights or {}).get(category, 1.0))
+        for category, members in grouped.items()
+    }
+    total_weight = sum(weights.values()) or 1.0
+
+    # Largest-remainder allocation with floor 1 per non-empty category.
+    shares = {
+        category: target * weight / total_weight
+        for category, weight in weights.items()
+    }
+    alloc = {
+        category: max(1, min(len(grouped[category]), int(share)))
+        for category, share in shares.items()
+    }
+    remainders = sorted(
+        grouped,
+        key=lambda c: (-(shares[c] - int(shares[c])), c),
+    )
+    idx = 0
+    while sum(alloc.values()) < target and idx < len(remainders) * 2:
+        category = remainders[idx % len(remainders)]
+        if alloc[category] < len(grouped[category]):
+            alloc[category] += 1
+        idx += 1
+
+    sampled: list[Any] = []
+    for category in sorted(grouped):
+        members = sorted(grouped[category], key=lambda a: a.clip_id)
+        # str seeds hash stably (sha-based), unlike object hash().
+        rng = random.Random(f"{seed}:{category}")
+        sampled.extend(rng.sample(members, min(alloc[category], len(members))))
+    return sampled
+
+
 def _coverage_phrases(
     assets: list[ReadyAsset] | list[BriefAsset],
     *,
     max_phrases: int,
+    rotation_seed: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Pick diverse visible motifs without exposing Gemini #1 to clip ids."""
-    phrases: list[dict[str, Any]] = []
+    """Pick diverse visible motifs without exposing Gemini #1 to clip ids.
+
+    ``rotation_seed`` (V2 brief sampler B 层) rotates WHICH ``max_phrases``
+    of the eligible motif list are shown — without it the same top-4
+    led every video's brief for a category.
+    """
+    candidates: list[dict[str, Any]] = []
     seen_subjects: set[str] = set()
     ordered = sorted(
         assets,
@@ -326,14 +407,16 @@ def _coverage_phrases(
         if subject_key in seen_subjects:
             continue
         seen_subjects.add(subject_key)
-        phrases.append({
+        candidates.append({
             "phrase": phrase,
             "duration_sec": round(float(asset.duration_sec), 2),
             "usage_count": asset.usage_count,
         })
-        if len(phrases) >= max_phrases:
-            break
-    return phrases
+    if not candidates:
+        return []
+    start = (int(rotation_seed) % len(candidates)) if rotation_seed else 0
+    rotated = candidates[start:] + candidates[:start]
+    return rotated[:max_phrases]
 
 
 def _asset_visual_detail(
@@ -391,15 +474,32 @@ def build_asset_visual_brief(
     motifs_per_category: int = 4,
     signature_visual_count: int = 3,
     max_grounding_items: int = 36,
+    display_assets: list[Any] | None = None,
+    motif_seed: int | None = None,
 ) -> dict[str, Any]:
     """Return coverage-first visual grounding for Gemini #1.
 
     The brief avoids clip ids because Gemini #1 should learn what is visible,
     not lock onto individual assets before retrieval chooses candidates.
+
+    V2 brief sampler split (2026-06-12, Leo's call): per-category STATS
+    (asset_count / seconds / bands / mixes) always come from the FULL
+    ``assets`` pool — the writer should know the store's true size.
+    The CONCRETE scenes shown (coverage_motifs / grounding_set /
+    core_visuals) come from ``display_assets`` when provided (the
+    per-video stratified sample), so each video's brief advertises
+    different members of the same structure. ``motif_seed`` additionally
+    rotates which motifs lead each category (B 层).
     """
     grouped: dict[str, list[ReadyAsset | BriefAsset]] = {}
     for asset in assets:
         grouped.setdefault(asset.category or "unknown", []).append(asset)
+
+    display_grouped: dict[str, list[Any]] = grouped
+    if display_assets is not None:
+        display_grouped = {}
+        for asset in display_assets:
+            display_grouped.setdefault(asset.category or "unknown", []).append(asset)
 
     categories: list[dict[str, Any]] = []
     for category, category_assets in grouped.items():
@@ -418,8 +518,9 @@ def build_asset_visual_brief(
             "shot_mix": _count_values(category_assets, "shot_size"),
             "motion_mix": _count_values(category_assets, "camera_motion"),
             "coverage_motifs": _coverage_phrases(
-                category_assets,
+                display_grouped.get(category, []),
                 max_phrases=motifs_per_category,
+                rotation_seed=motif_seed,
             ),
         })
     categories = sorted(
@@ -440,8 +541,10 @@ def build_asset_visual_brief(
     }
 
     grounding_set: list[dict[str, Any]] = []
+    # Concrete grounding items come from the display subset (sampled);
+    # category order still follows full-pool size ranking.
     grouped_sorted = {
-        category: grouped[category]
+        category: display_grouped.get(category, [])
         for category in [str(row["category"]) for row in categories]
     }
     for category, category_assets in grouped_sorted.items():

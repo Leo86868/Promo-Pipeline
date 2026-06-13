@@ -199,3 +199,92 @@ def test_build_script_retrieval_queries_rejects_empty_scripts():
 
     with pytest.raises(AssetRetrievalError, match="no script segment text"):
         build_script_retrieval_queries([{"segments": [{"text": ""}]}])
+
+
+# --- V2 brief sampler (A 层抽样 + B 层 motif 轮换) -------------------------
+
+
+def _pool(n_per_cat: dict[str, int]):
+    assets = []
+    i = 0
+    for cat, n in n_per_cat.items():
+        for _ in range(n):
+            i += 1
+            assets.append(_asset(
+                clip_id=f"{i:04d}",
+                asset_id=f"asset_{i:03d}",
+                category=cat,
+                main_subject=f"{cat} subject {i}",
+                scene_description=f"{cat} scene {i}",
+            ))
+    return assets
+
+
+class TestBriefSampler:
+    def test_small_pool_returned_whole(self):
+        from promo.core.assets.retrieval import sample_brief_display_assets
+
+        pool = _pool({"pool": 20, "room": 20})  # 40 <= target_min 50
+        assert sample_brief_display_assets(pool, seed=3) == pool
+
+    def test_deterministic_per_seed_and_varies_across_seeds(self):
+        from promo.core.assets.retrieval import sample_brief_display_assets
+
+        pool = _pool({"pool": 40, "room": 30, "food": 29})
+        a1 = {x.clip_id for x in sample_brief_display_assets(pool, seed=1)}
+        a1_again = {x.clip_id for x in sample_brief_display_assets(pool, seed=1)}
+        a2 = {x.clip_id for x in sample_brief_display_assets(pool, seed=2)}
+        assert a1 == a1_again
+        assert a1 != a2  # different videos see different members
+
+    def test_stratified_floor_and_target(self):
+        from promo.core.assets.retrieval import sample_brief_display_assets
+
+        pool = _pool({"pool": 60, "room": 30, "scenic": 8, "spa": 1})
+        sampled = sample_brief_display_assets(pool, seed=5)
+        assert 50 <= len(sampled) <= 60
+        by_cat = {}
+        for x in sampled:
+            by_cat[x.category] = by_cat.get(x.category, 0) + 1
+        # Every non-empty category keeps representation (floor 1)…
+        assert set(by_cat) == {"pool", "room", "scenic", "spa"}
+        # …and allocation roughly follows pool proportions.
+        assert by_cat["pool"] > by_cat["room"] > by_cat["scenic"] >= by_cat["spa"] == 1
+
+    def test_category_weights_c_slot_shifts_allocation(self):
+        from promo.core.assets.retrieval import sample_brief_display_assets
+
+        pool = _pool({"pool": 50, "room": 50})
+        plain = sample_brief_display_assets(pool, seed=7)
+        weighted = sample_brief_display_assets(
+            pool, seed=7, category_weights={"room": 3.0},
+        )
+        count = lambda s, c: sum(1 for x in s if x.category == c)  # noqa: E731
+        assert count(weighted, "room") > count(plain, "room")
+
+    def test_brief_stats_full_pool_scenes_from_display(self):
+        from promo.core.assets.retrieval import build_asset_visual_brief
+
+        pool = _pool({"pool": 6})
+        display = pool[:2]
+        brief = build_asset_visual_brief(pool, display_assets=display)
+        row = brief["categories"][0]
+        # Stats tell the truth about store size…
+        assert row["asset_count"] == 6
+        assert brief["eligible_asset_count"] == 6
+        # …but concrete scenes only come from the display subset.
+        shown = {m["phrase"] for m in row["coverage_motifs"]}
+        assert shown <= {"pool subject 1", "pool subject 2"}
+        grounding = {g["visual_detail"] for g in brief["grounding_set"]}
+        assert grounding <= {"pool scene 1", "pool scene 2"}
+
+    def test_motif_seed_rotates_leading_motifs(self):
+        from promo.core.assets.retrieval import build_asset_visual_brief
+
+        pool = _pool({"pool": 9})  # 9 distinct subjects, max 4 shown
+        b0 = build_asset_visual_brief(pool, motif_seed=0)
+        b3 = build_asset_visual_brief(pool, motif_seed=3)
+        m0 = [m["phrase"] for m in b0["categories"][0]["coverage_motifs"]]
+        m3 = [m["phrase"] for m in b3["categories"][0]["coverage_motifs"]]
+        assert len(m0) == len(m3) == 4
+        assert m0 != m3
