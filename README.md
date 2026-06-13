@@ -22,8 +22,8 @@ clips/                        → MiMo V2 Omni            → scene descriptions
                                                           (script_generator)
                                                                                    → ElevenLabs TTS  /  Gemini Kore TTS    → narration.mp3 + word_timestamps
                                                                                      (tts_engine; MMS_FA forced-aligns the Gemini path)
-                                                                                                                            → Gemini #2                → per-phrase clip_id + trim_start
-                                                                                                                              (clip_assigner; soft-hint embedding retrieval)
+                                                                                                                            → deterministic assign     → per-beat clip_id + trim_start
+                                                                                                                              (beat planner → retrieval → packer → validator)
                                                                                                                                                        → Remotion                → final MP4
                                                                                                                                                          (remotion_renderer)
 ```
@@ -97,7 +97,7 @@ canonical list and optional knobs.
 | Variable | Used by |
 |---|---|
 | `OPENROUTER_API_KEY` | MiMo clip analysis + OpenAI text-embedding-3-small |
-| `GEMINI_API_KEY` | Gemini #1 (script) + Gemini #2 (clip assignment) + Gemini TTS path |
+| `GEMINI_API_KEY` | Gemini #1 (script) + Gemini TTS path |
 | `ELEVENLABS_API_KEY` | ElevenLabs TTS path (only required if a configured voice routes there) |
 | `GOOGLE_CREDENTIALS_FILE` | Google OAuth client secret JSON for Drive uploads |
 | `PGC_GOOGLE_TOKEN_FILE` | Optional token.pickle path. Defaults next to `GOOGLE_CREDENTIALS_FILE`. |
@@ -119,7 +119,7 @@ Optional: `GEMINI_MODEL`, `PROMO_CLIP_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO
 | `python3 -m promo.cli.usage_events_writeback` | Explicit usage-event dry run/writeback. With `--execute`, verifies rows in `poi_asset_usage_events` after the RPC. |
 | `python3 -m promo.cli.register_release_candidates` | Explicit release-candidate dry run/insert. With `--execute`, verifies rows in `release_candidates` after insert. |
 | `python3 -m promo.cli.smoke_local_render` | Minimal local-render smoke (no vendor calls). `--dry-run` skips `ffmpeg`. |
-| `python3 -m promo.cli.build_embedding_index` | Optional warm-up: pre-compute per-POI embedding sidecar so retrieval narrows Gemini #2's clip pool. Skip on first run — the pipeline degrades gracefully to full-pool. |
+| `python3 -m promo.cli.build_embedding_index` | Optional warm-up: pre-compute the per-POI embedding sidecar so per-beat retrieval reads from cache. Skip on first run — the embeddings ladder falls back to an inline batched call. |
 | `python3 -m promo.cli.render_architecture` | Re-renders `architecture.md` to a local `architecture.html` with Mermaid diagrams (gitignored). |
 
 ## Production operations
@@ -155,7 +155,7 @@ material/
 
 | Library | What it holds | Recipe |
 |---|---|---|
-| `arsenal/system_prompts/*.md` | The 4 LLM prompts (MiMo, Gemini #1, F3-retry, Gemini #2). | Bump `_v2.md` to invalidate caches; never edit `_v1.md` in place. |
+| `arsenal/system_prompts/*.md` | The 2 LLM prompts (MiMo, Gemini #1). | Bump `_v2.md` to invalidate caches; never edit `_v1.md` in place. |
 | `arsenal/voices/catalog.yaml` | Voice catalog (Gemini Kore + ElevenLabs voices). | Append a new top-level key; `backend` field selects dispatch. |
 | `arsenal/personas/*.yaml` | Narrator personas — voice / tone / perspective only. | Drop a YAML; `RandomPersonaSelector` picks it up automatically. |
 | `arsenal/script_skeletons/*.yaml` | Promo format templates (`short_30s`, `long_65s`, …). | Drop a YAML with a unique `mode`; `arsenal_loader.load_format_templates()` picks it up. |
