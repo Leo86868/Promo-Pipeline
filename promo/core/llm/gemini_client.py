@@ -8,8 +8,9 @@ exported here (``configure_gemini`` / ``reset_for_tests`` /
 
 ``GEMINI_API_KEY`` resolves via the typed resolver
 ``promo.core.config.gemini_api_key`` (raises ``ConfigError`` on missing).
-``GEMINI_MODEL`` is a direct ``os.getenv`` with a ``gemini-2.5-pro``
-default — the LLM quarantine module is carved out of Rule 2.
+``GEMINI_MODEL`` is a direct ``os.getenv`` defaulting to
+``registry.GEMINI_TEXT_MODEL`` — the LLM quarantine module is carved out of
+Rule 2.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ import os
 import threading
 
 import google.generativeai as genai
+
+from promo.core.model_adapters.registry import GEMINI_TEXT_MODEL
 
 
 GeminiModel = genai.GenerativeModel
@@ -75,8 +78,8 @@ def resolve_gemini_model(*, log_context: str = "Gemini") -> GeminiModel:
 
     Reads ``GEMINI_API_KEY`` through the typed resolver
     ``promo.core.config.gemini_api_key`` (raises ``ConfigError`` on missing
-    values) and ``GEMINI_MODEL`` as a plain ``os.getenv`` with the
-    ``gemini-2.5-pro`` default.
+    values) and ``GEMINI_MODEL`` as a plain ``os.getenv`` defaulting to
+    ``registry.GEMINI_TEXT_MODEL``.
 
     ``log_context`` tags the info-log so the two Gemini-call sites remain
     distinguishable in captured logs — e.g. "Gemini #1" vs "Gemini #2".
@@ -85,6 +88,6 @@ def resolve_gemini_model(*, log_context: str = "Gemini") -> GeminiModel:
 
     api_key = gemini_api_key()
     configure_gemini(api_key)
-    gemini_model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+    gemini_model_name = os.getenv("GEMINI_MODEL", GEMINI_TEXT_MODEL)
     _logger.info("%s model resolved: %s", log_context, gemini_model_name)
     return genai.GenerativeModel(gemini_model_name)

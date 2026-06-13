@@ -12,6 +12,10 @@ from typing import Any
 
 import numpy as np
 
+from promo.core.model_adapters.registry import (
+    OPENROUTER_EMBEDDING_DIM,
+    OPENROUTER_EMBEDDING_MODEL,
+)
 from promo.core.pipeline.poi_asset_valid_clips import build_poi_asset_valid_clip_snapshot
 from promo.core.source_resolution_policy import (
     SourceResolutionPolicy,
@@ -20,8 +24,9 @@ from promo.core.source_resolution_policy import (
 )
 
 
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+# Sourced from the model contacts book (model_adapters/registry) — single source.
+EMBEDDING_MODEL = OPENROUTER_EMBEDDING_MODEL
+EMBEDDING_DIM = OPENROUTER_EMBEDDING_DIM
 EMBEDDING_COMPOSITION_VERSION = 1
 DEFAULT_TOP_K_PER_QUERY = 6
 DEFAULT_MAX_CANDIDATES = 35
