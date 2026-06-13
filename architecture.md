@@ -1,8 +1,10 @@
 # PGC Pipeline Architecture
 
-> **Engineer-facing project bible.** New readers: see [`README.md`](README.md) → [`promo/core/architecture.md`](promo/core/architecture.md) first. This doc assumes you already know what `narration_end`, `final_display_end`, sidecars, F3 retry, the soft-hint contract, and the two-space model are — those are introduced in the umbrella's Vocabulary section.
+> **Engineer-facing project bible.** New readers: see [`README.md`](README.md) → [`promo/core/architecture.md`](promo/core/architecture.md) first. This doc assumes you already know what `narration_end`, `final_display_end`, sidecars, and the two-space model are — those are introduced in the umbrella's Vocabulary section.
 
-Single source of truth for how the standalone promo-video pipeline is structured: which modules hold which responsibility, which sidecars cross module boundaries, and where the load-bearing invariants live. Read this before proposing any structural change to `promo/core/`.
+Single source of truth for the pipeline's **load-bearing invariants**: which modules hold which responsibility, which sidecars cross module boundaries, and the correctness rules that must never silently drift. Read this before proposing any structural change to `promo/core/`.
+
+**How this doc divides labor** (the discipline that keeps it honest): this file carries **invariants + pointers**; per-stage *internals* live in each subfolder's `architecture.md`. When a rule below concerns clip assignment, the verbatim mechanism lives in [`promo/core/assign/architecture.md`](promo/core/assign/architecture.md) — this file states the invariant and points there, it does **not** re-document the packer's house rules. Re-copying internals here is exactly how a bible drifts out of sync with the code; we don't.
 
 ## Pipeline overview (0 → mp4)
 
@@ -10,85 +12,106 @@ The end-to-end journey for a single `compile_promo` invocation. Each stage is a 
 
 ```mermaid
 flowchart LR
-    MiMo[clip_analyzer<br/>MiMo V2 Omni]
-    G1[Gemini #1<br/>script_generator]
-    TTS[tts_engine<br/>ElevenLabs / Gemini]
-    G2[Gemini #2<br/>clip_assigner]
-    Render[remotion_renderer]
-    MP4[[promo_*.mp4]]
-    Sidecars[/clip_assignments + match_quality + tts_metrics/]
-
-    MiMo --> G1
-    G1 --> TTS
-    TTS --> G2
-    MiMo -. clip metadata .-> G2
-    G2 --> Render
-    Render --> MP4
-    Render --> Sidecars
+    MiMo[analyze<br/>clip_analyzer · MiMo] --> G1[script<br/>Gemini #1]
+    G1 --> TTS[narrate<br/>ElevenLabs / Gemini TTS]
+    TTS --> ASSIGN[assign<br/>beat → retrieval → packer → validator]
+    MiMo -. clip metadata + embeddings .-> ASSIGN
+    Ledger[(poi_asset_usage_events)] -. used windows .-> ASSIGN
+    ASSIGN --> Render[render<br/>remotion_renderer]
+    Render --> MP4[[promo_*.mp4]]
+    Render --> Sidecars[/clip_assignments + match_quality + tts_metrics/]
 ```
 
-Three lenses follow:
+Clip assignment (stage 4) is **deterministic code** — it runs after real TTS timing exists, so its display-span math is measured, not predicted. The why-and-how is §The assignment engine below.
 
-- **Two-space model** — the most load-bearing invariant: assigner vs renderer coordinate spaces.
-- **Module graph** — ownership boundaries, who orchestrates whom.
-- **Sidecar producer/consumer** — every JSON that crosses a module boundary, producer paired with consumer.
+## Life of a video (data flow across the platform seam)
 
-## Two-space model
-
-**Plain English first.** The script and the video can have different lengths. The clip-picker (Gemini #2) is only responsible for covering the script — it stops worrying when the narrator stops speaking. The renderer is responsible for covering the full target duration; the gap between them is filled by extra clips called **bridges**. The **two-space model** names this split: assigner space stops at `narration_end`; renderer space goes to `final_display_end = max(target_duration_sec, narration_end)`.
-
-**Engineering rigor.** The **#1 non-obvious invariant** in this pipeline is that the assigner and the renderer operate in different coordinate spaces.
-
-- **Assigner space** — ceiling = `narration_end = word_timestamps[-1].end`. Every assigner hard-constraint (`promo/core/assign/clip_assigner.py::_enforce_hard_constraint_and_enrich`) requires each phrase's clip source to cover `display_span_sec` up to `narration_end`. The last phrase's span stops at `narration_end`, NOT at `final_display_end`.
-- **Renderer space** — ceiling = `final_display_end = max(target_duration_sec, narration_end)`. The renderer (`promo/core/render/remotion_renderer.py`) holds the last clip past `narration_end`; when the last clip's source runs out before `final_display_end`, the bridge pool fills the remaining delta.
-- **Bridge tail** — `bridge_tail = max(0, target_duration_sec − narration_end)`. Renderer-only territory. Filled by either (a) last-clip extension or (b) bridge clips from the unused-clip pool. A `bridge_tail > 0` with **0 bridges fired** is a healthy render — it means the last clip's source duration happened to cover the delta.
+A different altitude from the pipeline overview: that one shows how code flows *inside this repo*; this one shows where the *data* comes from and goes — the seam between PGC (this repo) and the中台 platform tables (the AIGC repo). Left column = platform tables; right column = PGC stages mapped to directories.
 
 ```mermaid
 flowchart LR
-    classDef space fill:#eef,stroke:#339,stroke-width:1px
-    classDef tail fill:#ffe0cc,stroke:#c60,stroke-width:1px
-    classDef mech fill:#dfd,stroke:#393,stroke-width:1px
-    subgraph Assigner_space["Assigner space — ceiling = narration_end"]
-        A1["phrase_1 ... phrase_N (each covers display_span_sec ≤ clip_dur − trim_start + TOL)"]:::space
+    subgraph Platform["中台 — AIGC platform tables (contract-backed)"]
+        POIS[(poi_asset_pois<br/>POI dossier)]
+        CLIPS[(poi_asset_valid_clips<br/>clips · &lt;3-use gate)]
+        EMB[(poi_asset_embeddings<br/>vectors)]
+        LEDGER[(poi_asset_usage_events<br/>window ledger)]
+        RC[(release_candidates)]
     end
-    subgraph Renderer_space["Renderer space — ceiling = final_display_end = max(target_duration_sec, narration_end)"]
-        R1["last clip extended past narration_end (if source permits)"]:::space
-        R2["bridge_tail = target_duration_sec − narration_end (renderer territory ONLY)"]:::tail
-        R3["bridge clips from unused-clip pool (fire when last-clip source exhausts)"]:::mech
+    subgraph PGC["PGC — this repo (stage → directory)"]
+        S1[① select POIs + receipt · cli/run_batch]
+        S2[② visual brief · core/pipeline]
+        S3[③ script + word-count gate · core/script]
+        S4[④ TTS + per-word timeline · core/narrate]
+        S5[⑤ beats → retrieval → packer · core/assign]
+        S6[⑥ render → master + manifest · core/render]
+        S7[⑦ WaveSpeed upscale → Drive]
+        S8[⑧ usage writeback]
+        S9[⑨ register candidate]
     end
-    A1 -->|narration_end| R1
-    R1 -->|when source runs out| R3
-    R1 -. fills .-> R2
-    R3 -. fills .-> R2
+    POIS --> S1 --> S2
+    CLIPS --> S2 --> S3 --> S4 --> S5
+    EMB --> S5
+    LEDGER -. used windows .-> S5
+    S5 --> S6 --> S7 --> S8 --> S9
+    S8 -. 4 window fields .-> LEDGER
+    S9 --> RC
 ```
 
-**Failure modes and their correct homes**:
+**How to read it**: every left↔right line is a platform seam that must be backed by a `CONTRACT.md` entry — adding any new cross-line means a contract PR first (see `asset_platform/CONTRACT.md` in the AIGC repo). The window ledger (`poi_asset_usage_events`) is both read (stage ⑤, to rotate windows) and written (stage ⑧, the four window fields). Distribution-performance feedback (翻转三) is the deferred future bridge — the manifest already records enough to join it later; no line is drawn until it's built.
 
-- `ClipAssignmentError` — assigner space violation (a phrase's clip cannot cover its `display_span_sec`). Raised by `_enforce_hard_constraint_and_enrich`.
-- `FreezeWouldOccurError` — renderer space exhaustion (bridge pool empty AND last clip source exhausted before `final_display_end`). Raised by `_bind_clips_to_narration`.
+## Two-space model
 
-Tying an assigner hard-constraint to `final_display_end` collapses the distinction and converts unrecoverable assigner errors into territory the bridge mechanism is explicitly designed to handle.
+**Plain English first.** The script and the video can have different lengths. The clip assignment is only responsible for *covering the script* — it stops worrying when the narrator stops speaking. The renderer is responsible for covering the full target duration; the gap between them is filled by extra clips called **bridges**. The **two-space model** names this split: assigner space stops at `narration_end`; renderer space goes to `final_display_end = max(target_duration_sec, narration_end)`.
 
-The Gemini #2 prompt is the load-bearing prose surface for this invariant — `promo/arsenal/system_prompts/gemini2_assign_v1.md` carries the verbatim two-space-model phrasing ("PRECOMPUTED CONSTANTS", "ARITHMETIC CHECK", "the last phrase's constraint uses the last word's end, NOT target_duration_sec", "bridge mechanism"). Past iterations have turned on Gemini drifting these exact phrases when the MD wording shifted; if you edit the MD, preserve the wording or update this section in the same commit.
+**Engineering rigor.** The **#1 non-obvious invariant** in this pipeline is that the assigner and the renderer operate in different coordinate spaces.
+
+- **Assigner space** — ceiling = `narration_end = word_timestamps[-1].end`. The hard constraint (`promo/core/assign/clip_assignment_validator.py::_enforce_hard_constraint_and_enrich`) requires each phrase's clip source to cover its `display_span_sec` up to `narration_end`. The last phrase's span stops at `narration_end`, NOT at `final_display_end`.
+- **Renderer space** — ceiling = `final_display_end = max(target_duration_sec, narration_end)`. The renderer (`promo/core/render/remotion_renderer.py`) holds the last clip past `narration_end`; when the last clip's source runs out before `final_display_end`, the bridge pool fills the remaining delta.
+- **Bridge tail** — `bridge_tail = max(0, target_duration_sec − narration_end)`. Renderer-only territory. Filled by either (a) last-clip extension or (b) bridge clips from the unused-clip pool. A `bridge_tail > 0` with **0 bridges fired** is a healthy render — it means the last clip's source duration happened to cover the delta.
+
+**Who owns the invariant — and why it can't drift.** The two-space ceiling is enforced in **code**, not in any prompt: the **packer produces** assignments and the **validator arbitrates** them. Every assignment — no matter how it was produced — passes through `_enforce_hard_constraint_and_enrich`, the single arbiter.
+
+```
+packer picks clips ──▶ validator (_enforce_hard_constraint_and_enrich) ──▶ render
+                          └ why: the validator is the ONLY arbiter of the renderer-facing
+                            contract. If the packer's span math is wrong, it fails loud HERE
+                            (ClipAssignmentError), so a freeze-prone assignment can never reach
+                            the renderer. 〔mechanism → assign/architecture.md〕
+```
+
+Tying an assigner hard-constraint to `final_display_end` would collapse the distinction and convert unrecoverable assigner errors into territory the bridge mechanism is explicitly designed to handle — which is why the last-phrase ceiling is `narration_end`, full stop.
+
+## The assignment engine
+
+**What it is.** Stage 4 is a **deterministic chain — beat planner → per-beat retrieval → packer → validator** — with zero LLM calls. The full mechanism (the packer's house rules, the embeddings ladder, window-field conventions) lives in [`promo/core/assign/architecture.md`](promo/core/assign/architecture.md); this section states only the invariants the rest of the bible depends on.
+
+- **Measured, not predicted.** Assignment runs *after* TTS, so it works on real `word_timestamps` rather than a prompt-time guess. This is why a script→clip mismatch can't be smuggled in by timing drift.
+- **Determinism.** Same inputs → same assignment, forever. No randomness, no model in the loop. Reproducibility and `--resume` correctness both depend on this.
+- **Validator is the sole arbiter** (see Two-space model). Packer output is *always* re-validated; packer bugs fail loud, never silently ship.
+- **Two eligibility rules, two different jobs**:
+  - **Use-count is the only hard door** — the platform's `poi_asset_valid_clips` `<3-use` gate decides whether a clip may appear at all (enforced upstream). 
+  - **Window rotation is a soft preference** — when a clip *is* reused, the packer avoids source windows already recorded in the usage ledger, to dodge TikTok's repeated-footage dedup. Exhaustion degrades to least-overlap + a provenance flag; it never rejects a clip. 〔why these are separate: use-count governs "can it play"; window governs "which seconds show" — conflating them would either starve thin pools or ship dedup-flagged repeats.〕
+- **Fail-closed ledger reads** (设计契约 ②): if the window-ledger query fails in production, the variant fails (and `--resume` recovers) — it never silently degrades to naive playback.
+
+**Why deterministic instead of an LLM picker** (conclusion + the short why; the full five-argument verdict is in [`docs/ROADMAP.md`](docs/ROADMAP.md) §翻转二): an LLM picker is blind to the window ledger, draws on the same information the deterministic chain already has, costs an entire immune-system of retries/validation to keep honest, and makes the narrative-variety rules implicit rather than explicit. The deterministic chain is auditable, reproducible, and free of LLM latency. The bible records *what is*; the decision debate lives in the ROADMAP.
 
 ## Module graph
 
 **Responsibility boundaries**:
 
 - `compile_promo.py` is the CLI shell. It owns argparse wiring, `load_dotenv()`, backend construction, and the `--render-props` shortcut; it delegates full-pipeline execution to `promo.core.pipeline.full_pipeline`. It does not own pipeline step ordering.
-- `promo/core/pipeline/` is the orchestrator subpackage. `pipeline.py::full_pipeline` is the only module allowed to know the ordering of all pipeline steps; it calls `steps.py` helpers (including `_build_variant_selections`), delegates the per-variant body to `variant_loop.py::_run_variant_loop`, and emits the three per-run sidecars via `sidecar_writer.py::_emit_run_sidecars`. `bgm_voice_resolver.py` holds BGM discovery / voice-rotation helpers.
+- `promo/core/pipeline/` is the orchestrator subpackage. `pipeline.py::full_pipeline` is the only module allowed to know the ordering of all pipeline steps; it calls `steps.py` helpers (including `_build_variant_selections` and `_assign_clips_packer`), delegates the per-variant body to `variant_loop.py::_run_variant_loop`, and emits the three per-run sidecars via `sidecar_writer.py::_emit_run_sidecars`. `bgm_voice_resolver.py` holds BGM discovery / voice-rotation helpers.
 - `backend.py` — `PromoBackend` Protocol + `LocalBackend` implementation. The Protocol exposes `clips_dir()` and `output_dir()` so sibling-path derivations (`.mimo_cache/`, `.embedding_cache/`, sidecar staging) do not reach into private attrs. Concrete impls return `str | None`; `None` means "no backing directory" and callers fall back to per-file `os.path.dirname(output_path)`.
 - `clip_analyzer.py` writes its own `.mimo_cache/*.json` atomically via `os.replace`; caching is internal to this module.
-- `clip_assigner.py` is **Gemini #2** — it runs AFTER real TTS timing exists, so its display-span math is measured, not predicted. Its hard constraint lives in assigner space.
-- `remotion_renderer.py` is the only module that knows about `final_display_end` and the bridge pool. Everything past `narration_end` is its responsibility.
-- `tts_engine.py` owns the dual-backend dispatch seam — exactly one `backend ==` check inside `generate_narration` routes per-batch audio to either `_generate_segment_audio_elevenlabs` or `_generate_segment_audio_gemini`. Both return `(path, duration_sec, word_timestamps)` of identical shape, so `_back_allocate_timestamps` and every downstream consumer (`_ffmpeg_concat_mp3s`, `clip_assigner`, captions) are backend-agnostic. Backend resolves from `VOICE_CATALOG[voice_key]["backend"]`; the Gemini path prepends a directorial `style_prompt` and runs MMS_FA on the rendered mp3.
+- The `assign/` stage is **deterministic** — its modules (`beat_planner`, `clip_retriever`, `usage_windows`, `packer`, `clip_assignment_validator`) carry no LLM call. The **validator** holds the assigner-space hard constraint; the **packer** is the only module that picks clips. See [`assign/architecture.md`](promo/core/assign/architecture.md) for the per-module surface.
+- `remotion_renderer.py` is the only module that knows about `final_display_end` and the bridge pool. Everything past `narration_end` is its responsibility. It imports `HARD_CONSTRAINT_TOL_SEC` from the validator so the two spaces agree on tolerance.
+- `tts_engine.py` owns the dual-backend dispatch seam — exactly one `backend ==` check inside `generate_narration` routes per-batch audio to either `_generate_segment_audio_elevenlabs` or `_generate_segment_audio_gemini`. Both return `(path, duration_sec, word_timestamps)` of identical shape, so `_back_allocate_timestamps` and every downstream consumer (`_ffmpeg_concat_mp3s`, the assign stage, captions) are backend-agnostic. Backend resolves from `VOICE_CATALOG[voice_key]["backend"]`; the Gemini path prepends a directorial `style_prompt` and runs MMS_FA on the rendered mp3.
 - `forced_aligner.py` wraps `torchaudio.pipelines.MMS_FA` (wav2vec2 CTC). Invoked ONLY on the Gemini backend path — ElevenLabs continues to use the API's returned alignment. Bypasses `torchaudio.load` (which now requires `torchcodec`) via ffmpeg preconvert + stdlib `wave`. Below-0.60 avg CTC scores log a warning (diagnostic only).
 
   Structural failures — empty normalization (non-alphabetic token) or empty span list from MMS_FA — surface as `ForcedAlignmentError`, naming the offending token + script position.
-- `clip_embedder.py` owns the embedding-cache sidecars (atomic `os.replace`). Four-axis invalidation: model + dim + MiMo-prompt SHA1 + composition version — so any change to the MiMo prompt OR to the embedding composition formula produces a fresh filename rather than silently overwriting. `attach_embeddings_to_metadata` merges sidecar vectors onto MiMo metadata at the `_step_assign_clips` closure-construction site; missing entries (sidecar pool smaller than MiMo pool) drop out with a WARNING and trigger the full-pool fallback in the retrieval closure.
-- `clip_retriever.py` is stateless by design — no `@lru_cache`, no module-level memo. The F3 retry path (Gemini #1 script regeneration on `ClipAssignmentError`) rewrites the narration segments; a memoized top-k would return stale candidates after the retry. Consumers re-embed queries + re-rank on every invocation.
-- `arsenal_loader.py` is the **single thin reader** for the 4 arsenal sub-libraries (system prompts / voices / personas / script skeletons) under `promo/arsenal/`. Every consumer (`clip_analyzer`, `script_generator`, `clip_assigner`, `tts_engine`, `format_profiles`) imports through here — no consumer reads `arsenal/*.md` or `arsenal/*.yaml` directly. Loaders are LRU-cached so module-import I/O happens once per process. `.rstrip()` on system-prompt reads is the load-bearing guard against editor-added trailing newlines (the MiMo cache `_cache_version_suffix` would silently drift otherwise — see Pool conventions ::Arsenal).
-- **Retrieval is a soft hint**: the retrieved subset is what Gemini #2 *sees* in its prompt, but its reply is NOT rejected when it names a `clip_id` outside that subset. `clip_assigner.assign_clips_with_f3_retry` catches retrieval-closure exceptions defensively; `_enforce_hard_constraint_and_enrich` carries no `clip_id in retrieved_ids` guard. Four `fallback_reason` codes (`no_sidecar`, `m4_attach_shrinkage`, `h2_union_shortfall`, `retrieval_exception`) encode cases where retrieval did not narrow the pool. The `clip_assignments_*.json` sidecar records this contract via the `retrieval_contract: "soft_hint"` field. See `docs/schemas/clip_assignments.md` for the plain-language summary.
+- `clip_embedder.py` owns the embedding-cache sidecars (atomic `os.replace`). Four-axis invalidation: model + dim + MiMo-prompt SHA1 + composition version — so any change to the MiMo prompt OR to the embedding composition formula produces a fresh filename rather than silently overwriting. It also embeds the per-beat retrieval queries (the same `text-embedding-3-small`@1536 model+dim as the platform table).
+- `clip_retriever.py` is stateless by design — no `@lru_cache`, no module-level memo. It re-embeds queries + re-ranks on every invocation; a memoized top-k could return stale candidates and there is no reason to risk it in a deterministic path.
+- `arsenal_loader.py` is the **single thin reader** for the 4 arsenal sub-libraries (system prompts / voices / personas / script skeletons) under `promo/arsenal/`. Every consumer (`clip_analyzer`, `script_generator`, `tts_engine`, `format_profiles`, `persona_selectors`) imports through here — no consumer reads `arsenal/*.md` or `arsenal/*.yaml` directly. Loaders are LRU-cached so module-import I/O happens once per process. `.rstrip()` on system-prompt reads is the load-bearing guard against editor-added trailing newlines (the MiMo cache `_cache_version_suffix` would silently drift otherwise — see Pool conventions ::Arsenal).
 
 ## Sidecar producer/consumer
 
@@ -98,7 +121,7 @@ Every sidecar JSON file that crosses a module boundary is listed here with its p
 
 | Sidecar | Producer | Primary consumer(s) | Purpose |
 |---|---|---|---|
-| `clip_assignments_<slug>_<dur>s.json` | `promo.core.pipeline.sidecar_writer._emit_run_sidecars` (wraps `clip_assigner.assign_clips` output via `_write_sidecar`) | `clip_assigner.load_latest_clip_assignments` (debug/replay tests) | Frozen Gemini #2 output per variant; the handoff surface from assigner to downstream. |
+| `clip_assignments_<slug>_<dur>s.json` | `promo.core.pipeline.sidecar_writer._emit_run_sidecars` (wraps the packer output via `_write_sidecar`) | `clip_assignment_sidecar.load_latest_clip_assignments` (debug/replay tests) | Frozen packer assignment per variant + provenance (`picks`, `beat_count`/`unique_clip_count`, `window_exhausted_beats`); the handoff surface from assign to downstream. |
 | `tts_metrics_<slug>_<dur>s.json` | `promo.core.pipeline.sidecar_writer._emit_run_sidecars` | `pause_budget.load_calibrated_wpm` (NEXT run's bootstrap) | Per-variant `measured_wpm`, `narration_coverage`, `duration_sec`; enables POI-scoped WPM self-calibration after run 1. |
 | `match_quality_<slug>_<dur>s.json` | `promo.core.pipeline.sidecar_writer._emit_run_sidecars` (from `match_quality.build_match_quality_entries`) | Human review (luxury-bias + low-overlap diagnostic) | Per-phrase clip/MiMo-description keyword overlap signal. Consumed out-of-band — no automated reader. |
 | `.mimo_cache/<content_hash>-<version_suffix>.json` | `clip_analyzer._save_cached_analysis` (atomic `os.replace`) | `clip_analyzer._load_cached_analysis` (same-prompt+model reruns) | Prompt+model version-locked MiMo cache. Any prompt/model change invalidates the cache via the 8-hex suffix. |
@@ -106,19 +129,15 @@ Every sidecar JSON file that crosses a module boundary is listed here with its p
 
 Collision-bumped variants (`<stem>-2.json`, `-3.json`, ...) may exist alongside the base filename when multiple runs share an `output_dir`; readers glob for the stem + bumped forms and pick the most recent by mtime. The same `-N` algorithm applies to the MP4 output path (`backend.LocalBackend.save_output`) so a back-to-back same-POI same-duration rerun produces `promo_<slug>-2.mp4` paired with the bumped sidecar JSONs by suffix.
 
-**Why two Gemini passes**: Gemini #1 produces text + pause tiers; TTS turns tiers into measured word-by-word timing; Gemini #2 assigns clips on that measured timing. A one-pass Gemini would have to predict post-TTS inter-segment silence at prompt time, which drifts in ways that drive bridges at render. The two-pass architecture removes the prediction. Gemini #2 is wrapped by `assign_clips_with_f3_retry`: on `ClipAssignmentError` it issues ONE retry to Gemini #1 via a `build_tighten_hint(exc)` structured message naming the offending segment, then re-runs TTS and Gemini #2. A second failure aborts the variant.
-
 ## Error taxonomy
 
-The named exceptions all live in `promo/core/errors.py`:
+The named exceptions all live in `promo/core/errors.py`. Each carries a recovery contract — if a stage's "Raises" disagrees with this taxonomy, one of the docs is wrong.
 
-- `ClipAssignmentError` — raised by `clip_assigner._enforce_hard_constraint_and_enrich` when any phrase's `display_span_sec` exceeds `clip_dur − trim_start + TOL`. **Assigner space** violation. Caught by `assign_clips_with_f3_retry` → triggers ONE Gemini #1 retry with tighten-hint.
-- `FreezeWouldOccurError` — raised by `remotion_renderer._bind_clips_to_narration` when the bridge pool is exhausted before `final_display_end`. **Renderer space** violation. No retry; the render aborts.
-- `MimoAnalysisError` — raised by `clip_analyzer.analyze_single_clip` on persistent MiMo failure after retry budget. Surfaced as a user-facing exit in `compile_promo.py`, not a stack trace.
-- `NoSuitableBGMError` — raised by `_discover_bgm_files` when no BGM in `--bgm-dir` meets `min_duration_sec`. Surfaced by argparse error.
-- `ForcedAlignmentError` — surfaces from `forced_aligner.align_words` on structural alignment failures: empty normalization (non-alphabetic token) or empty span list from MMS_FA. Attribute-bearing (`.token`, `.position`, `.reason`).
-
-  Below-threshold scores (per-word avg CTC < 0.60) are warn-only and never abort the variant — the warn-only policy preserves best-effort timestamps so a single low-confidence token does not cascade into a variant-level failure.
+- `ClipAssignmentError` — raised in the assign stage when a phrase's `display_span_sec` cannot be covered (`clip_dur − trim_start + TOL`): the **packer** raises it when no coverable unused candidate exists, and the **validator** raises it if packer output violates the hard constraint. **Assigner-space** violation. **No retry** — it aborts the variant directly; `--resume` re-renders. (The deterministic chain has no script-regeneration loop; a coverage failure is a real "this POI's pool can't cover this beat," surfaced loud rather than papered over.)
+- `FreezeWouldOccurError` — raised by `remotion_renderer._bind_clips_to_narration` when the bridge pool is exhausted before `final_display_end`. **Renderer-space** violation. No retry; the render aborts.
+- `MimoAnalysisError` — raised by `clip_analyzer.analyze_single_clip` on persistent MiMo failure after the retry budget. The first failure aborts the concurrent pool; the pipeline exits non-zero naming the clip.
+- `NoSuitableBGMError` — raised by `_discover_bgm_files` when no BGM in `--bgm-dir` meets `min_duration_sec`. Aborts before any variant runs.
+- `ForcedAlignmentError` — surfaces from `forced_aligner.align_words` on structural alignment failures (empty normalization or empty span list from MMS_FA). Attribute-bearing (`.token`, `.position`, `.reason`). Below-threshold per-word CTC scores (< 0.60) are warn-only and never abort — the warn-only policy preserves best-effort timestamps so a single low-confidence token does not cascade into a variant-level failure.
 
 ## Selector seams
 
@@ -158,13 +177,13 @@ A future `SmartFormatSelector` / `SmartPersonaSelector` (clip-metadata + POI-awa
 
 ## LLM quarantine
 
-Two network quarantine lanes carry the pipeline's external-service traffic. Both follow the project's Pluggability Charter — narrowly scoped now (one Gemini SDK + two TTS vendors) so a future second LLM provider drops in by adding a sibling module, not by re-architecting.
+Two network quarantine lanes carry the pipeline's external-service traffic. Both follow the project's Pluggability Charter — narrowly scoped (one Gemini SDK + two TTS vendors) so a future second LLM provider drops in by adding a sibling module, not by re-architecting.
 
-**Charter Rule 1 — `google.generativeai` quarantine.** `promo/core/llm/gemini_client.py` is the only allowed `import google.generativeai` site in the repo. Every other production file calls Gemini through the helpers re-exported there (`configure_gemini`, `reset_for_tests`, `resolve_gemini_model`) plus the `GeminiModel` type alias. The two production consumers are `promo/core/script/script_generator.py` (Gemini #1) and `promo/core/assign/clip_assigner.py` (Gemini #2). The companion helpers `promo/core/llm/retry.py` (`retry_with_backoff`) and `promo/core/llm/json_response.py` (`parse_json_response`) are LLM-call utilities consumed by all four LLM-touching modules (`clip_analyzer`, `script_generator`, `clip_assigner`, `clip_embedder`).
+**Charter Rule 1 — `google.generativeai` quarantine.** `promo/core/llm/gemini_client.py` is the only allowed `import google.generativeai` site in the repo. Every other file calls Gemini through the helpers re-exported there (`configure_gemini`, `reset_for_tests`, `resolve_gemini_model`) plus the `GeminiModel` type alias. The sole production Gemini consumer is `promo/core/script/script_generator.py` (Gemini #1, the script writer) via `model_adapters/gemini.py`. The companion helpers `promo/core/llm/retry.py` (`retry_with_backoff`) and `promo/core/llm/json_response.py` (`parse_json_response`) are LLM-call utilities; their consumers are `clip_analyzer` (MiMo, retry only), `script_gemini_caller` (Gemini, retry + JSON parse), `clip_embedder` (OpenRouter embeddings, retry only), and `tts_elevenlabs` (retry only). The assign stage is intentionally absent — it makes no Gemini call.
 
-**Charter Rule 2 — single config resolver.** `promo/core/config.py` is the single place production code reads env vars. Resolvers are typed (`_require` / `_require_int` / `_require_float`) and fail fast on missing/whitespace values. The LLM quarantine module (`promo/core/llm/gemini_client.py`) is carved out for `GEMINI_MODEL` only — read directly via `os.getenv` because it sits one import-cycle hop away from `promo.core.config`. `GEMINI_API_KEY` still routes through the resolver.
+**Charter Rule 2 — single config resolver.** `promo/core/config.py` is the single place production code reads env vars. Resolvers are typed (`_require` / `_require_int` / `_require_float`) and fail fast on missing/whitespace values. The LLM quarantine module (`promo/core/llm/gemini_client.py`) is carved out for `GEMINI_MODEL` only — read directly via `os.getenv`, defaulting to `model_adapters.registry.GEMINI_TEXT_MODEL` (the model contacts book — see §Environment). `GEMINI_API_KEY` still routes through the resolver.
 
-**Second quarantine lane — TTS.** Both narrate-stage backend modules (`promo/core/narrate/tts_elevenlabs.py` and `promo/core/narrate/tts_gemini.py`) import `requests` directly to call their respective vendors. The facade `promo/core/narrate/tts_engine.py` owns the dispatch seam — a single `backend ==` check inside `generate_narration` routes to the correct backend module. The `narrate/` folder is the bounded scope of this quarantine lane (the dispatch was split out from a former single-file module so each backend's HTTP code lives next to its protocol-specific encoding/alignment helpers). Protocol typing is applied where a seam has multiple implementations from day one and a stable interface (`FormatSelector`, `PersonaSelector`); it is deferred for the TTS dispatch because the dispatch shape is co-evolving and structural Protocols would freeze it without removing a line of dispatch logic.
+**Second quarantine lane — TTS.** Both narrate-stage backend modules (`promo/core/narrate/tts_elevenlabs.py` and `promo/core/narrate/tts_gemini.py`) import `requests` directly to call their respective vendors. The facade `promo/core/narrate/tts_engine.py` owns the dispatch seam — a single `backend ==` check inside `generate_narration` routes to the correct backend module. The `narrate/` folder is the bounded scope of this quarantine lane. Protocol typing is applied where a seam has multiple implementations from day one and a stable interface (`FormatSelector`, `PersonaSelector`); it is deferred for the TTS dispatch because the dispatch shape is co-evolving and structural Protocols would freeze it without removing a line of dispatch logic.
 
 ## Pool conventions
 
@@ -178,10 +197,10 @@ Three sibling pools live under each `material/<slug>/`:
 
 `promo/arsenal/` is the single home for the 4 "library-shape" data assets the operator extends over time. Logic stays in Python; data leaves Python. Every file under `arsenal/` is read through `promo/core/arsenal_loader.py` — no consumer reads `arsenal/*.md` or `arsenal/*.yaml` directly. Each sub-library has a fixed slot in the pipeline:
 
-- **`arsenal/system_prompts/*.md`** — the 4 LLM prompts: `mimo_clip_analysis_v1.md` (MiMo clip analysis; the `_cache_version_suffix` baseline is the first 8 hex of SHA1 over its content + clip model), `gemini1_script_v1.md` (Gemini #1 script body — `string.Template` placeholders; literal `$` escaped as `$$`), `gemini1_f3_retry_v1.md` (the F3-retry feedback block; single `$tighten_hint` slot), `gemini2_assign_v1.md` (Gemini #2 clip-assignment prompt; carries the verbatim two-space-model invariants from Two-space model section above — "PRECOMPUTED CONSTANTS", "ARITHMETIC CHECK", "the last phrase's constraint uses the last word's end, NOT target_duration_sec", "bridge mechanism"). MD files MUST be stored without trailing newline so the MiMo cache invariant survives editor saves; `arsenal_loader.load_system_prompt` `.rstrip()`s on read as a defensive belt.
+- **`arsenal/system_prompts/*.md`** — the 2 LLM prompts: `mimo_clip_analysis_v1.md` (MiMo clip analysis; the `_cache_version_suffix` baseline is the first 8 hex of SHA1 over its content + clip model) and `gemini1_script_v1.md` (Gemini #1 script body — `string.Template` placeholders; literal `$` escaped as `$$`). MD files MUST be stored without trailing newline so the MiMo cache invariant survives editor saves; `arsenal_loader.load_system_prompt` `.rstrip()`s on read as a defensive belt.
 - **`arsenal/voices/catalog.yaml`** — the voice catalog (4 entries: `kore` Gemini, `jarnathan`/`hope`/`heather` ElevenLabs). Order matters — Gemini-first preserves the dispatch rotation contract `compile_promo._resolve_voice_keys` reads. Required fields: `id`, `name`, `gender`, `age`, `accent`, `description`, `backend`. Optional: `style_prompt` (Gemini-only directorial instruction).
-- **`arsenal/personas/*.yaml`** — narrator personas. Persona is voice/perspective only — no format/segment-specific rules (those live in skeletons). An earlier cleanup removed 4 historical bullets from `third_person_promo.yaml` because they were duplicating skeleton/template content. Adding a persona = drop a YAML.
-- **`arsenal/script_skeletons/*.yaml`** — promo format templates (currently `short_30s.yaml` + `long_65s.yaml`). Each YAML constructs one `PromoFormatProfile` via `arsenal_loader.load_format_template(key)`. Per-mode RULES content lives here in two fields: `sentence_rule` (single-line cadence bullet, fills `$sentence_rule` slot of `gemini1_script_v1.md`) and `extra_rules` (list of additional bullets joined into `$extra_rules_block`). Adding a new format = drop a YAML; no Python edit.
+- **`arsenal/personas/*.yaml`** — narrator personas. Persona is voice/perspective only — no format/segment-specific rules (those live in skeletons). Adding a persona = drop a YAML.
+- **`arsenal/script_skeletons/*.yaml`** — promo format templates (currently `short_30s.yaml` + `long_65s.yaml`). Each YAML constructs one `PromoFormatProfile` via `arsenal_loader.load_format_template(key)`, and carries the per-type personality (segment plan, word-count band, pacing `beat_min/max_sec`, `pause_cap_ms`, asset floors) on the card itself — adding a type = drop a YAML + format-tagged examples, zero Python. Per-mode RULES content lives here in `sentence_rule` (single-line cadence bullet) and `extra_rules` (list of additional bullets).
 
 **Versioning rule**: prompts are filename-versioned (`*_v1.md`, `*_v2.md`, ...). Bumping a version invalidates per-POI MiMo cache automatically (the `_cache_version_suffix` changes), which is the correct behaviour when the prompt changes. See `promo/arsenal/README.md` for the operator-facing recipe.
 
@@ -194,17 +213,26 @@ Two slug forms exist and are not interchangeable:
 
 The conversion is `promo.core.sanitize_poi_name(display_name)` — the single source of truth. The `compile_promo --poi` argument takes the display name with spaces (`"Hotel Xcaret Arte"`) and routes through `sanitize_poi_name` at sidecar write time.
 
-External callers of `pause_budget.load_calibrated_wpm`, `clip_assigner.load_latest_clip_assignments`, or any other sidecar reader MUST route the display name through `sanitize_poi_name`. Passing the material slug (with hyphens) silently misses the sidecar and returns `None`.
+External callers of `pause_budget.load_calibrated_wpm`, `clip_assignment_sidecar.load_latest_clip_assignments`, or any other sidecar reader MUST route the display name through `sanitize_poi_name`. Passing the material slug (with hyphens) silently misses the sidecar and returns `None`.
 
 ## Extension points
 
-- **Multi-clip-per-phrase schema**: extend the assignment schema from a single `clip_id` per phrase to `{clip_ids: [...], trim_starts: [...]}`, enabling phrase-level cuts when a single clip cannot cover `display_span_sec`. Assigner space ceiling stays at `narration_end`.
+- **Multi-clip-per-phrase schema**: extend the assignment schema from a single `clip_id` per phrase to `{clip_ids: [...], trim_starts: [...]}`, enabling phrase-level cuts when a single clip cannot cover `display_span_sec`. Assigner-space ceiling stays at `narration_end`; the validator already tiles per-phrase spans, so the change is localized to the packer + schema.
 - **Per-voice WPM calibration**: `load_calibrated_wpm` averages across variants within one sidecar; per-voice averaging (separating ElevenLabs voices from Gemini Kore) is a known gap. Trigger condition: observed WPM variance > 15% across voice × text.
 - **Smart selectors**: clip-metadata + POI-aware `SmartFormatSelector` / `SmartPersonaSelector` drop in behind the existing `FormatSelector` / `PersonaSelector` Protocols without touching the variant loop.
+- **Shot-pacing knobs on the card**: the packer's beat ceiling/floor (`beat_planner.DEFAULT_MAX/MIN_BEAT_SEC`, 4.0/2.0) are surfaced per-type on the skeleton card's `pacing` block — tune cadence by editing the YAML, not the code.
 - **`tts_engine` Protocol**: a `TTSBackend` Protocol is deferred until a third TTS vendor lands. The single-file dual-backend dispatch is the correct shape today.
 
 ## Environment
 
 Env vars are resolved through `promo/core/config.py` (typed resolvers, fail-fast on missing/whitespace). The three required-for-compile keys (`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`) and operational knobs (`GEMINI_MODEL`, `PROMO_RENDER_CONCURRENCY`, `PROMO_FORMAT_SELECTOR`, etc.) are documented in `README.md` and `.env.example`.
 
+Model identifiers (which Gemini/MiMo/embedding/TTS model each stage calls) live in one place — `promo/core/model_adapters/registry.py`, the **model contacts book**. Swap a model there (or via the env override noted alongside, e.g. `GEMINI_MODEL` overrides `GEMINI_TEXT_MODEL`, `PROMO_CLIP_MODEL` overrides `MIMO_CLIP_MODEL`); no model-name string literal should live outside that module.
+
 Forced-aligner runtime requires `torch >= 2.8` + `torchaudio >= 2.8`. `torchcodec` is deliberately NOT required: `forced_aligner` bypasses `torchaudio.load` via ffmpeg preconvert + stdlib `wave`.
+
+## Retirement archive
+
+Retired machinery, kept here so the rollback story survives without scattering obituaries through the live text. This repo has **no `archive/`/`legacy/` directory** — git history is the cold storage.
+
+- **Gemini #2 clip-assignment chain** (retired 2026-06-11, commit `1f28902`). Was the LLM clip-picker: `clip_assigner.py` (`assign_clips` / `assign_clips_with_f3_retry`), the `gemini2_assign_v1.md` prompt, the **F3 retry** (on `ClipAssignmentError`, regenerate the script via a `build_tighten_hint` message to Gemini #1, re-TTS, retry once), the `gemini1_f3_retry_v1.md` prompt, and the deterministic **split-repair** stopgap. Replaced wholesale by the deterministic chain (beat planner → retrieval → packer → validator) after the same-script A/B verdict went to the packer. **Rollback** = `git revert 1f28902` + redeploy the worktree (`cd promo/remotion && npm install` before preflight). The two-space invariant the old Gemini #2 prompt used to carry now lives in code — the validator — and in `assign/architecture.md`.
