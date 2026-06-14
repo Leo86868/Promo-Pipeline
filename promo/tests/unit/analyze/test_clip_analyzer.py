@@ -162,13 +162,14 @@ class TestSprint09bC3VersionedCacheKey:
 
         # Step 2: run analyze_single_clip with the REAL (changed) prompt —
         # that key is different, so cache misses and OpenRouter IS called.
-        with patch.object(clip_analyzer, "_call_openrouter") as mock_call, \
-             patch.object(clip_analyzer, "_parse_response",
-                          return_value={"scene_description": "fresh",
-                                        "category": "pool",
-                                        "camera_motion": "static",
-                                        "dominant_motion_phase": "middle"}):
-            mock_call.return_value = {}
+        # Stub the external boundary (_call_openrouter) with a RAW "fresh"
+        # response; let the REAL _parse_response run. Keep the boundary
+        # called-once check — the cache-miss contract is "OpenRouter IS hit".
+        raw_fresh = {"choices": [{"message": {"content":
+            '{"scene_description": "fresh", "category": "pool", '
+            '"camera_motion": "static", "dominant_motion_phase": "middle"}'}}]}
+        with patch.object(clip_analyzer, "_call_openrouter",
+                          return_value=raw_fresh) as mock_call:
             result = clip_analyzer.analyze_single_clip(
                 str(clip), "0001", cache_dir=cache_dir,
             )
@@ -306,9 +307,12 @@ class TestSprint09bC8AuditFixes:
         clip = tmp_path / "clip.mp4"
         clip.write_bytes(b"x")
 
-        # Mock _parse_response to return {} (the dead JSON parse branch).
-        with patch.object(clip_analyzer, "_parse_response", return_value={}), \
-             patch.object(clip_analyzer, "_call_openrouter", return_value={}):
+        # Stub the external boundary (_call_openrouter) with a RAW response
+        # whose content carries no parseable JSON; let the REAL _parse_response
+        # run (it returns {} on unparseable text) so the real
+        # unparseable→empty→raise path is exercised, not mocked away.
+        raw_response = {"choices": [{"message": {"content": "sorry, no JSON here"}}]}
+        with patch.object(clip_analyzer, "_call_openrouter", return_value=raw_response):
             with pytest.raises(MimoAnalysisError) as exc_info:
                 clip_analyzer.analyze_single_clip(
                     str(clip), "0042", cache_dir=None,
@@ -326,10 +330,12 @@ class TestSprint09bC8AuditFixes:
 
         clip = tmp_path / "clip.mp4"
         clip.write_bytes(b"x")
-        with patch.object(
-            clip_analyzer, "_parse_response",
-            return_value={"scene_description": "   ", "category": "pool"},
-        ), patch.object(clip_analyzer, "_call_openrouter", return_value={}):
+        # Stub the external boundary with a RAW response whose JSON has a
+        # whitespace-only scene_description; let the REAL _parse_response run
+        # so the real parse→validate path proves the whitespace guard fires.
+        raw_response = {"choices": [{"message": {"content":
+            '{"scene_description": "   ", "category": "pool"}'}}]}
+        with patch.object(clip_analyzer, "_call_openrouter", return_value=raw_response):
             with pytest.raises(MimoAnalysisError):
                 clip_analyzer.analyze_single_clip(
                     str(clip), "0042", cache_dir=None,
@@ -343,12 +349,14 @@ class TestSprint09bC8AuditFixes:
 
         clip = tmp_path / "clip.mp4"
         clip.write_bytes(b"x")
-        with patch.object(
-            clip_analyzer, "_parse_response",
-            return_value={"scene_description": "a pool at dusk",
-                          "category": "pool", "camera_motion": "static",
-                          "dominant_motion_phase": "middle"},
-        ), patch.object(clip_analyzer, "_call_openrouter", return_value={}):
+        # Stub the external boundary (_call_openrouter) with a realistic RAW
+        # response; let the REAL _parse_response extract the JSON so a broken
+        # parser can't silently pass this happy-path test.
+        raw_response = {"choices": [{"message": {"content":
+            '```json\n{"scene_description": "a pool at dusk", "category": '
+            '"pool", "camera_motion": "static", '
+            '"dominant_motion_phase": "middle"}\n```'}}]}
+        with patch.object(clip_analyzer, "_call_openrouter", return_value=raw_response):
             result = clip_analyzer.analyze_single_clip(
                 str(clip), "0042", cache_dir=None,
             )
