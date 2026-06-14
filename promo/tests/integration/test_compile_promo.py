@@ -162,24 +162,19 @@ class TestCompilePromoHelpers:
                 script_candidates=2,
             )
 
-        assert ok is True
-        mock_analyze.assert_called_once()
-        mock_scripts.assert_called_once()
-        assert mock_scripts.call_args.kwargs["target_duration_sec"] == 65
-        assert mock_scripts.call_args.kwargs["n_variants"] == 2
-        assert mock_scripts.call_args.kwargs["n_candidates"] == 2
-        assert mock_tts.call_count == 2
-        # one assign-stage call per variant.
-        assert mock_assign.call_count == 2
-        assert mock_build_props.call_count == 2
-        assert mock_validate.call_count == 2
-        assert mock_stage_media.call_count == 2
-        assert mock_render.call_count == 2
-        rendered_paths = [call.args[1] for call in mock_render.call_args_list]
-        # S0.5 narrowed #1: filename encodes per-variant duration.
-        # Both variants are ``long`` mode (target=65s) per scripts above.
-        assert rendered_paths[0].endswith("_v1_65s.mp4")
-        assert rendered_paths[1].endswith("_v2_65s.mp4")
+            assert ok is True
+            # Contract: n_variants=2 → two finished videos at per-variant
+            # paths, written directly under output_path's dir (see
+            # _variant_output_path). Assert the produced artifacts, not each
+            # internal step's call_count. Glob runs INSIDE the
+            # TemporaryDirectory block so tmpdir still exists; the variant
+            # mp4s land in tmpdir root, so non-recursive glob is correct.
+            stem = Path(output_path).stem
+            produced = sorted(p.name for p in Path(tmpdir).glob("*.mp4"))
+            assert produced == [f"{stem}_v1_65s.mp4", f"{stem}_v2_65s.mp4"]
+            # n_candidates has no output proxy → keep one narrow
+            # input-contract check on the script step.
+            assert mock_scripts.call_args.kwargs["n_candidates"] == 2
 
     def test_full_pipeline_fails_when_variant_pack_under_delivers(self):
         """Pipeline should fail clearly when requested variants are not fully delivered."""
@@ -211,8 +206,9 @@ class TestCompilePromoHelpers:
             )
 
         assert ok is False
-        mock_analyze.assert_called_once()
-        mock_scripts.assert_called_once()
+        # Internal-step call_count welds dropped (a failed run has no artifact
+        # to assert); the contract is carried by `ok is False` + the
+        # external-boundary cost guards below — no paid TTS call, no BGM fetch.
         mock_tts.assert_not_called()
         backend.fetch_bgm.assert_not_called()
 
