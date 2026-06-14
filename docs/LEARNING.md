@@ -239,3 +239,14 @@ Leo 说"做 type B" → skill 翻卡片盒读各卡 `description` 对号 → 该
 - `hotel_description` / `notable_details` 是**存在但常年为空**的"事实通道"(compile CLI → pipeline → prompt 一路打通,生产从未喂过值)。
 - 因此文案里的**价格等数字现状来自 Gemini 的模型记忆,未经核实**。
 - **价格政策待 Leo 拍板**(写进 prompt 禁提价格 / 或喂真实价格走事实通道)——拍板后是纯 arsenal 一行改动。
+
+## 15. 测试约定(项目级,P4 收口 2026-06-14)
+
+测试**验输出/边界契约,不验内部 `call_count`**。patch 时先分清两类:
+
+- **patch 协作者(隔离)** = 测 X、patch 它调用的另一个重组件(如测派发器、patch 排片员)→ 正当单元隔离,**留**。
+- **patch 自己的内脏(焊点)** = 测 X、patch X 内部的小函数(如测 `analyze_single_clip`、patch 它的 `_parse_response`)→ 焊死自己的机制、改内部就崩,**才转**。
+
+转法:**stub 真外部边界(`requests`/`subprocess`/`time`/文件系统)→ 让真内部逻辑跑 → 断言最终产物**。assert-weld(`call_count`/`call_args` of 内部步骤)→ **改成验产物**(文件/返回值/raise);外部边界 `assert_not_called`(防烧钱)留。
+
+范本:`test_clip_analyzer`(stub 边界 + 真解析器跑)、`test_compile_promo`(call_count → 验落盘产物)、`test_wavespeed`(stub HTTP/ffprobe/time + 真升级全链)。**防假绿金标准 = 变异检验**:改坏一处源码真逻辑,对应测试必须变红(变异跑完清 `__pycache__` 再还原 + git 确认零残留)。
