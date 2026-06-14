@@ -5,6 +5,13 @@ Supabase Storage bucket + signed URL over the legacy public temp hosts;
 (2) a submitted prediction_id is persisted next to the output so that
 run_batch's whole-command retries resume polling instead of paying for a
 fresh prediction. All HTTP is mocked — no network in this module.
+
+P4 test-health (2026-06-14): these tests stub the REAL external boundaries
+(`requests.post/get/delete`, `subprocess.run` for ffprobe, `time`) and let
+the real internal flow (_resolve_source_url / _submit_wavespeed /
+_poll_wavespeed / _download / _probe_dimensions / _delete_supabase_object)
+run, then assert the output contract. They no longer patch those private
+steps by name, so refactoring the flow can't silently pass a broken test.
 """
 
 import json
@@ -16,31 +23,119 @@ from promo.cli import wavespeed_upscale_once as ws
 
 
 FAKE_SHA = "a" * 64
+OUTPUT_URL = "https://ws.example/out.mp4"
 
 
-def _completed_poll(prediction_id="pred-1", output_url="https://ws.example/out.mp4"):
-    def _poll(pid, *, max_wait, poll_interval):
-        assert pid == prediction_id
-        return output_url
-    return _poll
+class _Resp:
+    """Minimal stand-in for a ``requests`` Response.
+
+    Supports both the plain-call sites (poll GET, all POSTs/DELETE) and the
+    streaming context-manager site (``with requests.get(stream=True) as r``).
+    """
+
+    def __init__(self, *, status_code=200, json_data=None, text="",
+                 content=b"mp4-bytes", ok=True):
+        self.status_code = status_code
+        self._json = json_data if json_data is not None else {}
+        self.text = text
+        self._content = content
+        self.ok = ok
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            err = ws.requests.HTTPError(f"HTTP {self.status_code}")
+            err.response = self
+            raise err
+
+    def json(self):
+        return self._json
+
+    def iter_content(self, chunk_size=1):
+        yield self._content
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
-def _stub_tail(monkeypatch, *, width=1080, height=1920):
-    """Stub download + ffprobe so upscale_once can complete."""
-    def _fake_download(url, output_path):
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"mp4")
-        return 3
-    monkeypatch.setattr(ws, "_download", _fake_download)
+def _install_http(monkeypatch, *, post=None, get=None, delete=None):
+    """Stub requests.{post,get,delete} and record every call's URL.
+
+    Each handler is ``(url, **kwargs) -> _Resp``. A missing handler for a
+    URL that gets hit raises AssertionError (so an unexpected call is loud,
+    not a silent pass). Returns the ``calls`` dict for sequence assertions.
+    """
+    calls = {"POST": [], "GET": [], "DELETE": []}
+
+    def _wrap(method, handler):
+        def _f(url, **kwargs):
+            calls[method].append(url)
+            if handler is None:
+                raise AssertionError(f"unexpected {method} {url}")
+            return handler(url, **kwargs)
+        return _f
+
+    monkeypatch.setattr(ws.requests, "post", _wrap("POST", post))
+    monkeypatch.setattr(ws.requests, "get", _wrap("GET", get))
     monkeypatch.setattr(
-        ws, "_probe_dimensions", lambda path: {"width": width, "height": height},
+        ws.requests, "delete",
+        _wrap("DELETE", delete or (lambda url, **kw: _Resp(ok=True))),
     )
+    return calls
+
+
+def _fake_ffprobe(monkeypatch, *, width=1080, height=1920):
+    """Stub subprocess.run so the REAL _probe_dimensions parses our JSON."""
+    def _run(cmd, **kwargs):
+        out = json.dumps({"streams": [{"width": width, "height": height}]})
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+    monkeypatch.setattr(ws.subprocess, "run", _run)
+
+
+def _supabase_submit_post(pid="pred-1", *, expect_video=None):
+    """Handler for the Supabase upload+sign POSTs and the WaveSpeed submit
+    POST. Returns realistic response shapes the real code reads."""
+    def _post(url, **kwargs):
+        if "/storage/v1/object/sign/" in url:
+            return _Resp(json_data={"signedURL": "/object/sign/b/p?token=t"})
+        if url.endswith("/storage/v1/bucket") or "/storage/v1/object/" in url:
+            return _Resp()
+        if url.endswith("/wavespeed-ai/video-upscaler"):
+            if expect_video is not None:
+                assert kwargs["json"]["video"] == expect_video
+            return _Resp(json_data={"data": {"id": pid}})
+        raise AssertionError(f"unexpected POST {url}")
+    return _post
+
+
+def _poll_get(status_by_pid=None, *, default="completed", output_url=OUTPUT_URL):
+    """Handler for the poll GET (``/predictions/<pid>/result``) and the
+    download GET. ``status_by_pid`` maps prediction_id → status string."""
+    status_by_pid = status_by_pid or {}
+
+    def _get(url, **kwargs):
+        if "/predictions/" in url:
+            pid = url.split("/predictions/", 1)[1].split("/result", 1)[0]
+            status = status_by_pid.get(pid, default)
+            if status == "completed":
+                return _Resp(json_data={"data": {
+                    "status": "completed", "outputs": [output_url]}})
+            if status == "failed":
+                return _Resp(json_data={"data": {
+                    "status": "failed", "error": "model error"}})
+            return _Resp(json_data={"data": {"status": status}})
+        # Anything else is the download of the finished output.
+        return _Resp(content=b"upscaled-mp4")
+    return _get
 
 
 class TestSupabaseSourceHost:
     def test_supabase_preferred_when_creds_exist(self, tmp_path, monkeypatch):
         """auto mode + creds → upload to private bucket, submit the signed
-        URL, clean up the staged object on success."""
+        URL, clean up the staged object on success. Real upload/sign/submit/
+        poll/download/probe/delete all run against stubbed HTTP."""
         monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
         monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
@@ -49,46 +144,13 @@ class TestSupabaseSourceHost:
         input_path.write_bytes(b"video-bytes")
         output_path = tmp_path / "out" / "upscaled.mp4"
 
-        calls = {"posts": [], "deletes": []}
-
-        def fake_post(url, **kwargs):
-            calls["posts"].append(url)
-            if url.endswith("/storage/v1/bucket"):
-                return SimpleNamespace(
-                    status_code=409, text="already exists", ok=False,
-                    raise_for_status=lambda: None, json=lambda: {},
-                )
-            if "/storage/v1/object/sign/" in url:
-                return SimpleNamespace(
-                    status_code=200, text="", ok=True,
-                    raise_for_status=lambda: None,
-                    json=lambda: {"signedURL": "/object/sign/b/p?token=t"},
-                )
-            if "/storage/v1/object/" in url:
-                return SimpleNamespace(
-                    status_code=200, text="", ok=True,
-                    raise_for_status=lambda: None, json=lambda: {},
-                )
-            if url.endswith("/wavespeed-ai/video-upscaler"):
-                # The submitted video URL must be the signed Supabase URL.
-                assert kwargs["json"]["video"] == (
-                    "https://proj.supabase.co/storage/v1/object/sign/b/p?token=t"
-                )
-                return SimpleNamespace(
-                    status_code=200, text="", ok=True,
-                    raise_for_status=lambda: None,
-                    json=lambda: {"data": {"id": "pred-1"}},
-                )
-            raise AssertionError(f"unexpected POST {url}")
-
-        def fake_delete(url, **kwargs):
-            calls["deletes"].append(url)
-            return SimpleNamespace(ok=True)
-
-        monkeypatch.setattr(ws.requests, "post", fake_post)
-        monkeypatch.setattr(ws.requests, "delete", fake_delete)
-        monkeypatch.setattr(ws, "_poll_wavespeed", _completed_poll())
-        _stub_tail(monkeypatch)
+        signed = "https://proj.supabase.co/storage/v1/object/sign/b/p?token=t"
+        calls = _install_http(
+            monkeypatch,
+            post=_supabase_submit_post("pred-1", expect_video=signed),
+            get=_poll_get(),
+        )
+        _fake_ffprobe(monkeypatch)
 
         result = ws.upscale_once(
             input_path=input_path,
@@ -104,12 +166,17 @@ class TestSupabaseSourceHost:
         assert result["source_host"] == "supabase"
         assert result["temp_host"] is None
         assert result["resumed"] is False
+        assert result["prediction_id"] == "pred-1"
         assert result["staging_object_deleted"] is True
+        assert result["width"] == 1080 and result["height"] == 1920
         # Upload landed in the default staging bucket, keyed by input sha.
-        upload_urls = [u for u in calls["posts"] if "/storage/v1/object/pgc-upscale-staging/" in u]
+        upload_urls = [u for u in calls["POST"]
+                       if "/storage/v1/object/pgc-upscale-staging/" in u]
         assert len(upload_urls) == 1
-        assert calls["deletes"] and "pgc-upscale-staging" in calls["deletes"][0]
-        # Success removes the resume state file.
+        # Staged source deleted on success.
+        assert calls["DELETE"] and "pgc-upscale-staging" in calls["DELETE"][0]
+        # Real output file exists; resume state removed.
+        assert output_path.exists()
         assert not ws._state_path(output_path).exists()
 
     def test_auto_without_creds_falls_back_to_temp_with_warning(
@@ -123,14 +190,22 @@ class TestSupabaseSourceHost:
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"video-bytes")
 
-        monkeypatch.setattr(
-            ws, "_upload_to_temp",
-            lambda path: ("uguu", "https://uguu.example/f.mp4", []),
-        )
+        # Stub the temp-host upload boundary (uguu is first in the chain) and
+        # let the REAL _upload_to_temp / _resolve_source_url run.
+        def _post(url, **kwargs):
+            if url == ws.UGUU_URL:
+                return _Resp(json_data={
+                    "success": True,
+                    "files": [{"url": "https://uguu.example/f.mp4"}],
+                })
+            raise AssertionError(f"unexpected POST {url}")
+        _install_http(monkeypatch, post=_post)
+
         info = ws._resolve_source_url(
             input_path, source_host="auto", input_sha256=FAKE_SHA, signed_ttl_sec=60,
         )
         assert info["host"] == "uguu"
+        assert info["url"] == "https://uguu.example/f.mp4"
         assert info["staging_object"] is None
         assert "PUBLIC" in capsys.readouterr().err
 
@@ -171,20 +246,20 @@ class TestResumeState:
         self, tmp_path, monkeypatch,
     ):
         """The money test: state file + matching input → NO new upload, NO
-        new paid submission; poll the persisted prediction and download."""
+        new paid submission; poll the persisted prediction and download.
+        Proven by the absence of any POST (upload/submit) at the boundary."""
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"video-bytes")
         output_path = tmp_path / "upscaled.mp4"
         sha = ws._sha256_file(input_path)
         self._write_state(output_path, sha)
 
-        def _boom(*args, **kwargs):
-            raise AssertionError("must not upload or submit on resume")
-        monkeypatch.setattr(ws, "_resolve_source_url", _boom)
-        monkeypatch.setattr(ws, "_submit_wavespeed", _boom)
-        monkeypatch.setattr(ws, "_poll_wavespeed", _completed_poll())
-        monkeypatch.setattr(ws, "_delete_supabase_object", lambda ref: True)
-        _stub_tail(monkeypatch)
+        calls = _install_http(monkeypatch, post=None, get=_poll_get())
+        _fake_ffprobe(monkeypatch)
 
         result = ws.upscale_once(
             input_path=input_path,
@@ -197,32 +272,27 @@ class TestResumeState:
         )
         assert result["resumed"] is True
         assert result["prediction_id"] == "pred-1"
+        # The money contract: NOT a single POST (no upload, no paid submit).
+        assert calls["POST"] == []
         assert not ws._state_path(output_path).exists()
 
     def test_stale_state_for_different_input_is_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"new-render-bytes")
         output_path = tmp_path / "upscaled.mp4"
-        # State written for a DIFFERENT input hash.
+        # State written for a DIFFERENT input hash → must be ignored.
         self._write_state(output_path, "b" * 64, prediction_id="old-pred")
 
-        submitted = {}
-
-        def fake_submit(url, *, target_resolution):
-            submitted["url"] = url
-            return "pred-2"
-        monkeypatch.setattr(
-            ws, "_resolve_source_url",
-            lambda *a, **k: {
-                "host": "supabase", "url": "https://signed.example/x",
-                "staging_object": "pgc-upscale-staging/x/master.mp4",
-                "temp_host_errors": [],
-            },
+        calls = _install_http(
+            monkeypatch,
+            post=_supabase_submit_post("pred-2"),
+            get=_poll_get(),
         )
-        monkeypatch.setattr(ws, "_submit_wavespeed", fake_submit)
-        monkeypatch.setattr(ws, "_poll_wavespeed", _completed_poll("pred-2"))
-        monkeypatch.setattr(ws, "_delete_supabase_object", lambda ref: True)
-        _stub_tail(monkeypatch)
+        _fake_ffprobe(monkeypatch)
 
         result = ws.upscale_once(
             input_path=input_path,
@@ -235,34 +305,33 @@ class TestResumeState:
         )
         assert result["resumed"] is False
         assert result["prediction_id"] == "pred-2"
-        assert submitted["url"] == "https://signed.example/x"
+        # A fresh submit POST to WaveSpeed actually happened (stale state path).
+        assert any(u.endswith("/wavespeed-ai/video-upscaler") for u in calls["POST"])
+        # The fresh prediction was polled, not the stale one.
+        assert any("/predictions/pred-2/result" in u for u in calls["GET"])
+        assert not any("/predictions/old-pred/result" in u for u in calls["GET"])
 
     def test_failed_prediction_falls_back_to_fresh_submission(
         self, tmp_path, monkeypatch,
     ):
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"video-bytes")
         output_path = tmp_path / "upscaled.mp4"
         sha = ws._sha256_file(input_path)
         self._write_state(output_path, sha, prediction_id="dead-pred")
 
-        poll_calls = []
-
-        def fake_poll(pid, *, max_wait, poll_interval):
-            poll_calls.append(pid)
-            if pid == "dead-pred":
-                raise RuntimeError("WaveSpeed failed: model error")
-            return "https://ws.example/out.mp4"
-        monkeypatch.setattr(ws, "_poll_wavespeed", fake_poll)
-        monkeypatch.setattr(
-            ws, "_resolve_source_url",
-            lambda *a, **k: {
-                "host": "supabase", "url": "https://signed.example/x",
-                "staging_object": None, "temp_host_errors": [],
-            },
+        # dead-pred polls as failed → real _try_resume_prediction returns None
+        # → real fresh submit yields pred-fresh, which polls completed.
+        calls = _install_http(
+            monkeypatch,
+            post=_supabase_submit_post("pred-fresh"),
+            get=_poll_get({"dead-pred": "failed", "pred-fresh": "completed"}),
         )
-        monkeypatch.setattr(ws, "_submit_wavespeed", lambda url, *, target_resolution: "pred-fresh")
-        _stub_tail(monkeypatch)
+        _fake_ffprobe(monkeypatch)
 
         result = ws.upscale_once(
             input_path=input_path,
@@ -273,31 +342,35 @@ class TestResumeState:
             max_wait=60,
             poll_interval=1,
         )
-        assert poll_calls == ["dead-pred", "pred-fresh"]
         assert result["resumed"] is False
         assert result["prediction_id"] == "pred-fresh"
+        # Polled the dead one first, then the fresh one (resume→fail→fresh).
+        poll_preds = [u.split("/predictions/", 1)[1].split("/result", 1)[0]
+                      for u in calls["GET"] if "/predictions/" in u]
+        assert poll_preds == ["dead-pred", "pred-fresh"]
 
     def test_poll_timeout_leaves_state_for_next_retry(self, tmp_path, monkeypatch):
         """Timeout propagates (message keeps 'timeout' for run_batch's
         retryable classification) and the state file survives with the
         prediction_id so the retry resumes instead of re-paying."""
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"video-bytes")
         output_path = tmp_path / "upscaled.mp4"
 
-        monkeypatch.setattr(
-            ws, "_resolve_source_url",
-            lambda *a, **k: {
-                "host": "supabase", "url": "https://signed.example/x",
-                "staging_object": "pgc-upscale-staging/x/master.mp4",
-                "temp_host_errors": [],
-            },
+        _install_http(
+            monkeypatch,
+            post=_supabase_submit_post("pred-slow"),
+            get=_poll_get(default="processing"),  # never completes
         )
-        monkeypatch.setattr(ws, "_submit_wavespeed", lambda url, *, target_resolution: "pred-slow")
-
-        def fake_poll(pid, *, max_wait, poll_interval):
-            raise TimeoutError(f"WaveSpeed timeout after {max_wait}s: {pid} status=processing")
-        monkeypatch.setattr(ws, "_poll_wavespeed", fake_poll)
+        # Drive time past the deadline on the first poll check so the REAL
+        # _poll_wavespeed raises TimeoutError without real sleeping.
+        clock = iter([1000.0, 1000.0, 9999.0])
+        monkeypatch.setattr(ws.time, "time", lambda: next(clock, 9999.0))
+        monkeypatch.setattr(ws.time, "sleep", lambda _s: None)
 
         with pytest.raises(TimeoutError, match="timeout"):
             ws.upscale_once(
@@ -316,20 +389,20 @@ class TestResumeState:
     def test_dimension_failure_keeps_state_for_repay_free_retry(
         self, tmp_path, monkeypatch,
     ):
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
+
         input_path = tmp_path / "master.mp4"
         input_path.write_bytes(b"video-bytes")
         output_path = tmp_path / "upscaled.mp4"
 
-        monkeypatch.setattr(
-            ws, "_resolve_source_url",
-            lambda *a, **k: {
-                "host": "supabase", "url": "https://signed.example/x",
-                "staging_object": None, "temp_host_errors": [],
-            },
+        _install_http(
+            monkeypatch,
+            post=_supabase_submit_post("pred-1"),
+            get=_poll_get(),
         )
-        monkeypatch.setattr(ws, "_submit_wavespeed", lambda url, *, target_resolution: "pred-1")
-        monkeypatch.setattr(ws, "_poll_wavespeed", _completed_poll())
-        _stub_tail(monkeypatch, width=720, height=1280)  # below minimum
+        _fake_ffprobe(monkeypatch, width=720, height=1280)  # below minimum
 
         with pytest.raises(RuntimeError, match="below minimum dimensions"):
             ws.upscale_once(
@@ -341,6 +414,7 @@ class TestResumeState:
                 max_wait=60,
                 poll_interval=1,
             )
+        # State intentionally kept so a retry resumes the completed prediction.
         assert ws._state_path(output_path).exists()
 
 
