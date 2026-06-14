@@ -1,7 +1,7 @@
 """Cross-module TypedDict schema for pgc-pipeline payloads.
 
 Sprint 14 item (f) — introduces typed shapes for dict payloads that flow
-between the six named core modules (``clip_assigner``, ``script_generator``,
+between the six named core modules (``packer``, ``script_generator``,
 ``tts_engine``, ``remotion_renderer``, ``clip_embedder``, ``clip_retriever``).
 
 These TypedDicts replace bare ``list[dict]`` / ``dict[str, Any]`` return
@@ -43,8 +43,8 @@ class SegmentPlan:
 
     @property
     def clip_range(self) -> tuple[int, int]:
-        """The ``(min_clips, max_clips)`` tuple the Gemini #2 prompt
-        and clip_assigner enforcement layer consume.
+        """The ``(min_clips, max_clips)`` tuple the script prompt
+        and the validator's enforcement layer consume.
 
         Exposed as a property so callers can unpack it without reaching
         into each field separately and so the pair stays in lockstep —
@@ -179,10 +179,10 @@ class ClipMetadata(TypedDict):
 
 
 class ClipAssignment(TypedDict):
-    """Gemini #2 per-phrase clip assignment, post-enrichment.
+    """Per-phrase clip assignment, post-enrichment.
 
     Shape matches ``docs/schemas/clip_assignments.md``. Written by
-    ``clip_assigner._enforce_hard_constraint_and_enrich``; consumed by
+    ``clip_assignment_validator._enforce_hard_constraint_and_enrich``; consumed by
     ``remotion_renderer._bind_clips_to_narration``.
     """
 
@@ -201,8 +201,7 @@ class ScriptSegment(TypedDict):
     ``text`` + ``pause_weight`` are Gemini #1's output contract.
     ``pause_after_ms`` is added by ``pause_budget.assign_pause_budgets``
     after TTS calibration. ``word_count`` is an author-declared field that
-    may drift from the actual tokenization of ``text`` (see
-    ``clip_assigner.py`` commentary).
+    may drift from the actual tokenization of ``text``.
     """
 
     text: str

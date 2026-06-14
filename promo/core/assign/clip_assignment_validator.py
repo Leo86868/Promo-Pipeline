@@ -1,7 +1,7 @@
-"""Hard-constraint validator for Gemini #2 raw clip-assignment output.
+"""Hard-constraint validator for raw clip-assignment output.
 
-Extracted from ``clip_assigner.py`` (Sprint S2b). The validator is the
-single arbiter of the renderer-facing display-span contract: each
+The validator is the single arbiter of the packer's output against the
+renderer-facing display-span contract: each
 phrase's clip must cover the peek-ahead span (next-phrase first-word
 start minus this-phrase first-word start, or narration_end for the last
 phrase) up to ``HARD_CONSTRAINT_TOL_SEC`` of measurement slack.

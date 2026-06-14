@@ -1,9 +1,8 @@
 """Sidecar reader for ``clip_assignments_{slug}_{Ns}s.json`` payloads.
 
-Extracted from ``clip_assigner.py`` (Sprint S2b) — orthogonal to the
-Gemini #2 assignment path (validator + prompt + API call). The reader
-is invoked at fixture-replay time and by ``compile_promo``'s sidecar
-loader to materialise prior variant outputs without re-running Gemini.
+The reader is invoked at fixture-replay time and by ``compile_promo``'s
+sidecar loader to materialise prior variant outputs without re-running
+the assign stage.
 
 The writer side lives in ``compile_promo._write_sidecar``; this reader
 is paired with it (Sprint 10 C3 / 09b L-002 template).

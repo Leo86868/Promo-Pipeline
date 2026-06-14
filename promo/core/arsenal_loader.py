@@ -2,14 +2,13 @@
 
 Per contract §4.9, the loader is the only module that does file I/O for
 arsenal data. Every consumer (``clip_analyzer``, ``script_generator``,
-``clip_assigner``, ``tts_engine``, ``format_profiles``,
+``tts_engine``, ``format_profiles``,
 ``arsenal/personas/_loader.py``) imports through here.
 
 Six public entry points cover the arsenal sub-libraries:
 
   - ``load_system_prompt(name)`` → ``arsenal/system_prompts/<name>_v1.md``
-    (4 known names: ``mimo_clip_analysis``, ``gemini1_script``,
-    e.g. ``gemini1_script``).
+    (2 known names: ``mimo_clip_analysis``, ``gemini1_script``).
   - ``load_voice_catalog()`` → ``arsenal/voices/catalog.yaml``.
   - ``load_persona(name_or_path)`` → ``arsenal/personas/<name>.yaml``
     (or, in legacy path mode, an absolute / relative-to-cwd path).
@@ -47,7 +46,6 @@ _ARSENAL_ROOT = Path(__file__).resolve().parent.parent / "arsenal"
 _KNOWN_SYSTEM_PROMPTS: frozenset[str] = frozenset({
     "mimo_clip_analysis",        # Commit 2
     "gemini1_script",            # Commit 3
-    "gemini2_assign",            # Commit 4
 })
 
 

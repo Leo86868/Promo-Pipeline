@@ -78,7 +78,7 @@ def _require_float(name: str, default: Optional[float] = None) -> float:
 # ------------------------------------------------------------------ #
 #  Pipeline env-var resolvers
 # ------------------------------------------------------------------ #
-#  Consumed by clip_assigner, clip_embedder, clip_analyzer,
+#  Consumed by clip_embedder, clip_analyzer,
 #  script_generator, tts_engine (Gemini + ElevenLabs paths). `_require`
 #  strips whitespace so an accidental ``GEMINI_API_KEY=" "`` fails fast
 #  instead of producing a silent 401 from the vendor.

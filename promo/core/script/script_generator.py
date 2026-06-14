@@ -26,8 +26,7 @@ three sibling modules under ``promo/core/script/`` own the implementation:
 
 - :mod:`promo.core.script.script_prompt_builder` — pure transformation:
   ``HOOK_TECHNIQUES``, ``_DEFAULT_PERSONA_PATH``, ``build_variant_plans``,
-  ``format_clip_inventory`` (also called from
-  ``promo.core.assign.clip_assignment_gemini``), ``format_examples``,
+  ``format_clip_inventory``, ``format_examples``,
   ``build_prompt``.
 - :mod:`promo.core.script.script_gemini_caller` — single Gemini #1 call
   wrapper (``generate_one``) with retry/backoff + JSON parse.

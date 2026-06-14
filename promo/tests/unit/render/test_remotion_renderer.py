@@ -399,7 +399,7 @@ class TestSprint10C5BindClipsSignature:
         sig = inspect.signature(build_props_from_script)
         assert "assignments" in sig.parameters, (
             "build_props_from_script must accept an `assignments` kwarg so "
-            "full_pipeline can thread clip_assigner output through."
+            "full_pipeline can thread the assign-stage output through."
         )
 
 class TestSprint10C5RetiredHelpers:
@@ -523,8 +523,8 @@ class TestSprint10C5BindHappyPath:
 
 class TestSprint10C5BindDefensiveSkips:
     """Defensive skips for bad input shapes — C5 keeps warnings, not raises,
-    because the upstream hard-constraint enforcement in clip_assigner owns
-    the Gemini-#2-violation path."""
+    because the upstream hard-constraint enforcement in the validator owns
+    the coverage-violation path."""
 
     def test_invalid_word_indices_skipped(self, caplog):
         import logging

@@ -11,8 +11,7 @@ Module contents:
     the legacy underscore name; re-exported by the facade for tests that
     import it directly).
   - :func:`build_variant_plans` — per-variant diversity plans.
-  - :func:`format_clip_inventory` — clip inventory block; cross-module
-    public (also called from ``promo.core.assign.clip_assignment_gemini``).
+  - :func:`format_clip_inventory` — clip inventory block.
   - :func:`format_examples` — persona example formatter.
   - :func:`build_prompt` — full prompt assembly with arsenal MD templates.
 
@@ -133,13 +132,13 @@ def format_clip_inventory(
     Each line includes the clip's ``source_duration_sec`` so Gemini knows how
     much visual time a single clip can cover. If a narration phrase needs
     more visual time than a single clip's source, the script should split
-    the phrase across multiple clips — the Gemini #2 hard-constraint enforcer
-    (``clip_assigner._enforce_hard_constraint_and_enrich``) is the actual
+    the phrase across multiple clips — the assign-stage hard-constraint enforcer
+    (``clip_assignment_validator._enforce_hard_constraint_and_enrich``) is the actual
     gate that prevents a single phrase from outrunning its clip.
 
-    Shared between Gemini #1 (script_generator, default precision=1) and
-    Gemini #2 (clip_assigner, passes ``duration_precision=2`` for the
-    hard-constraint math). Merged from a previously-duplicated pair in
+    Shared between the script prompt (script_generator, default precision=1) and
+    the assign validator (clip_assignment_validator, passes ``duration_precision=2``
+    for the hard-constraint math). Merged from a previously-duplicated pair in
     Sprint 13 AC11.
     """
     lines = []
@@ -275,10 +274,10 @@ def build_prompt(
 ) -> str:
     """Build the full generation prompt.
 
-    ``tighten_hint`` (Sprint 10 C2 F3 policy): when non-empty, injects a
-    structured feedback block at the top of the prompt so Gemini #1
-    tightens the failing segment on its single retry. See
-    ``promo/core/clip_assigner.py`` for how the hint is constructed.
+    ``tighten_hint`` (vestigial): once injected a structured feedback
+    block so Gemini #1 tightened a failing segment on retry. The F3-retry
+    chain retired 2026-06-11 and no caller passes it now (see the
+    ``feedback_block`` note in the body). Kept for signature stability.
     """
 
     clip_inventory = (

@@ -198,10 +198,10 @@ def build_props(
 # ---------------------------------------------------------------------------
 #
 # Sprint 10 C5 retired four pre-Sprint-10 helpers whose jobs moved to the
-# two-pass Gemini architecture. Phrase boundaries are now carried as
-# global word indices on each Gemini #2 assignment entry, per-phrase
-# trim_start is chosen by Gemini #2 under the hard-constraint enforcement
-# in :func:`promo.core.assign.clip_assigner._enforce_hard_constraint_and_enrich`,
+# deterministic assign stage. Phrase boundaries are now carried as
+# global word indices on each assignment entry; per-phrase trim_start is
+# chosen by the packer and enforced by the validator
+# (:func:`promo.core.assign.clip_assignment_validator._enforce_hard_constraint_and_enrich`),
 # and segment text now comes from ``script_segments`` passed into
 # :func:`build_props`. See ``workflow/projects/promo-foundation/checkpoints/
 # 2026-04-17-sprint-10b-pre-flight-sweep.md`` for the retirement catalogue.
@@ -226,14 +226,14 @@ def _bind_clips_to_narration(
     word_timestamps: list[WordTimestamp],
     target_duration_sec: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Bind Gemini #2 clip assignments to narration word timestamps.
+    """Bind clip assignments to narration word timestamps.
 
-    Sprint 10 C5 rewrite — consumes the word-idx ``assignments`` list
-    produced by :func:`promo.core.assign.clip_assigner.assign_clips`. Each
-    assignment entry carries ``start_word_idx`` / ``end_word_idx``
-    (indices into the global ``word_timestamps`` list), plus
-    ``trim_start`` and ``source_duration_sec`` already chosen by
-    Gemini #2 under the hard-constraint enforcement in ``clip_assigner``.
+    Consumes the word-idx ``assignments`` list produced by the packer
+    (validated). Each assignment entry carries
+    ``start_word_idx`` / ``end_word_idx`` (indices into the global
+    ``word_timestamps`` list), plus ``trim_start`` and
+    ``source_duration_sec`` already chosen by the packer and checked by
+    the validator's hard-constraint enforcement.
     The pre-Sprint-10 string-matching path that walked per-clip phrase
     markers inside ``script_segments`` retired with this rewire.
 
@@ -601,11 +601,10 @@ def build_props_from_script(
     target_duration_sec: float | None = None,
     timeline_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, object]:
-    """Build props.json from script + TTS + Gemini #2 clip assignments.
+    """Build props.json from script + TTS + deterministic clip assignments.
 
-    Sprint 10 C5: ``assignments`` is the word-idx per-phrase list produced
-    by :func:`promo.core.assign.clip_assigner.assign_clips` (post-F3-retry in the
-    full_pipeline). ``script_segments`` is still passed through so
+    ``assignments`` is the word-idx per-phrase list produced by the packer
+    (validated, in the full_pipeline). ``script_segments`` is still passed through so
     :func:`build_props` can populate ``segments[i].text`` by segment-number
     lookup without reconstructing from word_timestamps — the retired
     ``_reconstruct_segment_text`` helper's job.

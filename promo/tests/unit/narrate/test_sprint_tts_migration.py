@@ -585,7 +585,7 @@ class TestN1NoGeminiPauseTags:
 class TestN3BackendBranchCentralization:
     """N3 — ``if backend == 'gemini'`` / ``== 'elevenlabs'`` branches
     live in exactly three places (tts_engine, pause_budget, compile_promo).
-    No scattering into clip_assigner, remotion_renderer, captions, tests."""
+    No scattering into the assign stage, remotion_renderer, captions, tests."""
 
     ALLOWED = {
         REPO_ROOT / "promo" / "core" / "narrate" / "tts_engine.py",

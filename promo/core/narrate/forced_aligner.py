@@ -3,7 +3,7 @@
 Sprint TTS-Migration Phase 3 — produces ``[{word, start, end}]`` word
 timestamps for the Gemini TTS backend, matching the shape of ElevenLabs'
 native ``normalized_alignment`` so downstream consumers (V2 caption
-renderer, ``clip_assigner``) don't need a branch.
+renderer, the assign stage) don't need a branch.
 
 Only invoked on the Gemini backend path. ElevenLabs continues to use the
 API's returned alignment (~10ms precision).

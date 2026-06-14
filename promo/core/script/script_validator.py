@@ -385,8 +385,8 @@ def validate_structural(
 #  Sprint 10: Pass-1 (script-only) validation
 # ---------------------------------------------------------------------------
 #
-# Under the two-pass Gemini architecture, Gemini #1 writes only narration
-# text + pause_weight. Clip assignment is Gemini #2's job (``clip_assigner``).
+# Gemini #1 writes only narration text + pause_weight. Clip assignment is
+# the deterministic assign stage's job (``packer`` + ``clip_assignment_validator``).
 # ``validate_script_only`` is the pass-1 gate — it checks text shape and
 # pause_weight validity and deliberately does NOT look at clips / clip_id /
 # cut_after. Callers still run ``normalize_script`` (Gate 0) first.

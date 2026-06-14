@@ -23,8 +23,8 @@ class TestSprint08MatchQuality:
         assert compute_overlap_score("", "anything") == 0.0
 
     def test_build_entries_shape(self):
-        # Sprint 10 C5: the builder now consumes the word-idx assignments
-        # list produced by clip_assigner.assign_clips plus the TTS
+        # the builder consumes the word-idx assignments list produced by
+        # the packer (packer.pack_clips) plus the TTS
         # word_timestamps. Phrase text is reconstructed by slicing
         # word_timestamps on each assignment's start/end indices.
         from promo.core.assign.match_quality import build_match_quality_entries

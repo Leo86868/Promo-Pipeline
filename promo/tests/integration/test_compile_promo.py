@@ -169,7 +169,7 @@ class TestCompilePromoHelpers:
         assert mock_scripts.call_args.kwargs["n_variants"] == 2
         assert mock_scripts.call_args.kwargs["n_candidates"] == 2
         assert mock_tts.call_count == 2
-        # Sprint 10 C2: one clip_assigner call per variant.
+        # one assign-stage call per variant.
         assert mock_assign.call_count == 2
         assert mock_build_props.call_count == 2
         assert mock_validate.call_count == 2

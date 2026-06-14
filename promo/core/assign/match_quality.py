@@ -67,8 +67,8 @@ def build_match_quality_entries(
 ) -> list[dict]:
     """Return per-phrase observability entries for one variant's assignments.
 
-    Sprint 10 C5: ``assignments`` is the word-idx per-phrase list produced
-    by :func:`promo.core.assign.clip_assigner.assign_clips`. Each entry carries
+    ``assignments`` is the word-idx per-phrase list produced by the packer
+    (:func:`promo.core.assign.packer.pack_clips`, validated). Each entry carries
     ``segment``, ``clip_id``, ``start_word_idx``, and ``end_word_idx``;
     the narration phrase is reconstructed by slicing ``word_timestamps``
     on those indices. The pre-Sprint-10 ``_split_by_cut_after`` helper
