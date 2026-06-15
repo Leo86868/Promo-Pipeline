@@ -513,12 +513,39 @@ def run_preflight(source_host: str) -> dict[str, Any]:
     run_batch's autopilot preflight previously only proved this command
     EXISTS; a missing WAVESPEED_API_KEY or missing Supabase storage
     credentials still surfaced after the first render. This validates the
-    actual runtime configuration — including anything loaded via --env —
-    without paid calls or network traffic.
+    actual runtime configuration — including anything loaded via --env — and
+    live-probes WaveSpeed auth (an empty-body POST the API rejects before
+    creating any prediction, so no paid call).
     """
     errors: list[str] = []
     if not os.environ.get("WAVESPEED_API_KEY", "").strip():
         errors.append("WAVESPEED_API_KEY missing")
+    else:
+        # Live auth probe (2026-06-15 stranded-key incident): key PRESENCE is
+        # not key VALIDITY — a rotated/revoked key passes the presence check,
+        # then the batch renders for minutes before the WaveSpeed submit 401s.
+        # WaveSpeed authenticates the Bearer token BEFORE validating the body,
+        # so an empty-body POST gives 401/403 on a bad key and a 4xx
+        # body-validation error on a good one — no prediction created, no paid
+        # call. (Assumption: auth precedes body validation. If WaveSpeed ever
+        # 400'd a bad key here it would slip through — the 401→failed test pins
+        # the contract so a regression surfaces.)
+        base_url = os.environ.get("WAVESPEED_BASE_URL", WAVESPEED_BASE_URL).rstrip("/")
+        try:
+            probe = requests.post(
+                f"{base_url}/wavespeed-ai/video-upscaler",
+                headers=_wavespeed_headers(),
+                json={},
+                timeout=15,
+            )
+            if probe.status_code in (401, 403):
+                errors.append(
+                    f"WAVESPEED_API_KEY rejected (live auth {probe.status_code})"
+                )
+            # 400/422/2xx → passed auth, reached body validation.
+        except Exception as exc:
+            # Fail loud — never silently pass a preflight we could not verify.
+            errors.append(f"WAVESPEED_API_KEY live-auth probe failed: {exc}")
     resolved = source_host
     if source_host == "auto":
         resolved = "supabase" if _supabase_creds() else "temp"
