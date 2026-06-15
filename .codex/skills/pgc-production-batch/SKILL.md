@@ -90,6 +90,14 @@ python3 -m promo.cli.run_batch \
 `--final-upscale-provider disabled`, then the mandatory full-cleanup revert
 (see Batch Modes).
 
+"shorter scripts" / "字数短一点" is NOT a per-batch flag. Video length is a
+PARADIGM choice — the `short_30s` vs `long_65s` arsenal card — and the word
+band lives on the chosen card (`total_words_min` / `total_words_max`). So
+translate "短一点" to a question, never a silent change: "切到 30s 档
+(`short_30s` card) for this batch, or persistently lower the 65s card's
+`total_words_min/max`?" A persistent word change = edit the card (single
+source); there is no run_batch knob to shorten just one batch.
+
 ## Current Implementation Boundary
 
 This repo currently has local manifests, usage preview/writeback helpers with
@@ -124,7 +132,14 @@ upscale output is reused instead of re-paying WaveSpeed; everything else
 re-renders by replaying the recorded command. Quarantined POIs get one fresh
 chance per resume; the cleared list is archived under `resume_history`. Do
 NOT hand-build top-up batch JSONs for partial failures anymore — resume the
-receipt. The remaining future autopilot work is live smoke hardening.
+receipt.
+
+Disambiguate "top up" before acting — the two readings diverge: recovering the
+SAME failed slots = `--resume <receipt>` (same manifest, no duplicate usage,
+cheapest per-video recovery); producing N BRAND-NEW videos = a fresh small
+stockpile batch. When Leo says "补N条" / "top up the N that failed", confirm
+which he means; do not silently pick one. (Top-up only when Leo asks — never
+auto.) The remaining future autopilot work is live smoke hardening.
 
 When a target behavior is not implemented yet, say so and do not fake it with
 unsafe ad hoc live writes. Use the safest current workflow and report the gap.
@@ -154,9 +169,18 @@ PGC must not write account distribution state.
 - Select POIs randomly with equal weight among eligible POIs. Do not weight by
   active asset count; coverage is the goal.
 - Default cooldown is global 3 days by POI, configurable when Leo asks.
-- If Leo requests a classification such as EU or gold POIs and the asset
-  platform does not expose that field, fail clearly. Do not silently fall back
-  to all POIs.
+- If Leo requests a classification (e.g. gold-tier, a region), filter with the
+  paired flags `--classification-field <field> --classification-value <value>`
+  — supported by BOTH `select_batch_pois` (read-only) and `run_batch`, and they
+  must be passed together. VERIFIED read-only 2026-06-15:
+  `--classification-field poi_type --classification-value gold` works and
+  returns ONLY `poi_type='gold'` POIs. The real `poi_asset_pois` classification
+  fields are `poi_type` (values `gold` / `exploration`) and `region`
+  (e.g. `na`). Do NOT invent a field name — only `poi_type` / `region`
+  are verified; for any other classification, verify it exists with a read-only
+  `select_batch_pois` first. If the requested field/value does not exist the
+  selector returns no/too-few POIs — fail clearly, do not silently fall back to
+  all POIs.
 - If not enough POIs pass filters, stop before production and ask Leo whether to
   run the smaller count or wait for zhongtai to add assets.
 - Use `python3 -m promo.cli.run_batch --select-random-pois` for normal

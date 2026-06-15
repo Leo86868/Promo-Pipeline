@@ -49,3 +49,11 @@ Cross-references to the auto-memory system are noted where relevant. Memory file
 - **Word floor 150→145** — *DONE 2026-06-15 (`38ad7a2`) — behavioral* — `long_65s.yaml` `total_words_min` 150→145 + pinned tests; verify redraw-friction drop on the next production batch.
 - **Render concurrency default 2→6** — *DONE 2026-06-15 (`d2034da`)* — `PROMO_RENDER_CONCURRENCY` default raised; 8-core VPS was leaving ~6 idle. Long-term render lever is still the ffmpeg-vs-Remotion swap (ROADMAP §6).
 - **P3.5b — stage-subfolder architecture bibles** — *Likely — doc-honesty, next up before P5* — `promo/core/{pipeline,render,narrate,script}/architecture.md` still describe the Gemini #2 + F3 flow as LIVE (P3.5 only covered root + umbrella + llm). Needs a proper recalibration to packer reality against the ground truth `assign/architecture.md` + real code — NOT a literal string swap (that would leave a half-true doc: drop "Gemini #2" but keep "F3 retry"/`clip_assigner`). Same shape as the P3.5 root rewrite, scoped to the 4 stage docs. In ROADMAP §当前排期.
+
+### SKILL.md NL-acceptance minor holes (2026-06-15, from darwin blind-operator test)
+
+The de-drift SKILL passed blind-operator acceptance (0 wrong commands, values from the right source); 3 real holes were fixed (E5 classification / C2 length / E3 top-up). 3 minor holes deferred (smoother, not blocking — asking is the safe current behavior):
+
+- **No `--videos-per-poi` default** — *Tentative* — "make 4 POI" (count omitted) forces the operator to ask every time. Could define a default (or document "if omitted, ask"). Asking is safe; this is friction only.
+- **"渲染快点" has no operational mapping** — *Tentative* — SKILL correctly points render speed to `config.py` (no hardcoded number) but gives no guidance on which knob to bump or a safe ceiling on the shared VPS. Could add: "faster = raise `PROMO_RENDER_CONCURRENCY`, check `uptime`/AIGC load first."
+- **720-transition phase has no in-doc status check** — *Tentative* — the transition flags are conditional ("while the phase is active") but the SKILL gives no way to check whether the 720 pool is still being drained; the operator must know externally. Could add a status pointer.
