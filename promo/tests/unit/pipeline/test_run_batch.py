@@ -1814,3 +1814,199 @@ def test_pipelined_tail_crash_fails_batch_but_renders_continue(tmp_path):
         "rendered_manifest_audited",
         "rendered_manifest_audited",
     ]
+
+
+class _ExplodingUploader(_FakeUploader):
+    def upload_video_once(self, **kwargs):
+        raise RuntimeError("Drive 503 backend error")
+
+
+def _build_tail_pending_receipt(tmp_path, *, pois, videos_per_poi):
+    """Render a batch whose Drive upload always fails, leaving every video in
+    ``drive_upload_failed`` — exactly the tail-only state --resume re-runs.
+
+    The setup run is forced serial (tail_workers=0) so it's deterministic; the
+    receipt it produces is the input the resume-pipelining tests exercise.
+    """
+    from promo.cli.run_batch import DriveUploadTarget, run_batch
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": pois,
+            "videos_per_poi": videos_per_poi,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+    usage_recorder, usage_verifier, release_registrar, _, _ = _autopilot_fakes()
+    rendered = []
+
+    def command_runner(command):
+        rendered.append(command)
+        _write_valid_manifest_from_command(command, video_index=len(rendered))
+        return 0
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        production_autopilot=True,
+        tail_workers=0,
+        command_runner=command_runner,
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_ExplodingUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    states = [v["state"] for v in json.loads(receipt_path.read_text())["videos"]]
+    assert states == ["drive_upload_failed"] * (len(pois) * videos_per_poi)
+    return receipt_path
+
+
+def _make_peak_uploader_factory():
+    """A Drive uploader factory whose per-thread instances share a concurrency
+    counter, so a test can assert the PEAK number of tails in flight at once.
+
+    Each worker thread builds its own client (googleapiclient is not
+    thread-safe), so the counter lives in a closure shared across instances.
+    The 50ms hold guarantees a gate-less run would actually overlap.
+    """
+    import threading
+    import time
+
+    from promo.cli.run_batch import DriveUploadTarget
+
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    class _PeakUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            with lock:
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+            try:
+                time.sleep(0.05)
+                return super().upload_video_once(**kwargs)
+            finally:
+                with lock:
+                    state["active"] -= 1
+
+    def factory():
+        return DriveUploadTarget(
+            uploader=_PeakUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        )
+
+    return factory, state
+
+
+def test_resume_pipelined_two_tail_workers_run_concurrently(tmp_path):
+    """Resume is as fast as a fresh batch: independent-POI tail-only videos
+    run their tails concurrently up to tail_workers (2026-06-15)."""
+    import threading
+
+    from promo.cli.run_batch import DriveUploadTarget, resume_batch
+
+    receipt_path = _build_tail_pending_receipt(
+        tmp_path,
+        pois=[
+            {"poi_id": "poi_1", "name": "Resort One"},
+            {"poi_id": "poi_2", "name": "Resort Two"},
+        ],
+        videos_per_poi=1,
+    )
+    usage_recorder, usage_verifier, release_registrar, _, _ = _autopilot_fakes()
+    both_tails_in_flight = threading.Barrier(2, timeout=10)
+
+    class _BarrierUploader(_FakeUploader):
+        def upload_video_once(self, **kwargs):
+            # Trips only if BOTH resume tails reach the upload step at once.
+            both_tails_in_flight.wait()
+            return super().upload_video_once(**kwargs)
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        tail_workers=2,
+        command_runner=lambda command: pytest.fail("tail-only resume must not re-render"),
+        drive_upload_target_factory=lambda: DriveUploadTarget(
+            uploader=_BarrierUploader(),
+            parent_folder_id="parent-folder",
+            parent_folder_name="AIGC Production Masters",
+        ),
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 0
+    after = [v["state"] for v in json.loads(receipt_path.read_text())["videos"]]
+    assert after == ["complete", "complete"]
+
+
+def test_resume_pipelined_same_poi_tails_never_overlap(tmp_path):
+    """The ordering命根 survives into resume: two tail-only videos for the SAME
+    POI never run their tails concurrently even with workers to spare, so the
+    usage ledger stays ordered (2026-06-15)."""
+    from promo.cli.run_batch import resume_batch
+
+    receipt_path = _build_tail_pending_receipt(
+        tmp_path,
+        pois=[{"poi_id": "poi_123", "name": "Terranea Resort"}],
+        videos_per_poi=2,
+    )
+    usage_recorder, usage_verifier, release_registrar, _, _ = _autopilot_fakes()
+    factory, peak = _make_peak_uploader_factory()
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        tail_workers=2,
+        command_runner=lambda command: pytest.fail("tail-only resume must not re-render"),
+        drive_upload_target_factory=factory,
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 0
+    # Two workers are free, but same-POI ordering forbids overlap: the
+    # wait_for_poi_tail gate serializes them, so peak concurrency stays 1.
+    assert peak["peak"] == 1
+    after = [v["state"] for v in json.loads(receipt_path.read_text())["videos"]]
+    assert after == ["complete", "complete"]
+
+
+def test_resume_serial_tail_workers_zero_runs_tails_strictly_serial(tmp_path):
+    """tail_workers=0 is the rollback knob on resume too: no pipeline, even
+    independent-POI tails run one at a time on the main thread."""
+    from promo.cli.run_batch import resume_batch
+
+    receipt_path = _build_tail_pending_receipt(
+        tmp_path,
+        pois=[
+            {"poi_id": "poi_1", "name": "Resort One"},
+            {"poi_id": "poi_2", "name": "Resort Two"},
+        ],
+        videos_per_poi=1,
+    )
+    usage_recorder, usage_verifier, release_registrar, _, _ = _autopilot_fakes()
+    factory, peak = _make_peak_uploader_factory()
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        tail_workers=0,
+        command_runner=lambda command: pytest.fail("tail-only resume must not re-render"),
+        drive_upload_target_factory=factory,
+        supabase_client_factory=lambda: object(),
+        usage_recorder=usage_recorder,
+        usage_verifier=usage_verifier,
+        release_registrar=release_registrar,
+    ) == 0
+    assert peak["peak"] == 1
+    after = [v["state"] for v in json.loads(receipt_path.read_text())["videos"]]
+    assert after == ["complete", "complete"]
