@@ -1,6 +1,6 @@
 # promo/core/narrate/ — Stage 3: dual-backend TTS + alignment
 
-Generates the spoken narration. Both ElevenLabs v2 and Gemini 3.1 Flash TTS coexist behind a single dispatch seam in `generate_narration`; both backends return identically-shaped `(path, duration_sec, word_timestamps)` tuples so every downstream consumer (`_back_allocate_timestamps`, `_ffmpeg_concat_mp3s`, `clip_assigner`, captions) is backend-agnostic.
+Generates the spoken narration. Both ElevenLabs v2 and Gemini 3.1 Flash TTS coexist behind a single dispatch seam in `generate_narration`; both backends return identically-shaped `(path, duration_sec, word_timestamps)` tuples so every downstream consumer (`_back_allocate_timestamps`, `_ffmpeg_concat_mp3s`, the assign stage, captions) is backend-agnostic.
 
 The folder was previously split from a single-file module: `tts_engine.py` is now a facade that re-exports private helpers from 6 sibling modules; `forced_aligner.py` predates the split and is invoked only on the Gemini path.
 
@@ -9,7 +9,7 @@ The folder was previously split from a single-file module: `tts_engine.py` is no
 ## Vocabulary (new terms in this doc)
 
 - **forced aligner** — a model that takes audio + a known transcript and computes per-word start/end times. The Gemini-TTS path needs this because Gemini's API does not return alignment; ElevenLabs returns alignment natively. The project's forced aligner is MMS_FA (Meta's `torchaudio.pipelines.MMS_FA`, a wav2vec2-CTC model).
-- **back-allocate** — `_back_allocate_timestamps` maps per-batch TTS alignments onto per-segment timelines. The TTS API returns one alignment per batch (which may cover multiple segments); back-allocation re-tags each word with its original segment index so downstream consumers (caption renderer, clip assigner) can address words by `segment_index + word_offset`.
+- **back-allocate** — `_back_allocate_timestamps` maps per-batch TTS alignments onto per-segment timelines. The TTS API returns one alignment per batch (which may cover multiple segments); back-allocation re-tags each word with its original segment index so downstream consumers (caption renderer, the assign stage) can address words by `segment_index + word_offset`.
 - **batch-merge rule** — `plan_tts_batches` groups consecutive `pause_weight == 1` segments into one TTS call (natural prosody carries STANDARD pauses); `pause_weight ≥ 2` terminates a batch and an explicit `_generate_silence_mp3` is stitched in between batches.
 
 ## Files (inventory)
@@ -46,7 +46,7 @@ flowchart LR
 - `tts_engine` (facade) reads `VOICE_CATALOG` via `arsenal_loader.load_voice_catalog()` to resolve `backend` per voice key; the dispatch site is the only place a `backend == "gemini"` / `"elevenlabs"` check lives in production code.
 - `tts_assembly` is shared infrastructure between both backends + the dispatcher: ffmpeg primitives, silence generation, concat, back-allocate.
 - `forced_aligner` shells out to `ffmpeg` for 16kHz mono preconversion (bypassing `torchaudio.load`'s `torchcodec` requirement), runs MMS_FA on a stdlib-`wave`-loaded tensor, and converts CTC frame indices to seconds.
-- Consumed by `pipeline/_step_tts_narration`; the produced `Narration` flows into `assign/clip_assigner` for Gemini #2.
+- Consumed by `pipeline/_step_tts_narration`; the produced `Narration` (word_timestamps) flows into the `assign/` stage (beat planner → retrieval → packer → validator) for deterministic clip assignment.
 
 **Invariants:**
 
@@ -57,4 +57,4 @@ flowchart LR
 - **Below-threshold MMS_FA scores are warn-only** — per-word avg CTC below 0.60 logs a diagnostic warning. The warn-only policy preserves best-effort timestamps so a single low-confidence token does not abort the variant.
 - **Batch-merge rule** — `plan_tts_batches` groups consecutive weight==1 segments into one ElevenLabs call. Weight≥2 terminates the current batch; explicit `_generate_silence_mp3` follows. The last segment's `pause_weight` is ignored (no gap after it).
 - **`tts_assembly` is a library-shape exception** — not a 1-IO API service like the rest of `narrate/`; operator-blessed. The cohesive ffmpeg + timestamp primitives compose differently than 1-input-1-output modules.
-- **Facade re-export pattern** — `tts_engine.py` is the single import path tests + callers target. Same constraint as `assign/clip_assigner` and `script/script_generator`.
+- **Facade re-export pattern** — `tts_engine.py` is the single import path tests + callers target. Same constraint as `script/script_generator`.
