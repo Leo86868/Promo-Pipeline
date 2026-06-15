@@ -25,7 +25,7 @@ class TestPromoFormatProfiles:
         assert short_profile.mode == "short"
         assert long_profile.segment_count == 5
         assert long_profile.mode == "long"
-        assert long_profile.total_words_min == 150
+        assert long_profile.total_words_min == 145
         assert long_profile.total_words_max == 170
         assert long_profile.min_clip_pool_size == 14
         assert long_profile.recommended_clip_pool_size == 18

@@ -223,7 +223,7 @@ class TestLongFormGenerationContract:
 
     def _valid_long_raw_script(self) -> dict:
         # 2026-06-11 word-budget raise: extended to 168 words (LONG range
-        # [150, 170]).
+        # [145, 170]).
         # Sprint 10 C1: pause_weight on non-last segments (required by
         # validate_script_only under the two-pass Gemini schema).
         return {
@@ -661,7 +661,7 @@ class TestSprint08NormalizeScript:
         assert s["segments"][-1]["text"].endswith(".")
 
     def test_long_under_floor_raises_for_retry(self):
-        """LONG hard-gates the 130-word floor so the generation loop retries."""
+        """LONG hard-gates the 145-word floor so the generation loop retries."""
         from promo.core.script.script_validator import normalize_script, ValidationError
         from promo.core.format_profiles import LONG_PROFILE
         s = {"segments": [
@@ -671,7 +671,7 @@ class TestSprint08NormalizeScript:
         with pytest.raises(ValidationError) as exc_info:
             normalize_script(s, profile=LONG_PROFILE)
         assert "below LONG floor" in str(exc_info.value)
-        assert "150" in str(exc_info.value)
+        assert "145" in str(exc_info.value)
 
     def test_short_under_range_still_warns(self, caplog):
         """SHORT keeps normalize-not-reject — pause budget absorbs the shortfall."""

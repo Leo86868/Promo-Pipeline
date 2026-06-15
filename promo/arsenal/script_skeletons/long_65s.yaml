@@ -5,7 +5,7 @@
 mode: long
 target_duration_sec: 65
 duration_label: "65 second"
-description: "Flagship 65s long-form hotel promo: 5 segments, 150-170 words, semantic 2-4s visual beats."
+description: "Flagship 65s long-form hotel promo: 5 segments, 145-170 words, semantic 2-4s visual beats."
 
 # Per-type personality (P2): the card is the single source of truth
 # for these knobs. beat_*_sec bound the visual beat planner's cut
@@ -28,7 +28,7 @@ assets:
   base_min: 50
   per_extra: 10
 segment_count: 5
-total_words_min: 150
+total_words_min: 145
 total_words_max: 170
 per_segment_min: 12
 per_segment_max: 40
@@ -41,11 +41,11 @@ max_narration_ratio: 0.92
 # Per-mode RULES content — fills `$sentence_rule` /
 # `$extra_rules_block` in `gemini1_script_v1.md`. LONG widens the
 # sentence cap to 15-18 words for vivid specifics, and reinforces a
-# 150-word floor as an extra RULES bullet (Sprint 08.5 — Gemini
+# 145-word floor as an extra RULES bullet (Sprint 08.5 — Gemini
 # under-delivers without an explicit floor).
 sentence_rule: "Spoken cadence. Mostly 5-15 words per sentence, occasionally up to 18 when a sentence carries a vivid specific. Fragments welcome."
 extra_rules:
-  - "Minimum 150 words total — write fuller thoughts, more specific details, don't undershoot. Aim for the 160-word midpoint."
+  - "Minimum 145 words total — write fuller thoughts, more specific details, don't undershoot. Aim for the 160-word midpoint."
 
 segment_plans:
   - label: HOOK
