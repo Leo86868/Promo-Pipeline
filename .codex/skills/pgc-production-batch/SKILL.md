@@ -39,6 +39,57 @@ to Leo in non-code terms.
 - Do not auto top-up failed videos. Report the shortfall; run a top-up batch
   only when Leo asks.
 
+## Batch Modes — Stockpile vs Healthcheck
+
+Every batch is one of two modes. Pick it from Leo's words, not from extra
+operator-supplied numbers.
+
+- **Stockpile batch** (default — "补库存", "make N POIs", "production run"):
+  real inventory. `--production-autopilot` WITH real WaveSpeed upscale (during
+  the 720 transition upscale is required, so don't disable it) → real Drive
+  upload + usage writeback + `release_candidates`. **Never reverted** — these
+  are real products.
+
+- **Healthcheck / test batch** ("体检", "smoke", "test the chain"): proves the
+  live chain end-to-end without spending WaveSpeed or shipping product. Add
+  `--final-upscale-provider disabled` — but note it ONLY skips the paid
+  upscale. The batch STILL does real Drive upload + usage writeback +
+  `release_candidates`; `disabled` does NOT make it no-publish. So a
+  healthcheck MUST be reverted when done, via FULL cleanup (collect each
+  video's `manifest_id` from the receipt — the CLI keys on manifest-id, there
+  is no batch-id flag):
+
+  ```bash
+  python3 -m promo.cli.revert_usage \
+    --manifest-id <id> [--manifest-id <id> ...] --full-cleanup --execute
+  ```
+
+  Full cleanup (not usage-only) is mandatory — otherwise an `approved`
+  release_candidate stays distributable in `release_unassigned_candidates`.
+  See "Reverts And Smoke Cleanup" for the dry-run/checkpoint/verify contract.
+
+## Natural-language → command
+
+The skill translates Leo's request into flags; the operator supplies NO numeric
+values beyond POI-count and videos-per-poi (which Leo states). Every other
+value — word floor, pacing, render concurrency, model ids, the asset floor —
+reads from its single source (arsenal card / `config.py` / `registry.py`); the
+operator types none of them.
+
+"make 4 POIs, 3 videos each, for stockpile":
+
+```bash
+python3 -m promo.cli.run_batch \
+  --select-random-pois --poi-count 4 --videos-per-poi 3 \
+  --output-dir <run_dir> \
+  --supabase-music-library --production-autopilot
+  # + the 720-transition flags while that phase is active (see Source Width Policy)
+```
+
+"health-check the chain, 2 POIs × 3" → the same command PLUS
+`--final-upscale-provider disabled`, then the mandatory full-cleanup revert
+(see Batch Modes).
+
 ## Current Implementation Boundary
 
 This repo currently has local manifests, usage preview/writeback helpers with
@@ -119,27 +170,25 @@ The PGC paradigm owns how many active assets are enough for the requested video
 format.
 Selection must apply this threshold to candidate-ready assets, not just raw
 active clips. For the current shared-asset path, candidate-ready means the asset
-has a ready `text-embedding-3-small` embedding for the active composition
-version and can enter semantic retrieval.
+has a ready embedding (model = `registry.OPENROUTER_EMBEDDING_MODEL`, in
+`promo/core/model_adapters/registry.py`) for the active composition version
+and can enter semantic retrieval.
 
-For `pgc_65s`, use:
-
-```text
-required_active_assets = base_min_assets_for_format + 10 * extra_variations
-base_min_assets_for_format = 50
-extra_variations = max(videos_per_poi - 1, 0)
-```
-
-Examples:
+For `pgc_65s`, the floor is a FORMULA over the type card's asset knobs. The
+SKILL states the rule; the numbers live on the card (single source — do not
+copy them here):
 
 ```text
-1 video per POI -> 50 active assets
-2 videos per POI -> 60 active assets
-3 videos per POI -> 70 active assets
-4 videos per POI -> 80 active assets
+required_active_assets = assets.base_min + assets.per_extra * extra_variations
+extra_variations       = max(videos_per_poi - 1, 0)
 ```
 
-Future paradigms such as `pgc_120s` may define different base requirements.
+`assets.base_min` / `assets.per_extra` live in the arsenal type card
+`promo/arsenal/script_skeletons/long_65s.yaml`; the formula is applied in
+`promo/core/run_receipt.py::required_active_assets()`. Worked example (derived
+from the current card): 3 videos/POI → `base_min + 2 × per_extra`
+embedding-ready, policy-matching active assets. Future paradigms (`pgc_120s`)
+carry their own card.
 
 ## Source Width Policy
 
@@ -147,23 +196,23 @@ For the controlled low-res transition, PGC uses the shared asset `width` field
 as the main source-resolution selector for vertical assets. Do not key this
 policy off `height`.
 
-Current transition config:
+The transition is an operator decision passed as CLI flags (transient — drop
+it when zhongtai has enough native-1080 assets or the 720 pool drains):
 
 ```text
-source_resolution_policy.mode = transition_low_res_only
-target_width = 720
-tolerance_px = 40
-aspect_ratio_min = 1.70
-aspect_ratio_max = 1.86
+--source-resolution-policy-mode transition_low_res_only
+--source-target-width 720
+--source-width-tolerance-px 40
 ```
+
+The aspect-ratio band that defines a vertical asset is NOT operator-typed — it
+lives as code defaults `DEFAULT_ASPECT_RATIO_MIN` / `DEFAULT_ASPECT_RATIO_MAX`
+in `promo/core/source_resolution_policy.py`; do not copy the numbers here.
 
 This policy must be applied both at POI eligibility time and at
 retrieval/download time. Retrieval fallback or reserve padding must not widen
-back to mixed 720/1080 assets.
-
-For `pgc_65s`, the normal candidate-ready threshold still applies after the
-width policy. Example: `3 videos per POI` needs 70 active, embedding-ready,
-policy-matching assets.
+back to mixed 720/1080 assets. The candidate-ready asset floor (above) still
+applies after the width filter.
 
 When this transition policy is active, final-video upscale is required for
 production handoff. The policy is detachable: when zhongtai has enough
@@ -201,13 +250,18 @@ to the upscaled Drive URI. Usage still comes from the original manifest because
 the asset timeline did not change.
 
 Verified means ffprobe reports the actual final MP4 dimensions match the
-configured target, currently 1080x1920 by default.
+configured upscale target (defaults `target_width` / `target_height` in
+`promo/core/final_upscale.py`); do not copy the number here.
 
 Current repo support can run selection plus the per-video production order:
 
 ```bash
 ssh vps
-cd /home/deploy/pgc_batch_worktrees/main_20260608T000000Z
+# Deploy a FRESH worktree at the current main HEAD — do NOT pin a sha:
+#   git -C <repo> fetch origin && git worktree add <new_worktree> origin/main
+#   cd <new_worktree>/promo/remotion && npm install   # required (deploy-checklist)
+#   then run the autopilot preflight before the live batch
+cd <latest main worktree under /home/deploy/pgc_batch_worktrees/>
 set -a
 . ./.env
 set +a
@@ -261,14 +315,16 @@ voice/music/seed assignments are order-independent (keyed to the canonical
 POI-major ordinal, byte-identical to the pre-pipelining mapping for the same
 seed); the POI-round-robin EXECUTION order itself is unconditional.
 
-Render speed knobs are repo config, not natural-language policy:
+Render speed knobs are repo config DEFAULTS, not natural-language policy — and
+NOT copied here (copies drift — a render-concurrency value once recorded in
+this doc had already gone stale against the code). Each resolves in
+`promo/core/config.py` and is overridable by env var; read the current default
+from config.py, never record a number here:
 
-```text
-PROMO_RENDER_CONCURRENCY=2
-PROMO_RENDER_X264_PRESET=veryfast
-PROMO_RENDER_CRF=23
-PROMO_RENDER_TIMEOUT_SEC=900
-```
+- concurrency    → `config.py::render_concurrency()`   · env `PROMO_RENDER_CONCURRENCY`
+- x264 preset    → `config.py::render_x264_preset()`   · env `PROMO_RENDER_X264_PRESET`
+- CRF            → `config.py::render_crf()`           · env `PROMO_RENDER_CRF`
+- render timeout → `config.py::render_timeout_sec()`   · env `PROMO_RENDER_TIMEOUT_SEC`
 
 Use these only to tune Remotion's current renderer. A future ffmpeg-only
 renderer would be a separate implementation path because it must preserve
@@ -277,48 +333,18 @@ captions, CTA, audio mix, timeline entries, and manifest/usage semantics.
 For repair/debug against a known POI list, `run_batch --batch "$batch_json"` is
 still supported.
 
-## Same-Script A/B (assigner exam)
+## Clip assigner (settled 2026-06-11)
 
-When Leo says "对这条视频开 A/B" (or names a POI/video), run the packer arm
-against that video's recorded script. No one needs to remember variable
-names — this section IS the procedure (2026-06-11, reviewer-mandated):
-
-1. **Copy the A arm's parameters verbatim** from its receipt: the
-   `videos[i].render.command` field of the batch's `RUN_RECEIPT.json` is the
-   exact compile command (voice/music/seed/tts-speed/duration/source policy
-   all included). Change ONLY `--output`.
-2. **Replay path** = the A arm's `clip_assignments_*.json` sidecar (lives
-   next to the video; it carries the recorded script).
-3. Run the copied command with exactly two env vars added:
-
-```bash
-export PROMO_REPLAY_SCRIPT=/path/to/clip_assignments_<slug>_65s.json
-export PROMO_CLIP_ASSIGNER=packer
-python3 -m promo.cli.compile_promo <copied A-arm args> --output <ab_dir>/B_packer_<slug>.mp4
-```
-
-4. **Compare PRE-upscale masters** (the render output mp4s, not the
-   WaveSpeed 1080p files) — upscale adds noise unrelated to clip choice.
-5. **Unset both env vars immediately after** (`unset PROMO_REPLAY_SCRIPT
-   PROMO_CLIP_ASSIGNER`). A forgotten replay var cannot hurt a batch —
-   `run_batch`/`resume_batch` refuse to start while it is set — but unsetting
-   is the discipline.
-6. Copy both masters to Leo's `~/Downloads/`, filenames labelled
-   `A_gemini2_*` / `B_packer_*`. Leo judges by eye; the only question is
-   "新厨师的菜,观感有没有输?".
-
-Replayed renders self-declare via `replayed_from` in their
-clip_assignments sidecar (normal renders carry `null`).
-
-## Clip assigner cutover (2026-06-11)
-
-Leo judged the same-script A/B: the packer arm wins. Per Leo's call the
-coexistence period was skipped and the Gemini #2 chain (assignment
-prompt + F3 script-regen + split-repair) was DELETED the same day —
-the deterministic chain is the only engine. `PROMO_CLIP_ASSIGNER` no
-longer exists (a leftover .env line is a harmless no-op; remove it when
-touching .env). Rollback, if ever needed: `git revert` the deletion
-commit and redeploy a worktree (~15 min).
+The deterministic packer is the only clip-assignment engine. The Gemini #2
+chain (assignment prompt + F3 script-regen + split-repair) and the
+`PROMO_CLIP_ASSIGNER` switch were DELETED (`1f28902`); the same-script A/B that
+chose the packer is closed (no A/B to run anymore — a leftover
+`PROMO_CLIP_ASSIGNER` .env line is a harmless no-op, remove it when touching
+.env). Rollback if ever needed: `git revert 1f28902` + redeploy a worktree
+(~15 min). The replay mechanism survives — `PROMO_REPLAY_SCRIPT=<clip_assignments_*.json>`
+re-renders a recorded script (`config.py::PROMO_REPLAY_SCRIPT`);
+`run_batch`/`resume` refuse to start while it is set, so a forgotten var can't
+corrupt a batch.
 
 ## Approved Existing Masters Handoff
 
