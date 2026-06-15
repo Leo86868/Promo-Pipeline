@@ -1,6 +1,6 @@
 # promo/core/render/ — Stage 5: Python → Remotion bridge
 
-The final stage. Reads the Gemini #2 clip assignments + the TTS narration + the BGM track, builds a `props.json` for the Remotion `HotelPromo` composition, validates it, and shells out to `npx remotion render` to produce the final `.mp4`. This is the **only module that knows about `final_display_end` and the bridge pool** — everything past `narration_end` lives here.
+The final stage. Reads the deterministic clip assignments + the TTS narration + the BGM track, builds a `props.json` for the Remotion `HotelPromo` composition, validates it, and shells out to `npx remotion render` to produce the final `.mp4`. This is the **only module that knows about `final_display_end` and the bridge pool** — everything past `narration_end` lives here.
 
 > **Read upstream first:** [`README.md`](../../../README.md) → [`promo/core/architecture.md`](../architecture.md) (defines two-space model, narration_end, final_display_end, bridge family). This doc covers stage 5 only.
 
@@ -33,7 +33,7 @@ The diagram is what `_bind_clips_to_narration` decides for each variant. Healthy
 
 **Cross-file seams:**
 
-- Imports `HARD_CONSTRAINT_TOL_SEC` from `assign/clip_assigner` so the renderer-side display-span check uses the same 50ms tolerance as the assigner.
+- Imports `HARD_CONSTRAINT_TOL_SEC` from `assign/clip_assignment_validator` so the renderer-side display-span check uses the same 50ms tolerance as the validator.
 - Types against `schema.{ClipAssignment, Narration, ScriptSegment, SegmentTimestamp, WordTimestamp}` for the Python-side payload contracts.
 
 **Invariants:**
