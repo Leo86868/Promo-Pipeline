@@ -99,7 +99,7 @@ def _enforce_hard_constraint_and_enrich(
     word_timestamps: list[WordTimestamp],
     clip_durations: dict[str, float],
 ) -> list[ClipAssignment]:
-    """Walk raw Gemini #2 assignments in-order, compute
+    """Walk raw packer assignments in-order, compute
     ``display_span_sec`` + ``source_duration_sec`` per phrase, and raise
     :class:`ClipAssignmentError` on the first constraint violation.
 
@@ -143,7 +143,7 @@ def _enforce_hard_constraint_and_enrich(
     for _seg_idx in sorted_seg_indices:
         flat_entries.extend(layout[_seg_idx])
 
-    # L-001 fix: Gemini #2 must emit assignments for EVERY script segment.
+    # L-001 fix: the assigner must emit assignments for EVERY script segment.
     # Without this guard a truncated response silently produces a partial
     # assignments list that the renderer would consume downstream.
     missing_segments = [i + 1 for i in range(segment_count) if (i + 1) not in layout]
@@ -159,7 +159,7 @@ def _enforce_hard_constraint_and_enrich(
     # L-003 fix: precompute per-segment global word boundaries so we can
     # verify that phrases tile their segment end-to-end (the prompt's
     # stated invariant). Word indices here are into the GLOBAL
-    # word_timestamps list — same as Gemini #2's output uses.
+    # word_timestamps list — same as the assigner's output uses.
     segment_word_ranges: list[tuple[int, int]] = []
     cursor = 0
     for seg in script_segments:
@@ -188,7 +188,7 @@ def _enforce_hard_constraint_and_enrich(
             )
 
         # L-003 fix: verify phrases tile this segment end-to-end with no
-        # gaps or overlaps (the Gemini #2 prompt's stated invariant). Word
+        # gaps or overlaps (the assigner's stated invariant). Word
         # indices must be contiguous: first phrase starts at segment_start,
         # each subsequent phrase starts at prev.end + 1, last phrase ends
         # at segment_end.

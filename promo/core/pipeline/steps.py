@@ -1,9 +1,9 @@
 """Pipeline step helpers for ``full_pipeline``.
 
-Each helper corresponds to a discrete stage in the two-pass Gemini
-flow: Steps 1/2/2.5 (clip prep), Step 3 (Gemini #1 + pause budget),
-Step 4 (TTS narration), Step 4.5 (Gemini #2 clip assignment with F3
-retry), plus the Sprint 16 ``_build_variant_selections`` seam for
+Each helper corresponds to a discrete pipeline stage: Steps 1/2/2.5
+(clip prep), Step 3 (Gemini #1 + pause budget), Step 4 (TTS
+narration), Step 4.5 (deterministic clip assignment), plus the
+Sprint 16 ``_build_variant_selections`` seam for
 per-variant format/persona selection and the per-variant
 ``_build_variant_tts_metrics`` row builder.
 
@@ -60,7 +60,7 @@ def analyze_clips_for_script(
 
 # Sprint 10 C4 — _assign_tail_clip retired. Pre-10 one-pass Gemini needed a
 # per-variant tail-source estimate to drive compute_pause_budget's tail cap,
-# but the two-pass architecture replaces that with Gemini #2's per-phrase
+# but the deterministic assigner replaces that with its per-phrase
 # hard constraint (source_dur − trim_start ≥ display_span), which makes the
 # tail reserve redundant.
 
@@ -69,9 +69,9 @@ def analyze_clips_for_script(
 #  Sprint 10 C4 — full_pipeline step helpers
 # ---------------------------------------------------------------------------
 #
-# Extracted from full_pipeline under the F4 decomposition goal: the two-pass
-# Gemini flow naturally splits Step 3 (Gemini #1 script) from Step 4 (TTS)
-# from the new Step 4.5 (Gemini #2 clip assignment + F3 retry). Each helper
+# Extracted from full_pipeline under the F4 decomposition goal: the
+# pipeline naturally splits Step 3 (Gemini #1 script) from Step 4 (TTS)
+# from the new Step 4.5 (deterministic clip assignment). Each helper
 # is callable standalone — closures over full_pipeline locals are replaced
 # with explicit kwargs so tests can drive them directly.
 
@@ -157,7 +157,7 @@ def _step_generate_script(
     Sprint 10 C4: extraction of Step 3 from ``full_pipeline``. Scripts
     come back with ``pause_after_ms`` populated per segment but no clip
     assignments (Gemini #1 under the two-pass schema does not emit
-    ``clips[]`` — assignments are Gemini #2's job in ``_step_assign_clips``).
+    ``clips[]`` — assignments are the assign stage's job in ``_step_assign_clips``).
 
     Sprint 16 — when ``variant_profiles`` / ``variant_personas`` are
     threaded from the selector seams, each variant uses its own
@@ -555,7 +555,7 @@ def _step_assign_clips(
     untouched; ``variant_profile`` / ``target_duration_sec`` supply the
     format card's pacing knobs (P2 step 3). The remaining unused
     per-variant kwargs (voice/tmp-dir/persona/...) are kept so the
-    caller contract is stable — they belonged to the retired Gemini #2 +
+    caller contract is stable — they belonged to the retired LLM-assigner +
     F3 script-regen chain (removed 2026-06-11 after the same-script A/B
     verdict; see docs/ROADMAP.md §执行日志).
 
@@ -658,7 +658,7 @@ def _assign_clips_packer(
 ) -> tuple[dict, dict, list[dict], dict]:
     """翻转二 B5 — deterministic assignment: beats → retrieval → packer.
 
-    Same return contract as the Gemini #2 path, but script/narration pass
+    Same return contract as the legacy assigner path, but script/narration pass
     through untouched (no regen) and the output still runs through
     ``_enforce_hard_constraint_and_enrich`` — the validator stays the
     single renderer-contract arbiter regardless of assigner.

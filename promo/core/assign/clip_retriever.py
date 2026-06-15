@@ -2,7 +2,7 @@
 
 Pairs with ``clip_embedder``/the platform embedding table: vectors come
 pre-computed, and this module ranks them against beat-text queries for
-the packer (``rank_per_query``). The legacy Gemini #2 inventory-narrowing
+the packer (``rank_per_query``). The legacy LLM-assigner inventory-narrowing
 API (``top_k``/``union_of_top_k``) retired with that chain on 2026-06-11.
 
 **Stateless by design** — no lru_cache, no module memo; every call
@@ -77,7 +77,7 @@ def rank_per_query(
 ) -> list[list[tuple[str, float]]]:
     """翻转二 B2 — full ranked candidates PER query (one list per beat).
 
-    Unlike ``union_of_top_k`` (which feeds Gemini #2 a deduped id pool),
+    Unlike the retired ``union_of_top_k`` (which fed the LLM assigner a deduped id pool),
     the packer needs every beat's own ranking WITH scores so it can walk
     down the list applying house rules (no reuse, duration coverage,
     window rotation, adjacency penalty). Returns, for each query, the

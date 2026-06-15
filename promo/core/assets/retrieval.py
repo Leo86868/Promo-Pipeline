@@ -250,7 +250,7 @@ def candidate_asset_ids_for_download(
     min_candidates: int = DEFAULT_MIN_DOWNLOAD_CANDIDATES,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
 ) -> list[str]:
-    """Return the candidate download pool, padded for Gemini #2/bridge reserve."""
+    """Return the candidate download pool, padded for assignment/bridge reserve."""
     if min_candidates <= 0 or max_candidates <= 0:
         raise AssetRetrievalError("min_candidates and max_candidates must be positive")
     if min_candidates > max_candidates:

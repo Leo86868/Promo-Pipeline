@@ -257,7 +257,7 @@ def replay_script_path() -> Optional[str]:
     When set, ``_step_generate_script`` skips Gemini #1 and replays the
     recorded script (a ``clip_assignments_*.json`` sidecar or a bare
     ``{"segments": [...]}`` JSON). The A/B-era companion switch
-    ``PROMO_CLIP_ASSIGNER`` retired with the Gemini #2 chain (2026-06-11).
+    ``PROMO_CLIP_ASSIGNER`` retired with the legacy LLM-assigner chain (1f28902, 2026-06-11).
     """
     value = os.getenv("PROMO_REPLAY_SCRIPT", "").strip()
     return value or None

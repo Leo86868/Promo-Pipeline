@@ -3,8 +3,8 @@
 Stage 4 runs AFTER real TTS timing exists, so display-span math is
 measured (not predicted). Since 2026-06-11 the sole engine is the
 deterministic chain — **beat planner → per-beat retrieval → packer →
-validator** — selected by the same-script A/B verdict; the Gemini #2 +
-F3 script-regen + split-repair chain was retired the same day (history:
+validator** — selected by the same-script A/B verdict; the legacy
+LLM-assigner + F3 script-regen + split-repair chain was retired the same day (1f28902; history:
 `git log -- promo/core/assign/clip_assignment_gemini.py`).
 
 This folder owns the load-bearing correctness boundary between

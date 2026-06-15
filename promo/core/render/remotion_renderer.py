@@ -251,7 +251,7 @@ def _bind_clips_to_narration(
     remaining footage. Sprint 10b's proposed C7 deletion was
     retracted (revert ``ab3938c``) after post-C7 smoke proved that
     inter-segment pauses can exceed ``max_clip_dur`` and no single
-    assignment from Gemini #2 can fit such spans; bridges are how
+    assignment can fit such spans; bridges are how
     the physical pool covers them without a silent freeze.
     :class:`FreezeWouldOccurError` is raised when the bridge pool
     itself exhausts.

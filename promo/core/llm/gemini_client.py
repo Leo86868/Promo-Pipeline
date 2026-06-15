@@ -82,7 +82,7 @@ def resolve_gemini_model(*, log_context: str = "Gemini") -> GeminiModel:
     ``registry.GEMINI_TEXT_MODEL``.
 
     ``log_context`` tags the info-log so the two Gemini-call sites remain
-    distinguishable in captured logs — e.g. "Gemini #1" vs "Gemini #2".
+    identifiable in captured logs — e.g. tagging the "Gemini #1" script call.
     """
     from promo.core.config import gemini_api_key
 

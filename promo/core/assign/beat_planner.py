@@ -1,6 +1,6 @@
 """翻转二 B1 — deterministic visual-beat planner (no LLM).
 
-Replaces Gemini #2's phrase segmentation with pure timestamp math: split
+Replaces the old LLM-assigner's phrase segmentation with pure timestamp math: split
 each script segment's narration into "beats" targeting at most
 ``max_beat_sec`` of display time. With clip sources ≥5s and beats ≤4s the
 duration hard-constraint that drives ``ClipAssignmentError`` (and the F3

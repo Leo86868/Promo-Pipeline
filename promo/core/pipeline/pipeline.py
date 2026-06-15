@@ -401,14 +401,14 @@ def full_pipeline(
             if not os.path.isdir(embedding_cache_dir):
                 logger.info(
                     "Sprint 12b retrieval disabled: embedding_cache_dir %s "
-                    "does not exist — using full-pool Gemini #2.",
+                    "does not exist — using the full clip pool.",
                     embedding_cache_dir,
                 )
                 embedding_cache_dir = None
         else:
             logger.info(
                 "Sprint 12b retrieval disabled: backend.clips_dir() returned "
-                "None — using full-pool Gemini #2.",
+                "None — using the full clip pool.",
             )
             embedding_cache_dir = None
 

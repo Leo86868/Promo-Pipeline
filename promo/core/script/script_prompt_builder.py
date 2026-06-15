@@ -366,7 +366,7 @@ def build_prompt(
 
     target_word_midpoint = (profile.total_words_min + profile.total_words_max) // 2
 
-    # F3 script-regen retired 2026-06-11 with the Gemini #2 chain; no
+    # F3 script-regen retired 2026-06-11 with the LLM-assigner chain; no
     # caller passes tighten_hint any more (param kept for signature
     # stability until the next contract bump).
     feedback_block = ""

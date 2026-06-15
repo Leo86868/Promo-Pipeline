@@ -1,1 +1,1 @@
-"""Stage assign — Gemini #2 clip assignment, embedding/retrieval, match-quality."""
+"""Stage assign — deterministic clip assignment, embedding/retrieval, match-quality."""

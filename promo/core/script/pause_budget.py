@@ -21,7 +21,7 @@ Sprint 10 C4 removed the tail-safety cap (previously
 ``narration_end ≤ target_sec − tail_source_sec + safety_buffer_sec``). The
 tail cap existed to prevent last-clip-freeze when the pre-10 one-pass
 Gemini picked the tail clip without knowing TTS timing. Under the two-pass
-architecture, Gemini #2's hard constraint
+assigner, the validator's hard constraint
 ``source_dur(clip_id) − trim_start ≥ display_span`` makes every per-phrase
 clip self-sufficient, so no tail reserve is needed in the pause budget.
 """
@@ -235,8 +235,8 @@ def compute_pause_budget(
 
     Sprint 10 C4: ``tail_source_sec`` / ``safety_buffer_sec`` kwargs
     removed. The tail-cap branch was load-bearing only when one-pass
-    Gemini could under-pick the tail clip's source duration; two-pass
-    Gemini #2 enforces ``source_dur − trim_start ≥ display_span`` per
+    Gemini could under-pick the tail clip's source duration; the
+    deterministic assigner enforces ``source_dur − trim_start ≥ display_span`` per
     phrase, which makes the tail-reserve redundant.
 
     Warnings:

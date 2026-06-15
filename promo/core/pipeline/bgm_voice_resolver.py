@@ -194,7 +194,7 @@ def _empty_retrieval_provenance() -> dict:
     Sprint 18 F: ``retrieval_contract`` is seeded here so every emitted
     ``clip_assignments_*.json`` sidecar carries the explicit "soft_hint"
     declaration. The literal documents that retrieval is advisory — the
-    assigner does NOT reject Gemini #2 replies that name a ``clip_id``
+    assigner does NOT reject assignments that name a ``clip_id``
     outside the retrieved subset, and the four ``fallback_reason`` codes
     (``no_sidecar`` / ``m4_attach_shrinkage`` / ``h2_union_shortfall`` /
     ``retrieval_exception``) encode the cases where retrieval did not

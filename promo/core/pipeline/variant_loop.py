@@ -1,7 +1,7 @@
 """Per-variant loop body for ``full_pipeline``.
 
-Each iteration runs Step 4 (TTS), Step 4.5 (Gemini #2 clip assignment
-with F3 retry), Step 7 (props build + freeze-prevention), Step 8
+Each iteration runs Step 4 (TTS), Step 4.5 (deterministic clip
+assignment), Step 7 (props build + freeze-prevention), Step 8
 (Remotion render), and success-gates the per-variant observability
 row appends into the run-level accumulators passed in by the caller.
 
@@ -155,9 +155,9 @@ def _run_variant_loop(
             script, variant_voice_key, variant_tmp_dir, tts_speed,
         )
 
-        # Step 4.5 (Sprint 10 C4): Gemini #2 clip assignment with F3
-        # single-retry. ClipAssignmentError / RuntimeError on second
-        # attempt abort this variant (other variants still render).
+        # Step 4.5: deterministic clip assignment. ClipAssignmentError /
+        # RuntimeError aborts this variant directly — no retry — while
+        # other variants still render.
         from promo.core.errors import ClipAssignmentError
         try:
             script, narration, variant_assignments, variant_retrieval = _step_assign_clips(
@@ -186,7 +186,7 @@ def _run_variant_loop(
             run_retrieval_provenance = variant_retrieval
             logger.info(
                 "%s assigned %d phrases for variant %d",
-                variant_retrieval.get("assigner") or "Gemini #2",
+                variant_retrieval.get("assigner") or "packer",
                 len(variant_assignments), variant_index,
             )
         except ClipAssignmentError as exc:
@@ -265,7 +265,7 @@ def _run_variant_loop(
 
         # Sprint 09a M-004: build the match-quality rows locally, same
         # success-gating rule as the TTS metrics entry above. Sprint 10
-        # C5: rows are now derived from the Gemini #2 assignments list
+        # C5: rows are now derived from the assignments list
         # plus the TTS word_timestamps (phrase text reconstructed by
         # slicing on word-idx), not from ``script["segments"]``.
         variant_match_quality = build_match_quality_entries(
