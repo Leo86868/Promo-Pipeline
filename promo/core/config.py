@@ -122,11 +122,12 @@ def openrouter_http_referer() -> str:
 def render_concurrency() -> int:
     """Number of parallel Chromium tabs Remotion uses per render.
 
-    Default 2 matches the existing tuning (single-machine operator
-    workflow; higher values oversubscribe CPU per the serialize-heavy
-    pipelines convention).
+    Default 6 — the 2026-06-14 P4-health smoke ran at 2 on an 8-core VPS and
+    left ~6 cores idle (render-bound, sequential ~7min/video). 6 uses the box
+    while leaving headroom for the OS + tail workers. Low-core machines can
+    lower it via ``PROMO_RENDER_CONCURRENCY``.
     """
-    return _require_int("PROMO_RENDER_CONCURRENCY", default=2)
+    return _require_int("PROMO_RENDER_CONCURRENCY", default=6)
 
 
 def render_timeout_sec() -> int:
