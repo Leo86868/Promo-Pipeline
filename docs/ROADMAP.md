@@ -18,12 +18,16 @@
 
 ---
 
-## 当前排期(2026-06-11 刷新)
+## 当前排期(2026-06-15 刷新)
+
+**已完成(真实环境体检通过 2026-06-14,P4-health 2×3 smoke 全链绿)**:
+- ✅ **P3 根目录瘦身**:5 份 .md → docs/(改名 ROADMAP)、README 目录树、registry 唯一换模型入口、自举路径+memory 指针同步(C1/C2/C4);
+- ✅ **P3.5 架构圣经重写**:root `architecture.md` 全量重写到 packer 现实 + 数据流图上墙 + 焚草稿;连带 umbrella `core/architecture.md`、`llm/architecture.md`、README 校准;《退役档案》留回滚记录;
+- ✅ **P4 测试健康**:assert-weld → 验产物;私有内脏焊点 → stub 真边界+跑真逻辑+验输出(test_compile_promo / clip_analyzer / wavespeed,变异检验防假绿);协作者隔离 🟡17 + IO seam 🟢5 + crux 40 私有边界包装按裁定**留**;项目级测试约定写进 LEARNING §15。
 
 **主线(按序)**:
-1. **P3 根目录瘦身**:根级 5 份 .md 归 docs/、runtime 目录整合、自举路径同步;
-2. **P4 测试健康专项**:S5 测试解耦遗留 + memory 里的 test-health backlog(monkeypatch 内部符号 → I/O 契约化);
-3. **P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
+1. ▶ **[下一关] P3.5b stage 子目录圣经校准**:`pipeline/` `render/` `narrate/` `script/` 的 `architecture.md` 仍把 Gemini #2 + F3 当**现役**写(P3.5 只覆盖 root+umbrella+llm,漏了这 4 本)。对真相基准 `assign/architecture.md` + 真实代码校准(非删字面、要真校准内容,防半真文档)。同属"文档诚实"收尾,排 P5 之前;
+2. **P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
 
 **等信号灯(有外部输入才动)**:
 - **价格政策 / POI 档案袋**:`hotel_description`/`notable_details` 通道常年为空、价格数字来自模型记忆未核实(LEARNING §14)——等 Leo 拍板(禁提价格 or 喂真实档案),纯 arsenal 一行;
@@ -35,7 +39,7 @@
 **远期**:翻转三(分发数据回流;manifest 钩子已留好,不关门即可)。
 
 **三块常转仪表(每个生产批顺手读)**:
-1. **字数摩擦率**:`81799ce` 范文修复的毕业考——抽词分布应上移、<150 抽次应归零;
+1. **字数摩擦率**:LONG 下限已降 150→145(`38ad7a2`)——P4-health smoke 见 3/6 条 <150 重抽(全恢复,终稿 152-160);下个生产批验 <145 重抽率下降;
 2. **F3 基线**:新配方 F3=0(批次 1 0/6)持续确认;
 3. **素材消耗**:packer provenance 的 `beat_count`/`unique_clip_count`(22-24 段/条)与窗口耗尽率;新增看 `assigned_hook` 是否随规范序号走牌(P2 step 5 的生产验证)。
 
