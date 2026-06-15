@@ -82,7 +82,7 @@ operator types none of them.
 python3 -m promo.cli.run_batch \
   --select-random-pois --poi-count 4 --videos-per-poi 3 \
   --output-dir <run_dir> \
-  --supabase-music-library --production-autopilot
+  --supabase-music-library --production-autopilot --tail-workers 2
   # + the 720-transition flags while that phase is active (see Source Width Policy)
 ```
 
@@ -295,7 +295,8 @@ python3 -m promo.cli.run_batch \
   --videos-per-poi "$videos_per_poi" \
   --output-dir "$output_dir" \
   --supabase-music-library \
-  --production-autopilot
+  --production-autopilot \
+  --tail-workers 2
 ```
 
 For the temporary 720-width source transition, add:
