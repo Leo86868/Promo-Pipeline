@@ -23,11 +23,11 @@
 **已完成(真实环境体检通过 2026-06-14,P4-health 2×3 smoke 全链绿)**:
 - ✅ **P3 根目录瘦身**:5 份 .md → docs/(改名 ROADMAP)、README 目录树、registry 唯一换模型入口、自举路径+memory 指针同步(C1/C2/C4);
 - ✅ **P3.5 架构圣经重写**:root `architecture.md` 全量重写到 packer 现实 + 数据流图上墙 + 焚草稿;连带 umbrella `core/architecture.md`、`llm/architecture.md`、README 校准;《退役档案》留回滚记录;
+- ✅ **P3.5b stage 子目录圣经校准**:`pipeline/render/narrate/script/architecture.md` 把当现役写的 Gemini #2 + F3 改到 packer 现实(退役/回滚语境保留);4 本独立 commit、reviewer 双层过(硬验收 + fresh-agent 逐符号对码,零新错)(2026-06-15,`5f5f9a6..2cbcf30`);
 - ✅ **P4 测试健康**:assert-weld → 验产物;私有内脏焊点 → stub 真边界+跑真逻辑+验输出(test_compile_promo / clip_analyzer / wavespeed,变异检验防假绿);协作者隔离 🟡17 + IO seam 🟢5 + crux 40 私有边界包装按裁定**留**;项目级测试约定写进 LEARNING §15。
 
 **主线(按序)**:
-1. ▶ **[下一关] P3.5b stage 子目录圣经校准**:`pipeline/` `render/` `narrate/` `script/` 的 `architecture.md` 仍把 Gemini #2 + F3 当**现役**写(P3.5 只覆盖 root+umbrella+llm,漏了这 4 本)。对真相基准 `assign/architecture.md` + 真实代码校准(非删字面、要真校准内容,防半真文档)。同属"文档诚实"收尾,排 P5 之前;
-2. **P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
+1. ▶ **[下一关] P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
 
 **等信号灯(有外部输入才动)**:
 - **价格政策 / POI 档案袋**:`hotel_description`/`notable_details` 通道常年为空、价格数字来自模型记忆未核实(LEARNING §14)——等 Leo 拍板(禁提价格 or 喂真实档案),纯 arsenal 一行;

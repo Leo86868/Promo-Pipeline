@@ -48,7 +48,15 @@ Cross-references to the auto-memory system are noted where relevant. Memory file
 - **~28 stale "Gemini #2" human-name strings in promo/core** — *DONE 2026-06-15 (`0498294`)* — P3.5-4's symbol grep missed the human-name token. Reworded all live/retirement references in promo/core (`git grep "Gemini #2" promo/core` = 0) EXCEPT the four stage-subfolder bibles, spun out as **P3.5b** (below).
 - **Word floor 150→145** — *DONE 2026-06-15 (`38ad7a2`) — behavioral* — `long_65s.yaml` `total_words_min` 150→145 + pinned tests; verify redraw-friction drop on the next production batch.
 - **Render concurrency default 2→6** — *DONE 2026-06-15 (`d2034da`)* — `PROMO_RENDER_CONCURRENCY` default raised; 8-core VPS was leaving ~6 idle. Long-term render lever is still the ffmpeg-vs-Remotion swap (ROADMAP §6).
-- **P3.5b — stage-subfolder architecture bibles** — *Likely — doc-honesty, next up before P5* — `promo/core/{pipeline,render,narrate,script}/architecture.md` still describe the Gemini #2 + F3 flow as LIVE (P3.5 only covered root + umbrella + llm). Needs a proper recalibration to packer reality against the ground truth `assign/architecture.md` + real code — NOT a literal string swap (that would leave a half-true doc: drop "Gemini #2" but keep "F3 retry"/`clip_assigner`). Same shape as the P3.5 root rewrite, scoped to the 4 stage docs. In ROADMAP §当前排期.
+- **P3.5b — stage-subfolder architecture bibles** — *DONE 2026-06-15 (`5f5f9a6..2cbcf30`)* — `promo/core/{pipeline,render,narrate,script}/architecture.md` recalibrated to packer reality against `assign/architecture.md` + real code (4 independent commits; reviewer double-pass — hard acceptance + fresh-agent symbol-vs-code audit, 0 new errors). Root/umbrella retirement/rollback context kept by design.
+
+### Stale code-comment residue (deleted-engine, doc-only, batch with the Gemini-#2 sweep)
+
+Fresh-agent symbol audit (P3.5b) caught 2 more stale comments the grep token set missed (behavior-correct, cosmetic — fold into a future comment-cleanup pass):
+
+- **`script_validator.py:8`** — comment "Gate 2: LLM quality scoring" describes a gate that is no longer present in current code (the script_generator vocab already notes Gate 2 is historical).
+- **`variant_loop.py:194`** — log string "Sprint 10 F3 retry" — the F3 retry path is retired; the abort log shouldn't reference it.
+- *(optional doc-completeness)* `pipeline/architecture.md` could add a row listing the three currently-undocumented modules touched by the pipeline: `poi_asset_valid_clips`, `release_handoff`, `run_manifest`.
 
 ### SKILL.md NL-acceptance minor holes (2026-06-15, from darwin blind-operator test)
 
