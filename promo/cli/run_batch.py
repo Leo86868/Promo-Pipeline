@@ -945,6 +945,130 @@ def _run_video_production_autopilot(
     return True
 
 
+def _make_autopilot_tail_runner(
+    *,
+    receipt: dict[str, Any],
+    receipt_path: str,
+    handoff_dir: str,
+    drive_upload_target_factory: Callable[[], DriveUploadTarget],
+    supabase_client_factory: Callable[[], Any],
+    usage_recorder: Callable[[Any, list[dict[str, Any]]], dict[str, int]],
+    usage_verifier: Callable[[Any, list[dict[str, Any]]], dict[str, Any]],
+    release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]],
+    final_upscale_policy: FinalUpscalePolicy,
+    final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None],
+    final_upscale_verifier: Callable[..., dict[str, Any]],
+) -> Callable[[dict[str, Any]], bool]:
+    """Build the per-thread autopilot-tail runner used by the tail pipeline.
+
+    Each worker thread lazily creates its OWN Drive+Supabase client pair:
+    googleapiclient/httplib2 is not thread-safe, so workers never share the
+    preflight-validated pair (which only proves the credentials work). The
+    receipt is persisted after every tail so it stays the recovery source of
+    truth. Shared verbatim by run_batch and resume_batch — the tail payload is
+    identical on both paths, so the concurrency contract lives in ONE place.
+    """
+    tail_locals = threading.local()
+
+    def _tail_clients() -> tuple[DriveUploadTarget, Any]:
+        if not hasattr(tail_locals, "drive_target"):
+            tail_locals.drive_target = drive_upload_target_factory()
+            tail_locals.supabase_client = supabase_client_factory()
+        return tail_locals.drive_target, tail_locals.supabase_client
+
+    def _run_tail(video: dict[str, Any]) -> bool:
+        tail_drive_target, tail_supabase_client = _tail_clients()
+        ok = _run_video_production_autopilot(
+            video=video,
+            receipt=receipt,
+            receipt_path=receipt_path,
+            handoff_dir=handoff_dir,
+            drive_target=tail_drive_target,
+            supabase_client=tail_supabase_client,
+            usage_recorder=usage_recorder,
+            usage_verifier=usage_verifier,
+            release_registrar=release_registrar,
+            final_upscale_policy=final_upscale_policy,
+            final_upscaler_factory=final_upscaler_factory,
+            final_upscale_verifier=final_upscale_verifier,
+        )
+        write_run_receipt(receipt_path, receipt)
+        return ok
+
+    return _run_tail
+
+
+class _AutopilotTailPipeline:
+    """Concurrent autopilot-tail scheduler shared by run_batch and resume_batch.
+
+    Overlaps render(N+1) with the upscale-heavy tail(N) across a thread pool so
+    per-video cadence drops from render+tail toward ~render. Three invariants:
+
+    - ``wait_for_poi_tail`` is the ordering命根: same-POI usage events must never
+      interleave, so a POI's next render blocks until that POI's in-flight tail
+      has settled (and only then is quarantine re-checked).
+    - ``submit`` backpressures at ``tail_workers`` so at most that many tails run
+      concurrently.
+    - ``drain`` blocks on every outstanding tail so a crash/interrupt never
+      abandons a paid-for upscale mid-flight; the receipt stays the recovery
+      source of truth.
+
+    Failed tails accumulate in ``failures``; the caller folds that into its own
+    return-code tally after ``drain``. Tail failures are only consumed at the
+    very end, so deferred accounting is equivalent to the old nonlocal bump.
+    """
+
+    def __init__(
+        self,
+        *,
+        tail_workers: int,
+        run_tail: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        self._tail_workers = tail_workers
+        self._run_tail = run_tail
+        self._executor = ThreadPoolExecutor(
+            max_workers=tail_workers, thread_name_prefix="autopilot-tail",
+        )
+        self._in_flight: dict[Future, str] = {}
+        self.failures = 0
+
+    def _harvest(self, futures: Sequence[Future]) -> None:
+        for future in futures:
+            poi_key = self._in_flight.pop(future)
+            try:
+                ok = future.result()
+            except Exception:
+                logger.exception("Autopilot tail crashed: poi_key=%s", poi_key)
+                ok = False
+            if not ok:
+                self.failures += 1
+
+    def _harvest_done(self) -> None:
+        self._harvest([future for future in list(self._in_flight) if future.done()])
+
+    def wait_for_poi_tail(self, poi_key: str) -> None:
+        # Same-POI usage events must stay ordered: never start rendering a POI's
+        # next video while that POI's tail is still in flight, and only check
+        # quarantine after the tail has settled.
+        pending = [future for future, key in self._in_flight.items() if key == poi_key]
+        if pending:
+            wait(pending)
+        self._harvest_done()
+
+    def submit(self, video: dict[str, Any], poi_key: str) -> None:
+        while len(self._in_flight) >= self._tail_workers:
+            wait(list(self._in_flight), return_when=FIRST_COMPLETED)
+            self._harvest_done()
+        future = self._executor.submit(self._run_tail, video)
+        self._in_flight[future] = poi_key
+
+    def drain(self) -> None:
+        if self._in_flight:
+            logger.info("Draining %d in-flight autopilot tail(s)", len(self._in_flight))
+        self._harvest(list(self._in_flight))
+        self._executor.shutdown(wait=True)
+
+
 def run_batch(
     *,
     batch_path: str,
@@ -1082,75 +1206,28 @@ def run_batch(
     # from render+tail to max(render, tail); a second tail worker drops it
     # to ~render. tail_workers=0 restores the strictly serial behavior.
     pipelined = production_autopilot and tail_workers > 0
-    executor: ThreadPoolExecutor | None = None
-    in_flight: dict[Future, str] = {}
-    tail_locals = threading.local()
-
-    def _tail_clients() -> tuple[DriveUploadTarget, Any]:
-        # One client pair per worker thread: googleapiclient/httplib2 is not
-        # thread-safe, so workers never share the preflight-validated pair
-        # (which only proves the credentials work).
-        if not hasattr(tail_locals, "drive_target"):
-            tail_locals.drive_target = drive_upload_target_factory()
-            tail_locals.supabase_client = supabase_client_factory()
-        return tail_locals.drive_target, tail_locals.supabase_client
-
-    def _run_tail(video: dict[str, Any]) -> bool:
-        tail_drive_target, tail_supabase_client = _tail_clients()
-        ok = _run_video_production_autopilot(
-            video=video,
-            receipt=receipt,
-            receipt_path=resolved_receipt_path,
-            handoff_dir=resolved_handoff_dir,
-            drive_target=tail_drive_target,
-            supabase_client=tail_supabase_client,
-            usage_recorder=usage_recorder,
-            usage_verifier=usage_verifier,
-            release_registrar=release_registrar,
-            final_upscale_policy=resolved_final_upscale_policy,
-            final_upscaler_factory=final_upscaler_factory,
-            final_upscale_verifier=final_upscale_verifier,
-        )
-        write_run_receipt(resolved_receipt_path, receipt)
-        return ok
-
-    def _harvest(futures: Sequence[Future]) -> None:
-        nonlocal failures
-        for future in futures:
-            poi_key = in_flight.pop(future)
-            try:
-                ok = future.result()
-            except Exception:
-                logger.exception("Autopilot tail crashed: poi_key=%s", poi_key)
-                ok = False
-            if not ok:
-                failures += 1
-
-    def _harvest_done() -> None:
-        _harvest([future for future in list(in_flight) if future.done()])
-
-    def _wait_for_poi_tail(poi_key: str) -> None:
-        # Same-POI usage events must stay ordered: never start rendering a
-        # POI's next video while that POI's tail is still in flight, and
-        # only check quarantine after the tail has settled.
-        pending = [f for f, key in in_flight.items() if key == poi_key]
-        if pending:
-            wait(pending)
-        _harvest_done()
-
-    def _wait_for_tail_slot() -> None:
-        while len(in_flight) >= tail_workers:
-            wait(list(in_flight), return_when=FIRST_COMPLETED)
-            _harvest_done()
-
+    tail_pipeline: _AutopilotTailPipeline | None = None
     if pipelined:
-        executor = ThreadPoolExecutor(
-            max_workers=tail_workers, thread_name_prefix="autopilot-tail",
+        tail_pipeline = _AutopilotTailPipeline(
+            tail_workers=tail_workers,
+            run_tail=_make_autopilot_tail_runner(
+                receipt=receipt,
+                receipt_path=resolved_receipt_path,
+                handoff_dir=resolved_handoff_dir,
+                drive_upload_target_factory=drive_upload_target_factory,
+                supabase_client_factory=supabase_client_factory,
+                usage_recorder=usage_recorder,
+                usage_verifier=usage_verifier,
+                release_registrar=release_registrar,
+                final_upscale_policy=resolved_final_upscale_policy,
+                final_upscaler_factory=final_upscaler_factory,
+                final_upscale_verifier=final_upscale_verifier,
+            ),
         )
     try:
         for item, command, video in zip(items, item_commands, videos, strict=True):
-            if pipelined:
-                _wait_for_poi_tail(_item_poi_key(item))
+            if tail_pipeline is not None:
+                tail_pipeline.wait_for_poi_tail(_item_poi_key(item))
             if production_autopilot and _is_poi_quarantined(receipt, item):
                 _mark_skipped_quarantined(video)
                 failures += 1
@@ -1186,11 +1263,8 @@ def run_batch(
                     item.video_index,
                 )
             elif production_autopilot:
-                if pipelined:
-                    assert executor is not None
-                    _wait_for_tail_slot()
-                    future = executor.submit(_run_tail, video)
-                    in_flight[future] = _item_poi_key(item)
+                if tail_pipeline is not None:
+                    tail_pipeline.submit(video, _item_poi_key(item))
                 else:
                     if drive_target is None:
                         drive_target = drive_upload_target_factory()
@@ -1214,13 +1288,11 @@ def run_batch(
                     if not ok:
                         failures += 1
     finally:
-        if executor is not None:
+        if tail_pipeline is not None:
             # Drain so a crash/interrupt never abandons a paid-for upscale
             # mid-flight; the receipt stays the recovery source of truth.
-            if in_flight:
-                logger.info("Draining %d in-flight autopilot tail(s)", len(in_flight))
-            _harvest(list(in_flight))
-            executor.shutdown(wait=True)
+            tail_pipeline.drain()
+            failures += tail_pipeline.failures
 
     return 1 if failures else 0
 
@@ -1274,6 +1346,7 @@ def resume_batch(
     release_registrar: Callable[[Any, list[dict[str, Any]]], dict[str, Any]] = register_release_candidates,
     final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
+    tail_workers: int = 1,
 ) -> int:
     """Resume an interrupted/partially-failed batch from its RUN_RECEIPT.
 
@@ -1288,6 +1361,8 @@ def resume_batch(
     fresh chance per resume; the cleared list is archived under
     ``resume_history``.
     """
+    if tail_workers < 0:
+        raise ValueError("tail_workers must be >= 0 (0 = serial tail)")
     _reject_sticky_replay_env()
     receipt_file = Path(receipt_path)
     try:
@@ -1354,66 +1429,102 @@ def resume_batch(
         if not preflight_ok:
             return 1
 
+    # Resume gets the same tail pipelining as a fresh batch so recovery is no
+    # slower than the original run (2026-06-15): overlap render(N+1) with the
+    # upscale-heavy tail(N). The preflight pair above stays the serial-path
+    # client; pipelined workers each build their own (see the tail runner).
+    pipelined = production_autopilot and tail_workers > 0
+    tail_pipeline: _AutopilotTailPipeline | None = None
+    if pipelined:
+        tail_pipeline = _AutopilotTailPipeline(
+            tail_workers=tail_workers,
+            run_tail=_make_autopilot_tail_runner(
+                receipt=receipt,
+                receipt_path=receipt_path,
+                handoff_dir=resolved_handoff_dir,
+                drive_upload_target_factory=drive_upload_target_factory,
+                supabase_client_factory=supabase_client_factory,
+                usage_recorder=usage_recorder,
+                usage_verifier=usage_verifier,
+                release_registrar=release_registrar,
+                final_upscale_policy=resolved_final_upscale_policy,
+                final_upscaler_factory=final_upscaler_factory,
+                final_upscale_verifier=final_upscale_verifier,
+            ),
+        )
+
     failures = 0
-    for video, action in plan:
-        if action == "skip":
-            continue
-        item = _rebuild_item_from_video(video)
-        if production_autopilot and _is_poi_quarantined(receipt, item):
-            _mark_skipped_quarantined(video)
-            failures += 1
-            write_run_receipt(receipt_path, receipt)
-            continue
-        if action == "render":
-            reset_video_record_for_rerender(video)
-            os.makedirs(item.output_dir, exist_ok=True)
-            logger.info(
-                "Resume re-render: poi=%s video=%d",
-                item.poi.name, item.video_index,
-            )
-            mark_rendering(video)
-            write_run_receipt(receipt_path, receipt)
-            return_code = command_runner(video["render"]["command"])
-            mark_render_result(video, return_code=return_code)
-            write_run_receipt(receipt_path, receipt)
-            if return_code != 0:
-                failures += 1
-                logger.error(
-                    "Resume re-render failed: poi=%s video=%d exit_code=%d",
-                    item.poi.name, item.video_index, return_code,
-                )
+    try:
+        for video, action in plan:
+            if action == "skip":
                 continue
-            if (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
+            item = _rebuild_item_from_video(video)
+            if tail_pipeline is not None:
+                tail_pipeline.wait_for_poi_tail(_item_poi_key(item))
+            if production_autopilot and _is_poi_quarantined(receipt, item):
+                _mark_skipped_quarantined(video)
                 failures += 1
-                logger.error(
-                    "Resume manifest audit failed: poi=%s video=%d",
+                write_run_receipt(receipt_path, receipt)
+                continue
+            if action == "render":
+                reset_video_record_for_rerender(video)
+                os.makedirs(item.output_dir, exist_ok=True)
+                logger.info(
+                    "Resume re-render: poi=%s video=%d",
                     item.poi.name, item.video_index,
                 )
+                mark_rendering(video)
+                write_run_receipt(receipt_path, receipt)
+                return_code = command_runner(video["render"]["command"])
+                mark_render_result(video, return_code=return_code)
+                write_run_receipt(receipt_path, receipt)
+                if return_code != 0:
+                    failures += 1
+                    logger.error(
+                        "Resume re-render failed: poi=%s video=%d exit_code=%d",
+                        item.poi.name, item.video_index, return_code,
+                    )
+                    continue
+                if (video.get("manifest_audit") or {}).get("status") in {"failed", "error"}:
+                    failures += 1
+                    logger.error(
+                        "Resume manifest audit failed: poi=%s video=%d",
+                        item.poi.name, item.video_index,
+                    )
+                    continue
+            else:
+                logger.info(
+                    "Resume tail-only: poi=%s video=%d from state=%s",
+                    item.poi.name, item.video_index, video.get("state"),
+                )
+            if not production_autopilot:
                 continue
-        else:
-            logger.info(
-                "Resume tail-only: poi=%s video=%d from state=%s",
-                item.poi.name, item.video_index, video.get("state"),
-            )
-        if not production_autopilot:
-            continue
-        ok = _run_video_production_autopilot(
-            video=video,
-            receipt=receipt,
-            receipt_path=receipt_path,
-            handoff_dir=resolved_handoff_dir,
-            drive_target=drive_target,
-            supabase_client=supabase_client,
-            usage_recorder=usage_recorder,
-            usage_verifier=usage_verifier,
-            release_registrar=release_registrar,
-            final_upscale_policy=resolved_final_upscale_policy,
-            final_upscaler_factory=final_upscaler_factory,
-            final_upscale_verifier=final_upscale_verifier,
-        )
-        write_run_receipt(receipt_path, receipt)
-        if not ok:
-            failures += 1
+            if tail_pipeline is not None:
+                tail_pipeline.submit(video, _item_poi_key(item))
+            else:
+                ok = _run_video_production_autopilot(
+                    video=video,
+                    receipt=receipt,
+                    receipt_path=receipt_path,
+                    handoff_dir=resolved_handoff_dir,
+                    drive_target=drive_target,
+                    supabase_client=supabase_client,
+                    usage_recorder=usage_recorder,
+                    usage_verifier=usage_verifier,
+                    release_registrar=release_registrar,
+                    final_upscale_policy=resolved_final_upscale_policy,
+                    final_upscaler_factory=final_upscaler_factory,
+                    final_upscale_verifier=final_upscale_verifier,
+                )
+                write_run_receipt(receipt_path, receipt)
+                if not ok:
+                    failures += 1
+    finally:
+        if tail_pipeline is not None:
+            # Drain so a crash/interrupt never abandons a paid-for upscale
+            # mid-flight; the receipt stays the recovery source of truth.
+            tail_pipeline.drain()
+            failures += tail_pipeline.failures
 
     return 1 if failures else 0
 
@@ -1652,11 +1763,13 @@ def main() -> None:
     configure_logging()
     parser = _build_parser()
     args = parser.parse_args()
+    tail_workers = 0 if args.serial_tail else args.tail_workers
     try:
         if args.resume:
             sys.exit(resume_batch(
                 receipt_path=args.resume,
                 handoff_dir=args.handoff_dir,
+                tail_workers=tail_workers,
             ))
         if not args.output_dir:
             parser.error("--output-dir is required (except with --resume)")
@@ -1678,7 +1791,6 @@ def main() -> None:
                 "enabled": provider != "disabled",
                 "provider": provider,
             }
-        tail_workers = 0 if args.serial_tail else args.tail_workers
         if args.select_random_pois:
             if args.poi_count is None:
                 parser.error("--poi-count is required with --select-random-pois")
