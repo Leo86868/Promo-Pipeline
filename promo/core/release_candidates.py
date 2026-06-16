@@ -196,12 +196,23 @@ def _insert_release_candidates_per_row(
             if not _is_unique_violation(exc):
                 raise
             skipped_count += 1
+            # Honest log (do not assert WHICH index fired): a 23505 here is most
+            # likely the content-dedup UNIQUE(poi_id, recipe_fingerprint), but the
+            # source_video_key index — though pre-filtered by register_*'s preflight
+            # — is not impossible under a race. We deliberately do NOT narrow to a
+            # specific index by name yet: that narrowing depends on the real
+            # postgrest error shape, which is unverified (both PGC's .code check and
+            # music_remix's text scan are fake-double-tested). Distinguish precisely
+            # only after the P1g live-collision capture; until then, log the raw
+            # error so the actual constraint is visible.
             logger.warning(
-                "release_candidates: skipping content-dedup collision (23505): "
-                "poi_id=%s source_video_key=%s — already registered under "
-                "UNIQUE(poi_id, recipe_fingerprint)",
+                "release_candidates: skipping unique-violation (23505): "
+                "poi_id=%s source_video_key=%s — likely content-dedup "
+                "UNIQUE(poi_id, recipe_fingerprint); exact constraint not yet "
+                "distinguished from the source_video_key index (P1g). error=%s",
                 record.get("poi_id"),
                 record.get("source_video_key"),
+                exc,
             )
             continue
         inserted_count += _inserted_count_from_response(response, 1)
