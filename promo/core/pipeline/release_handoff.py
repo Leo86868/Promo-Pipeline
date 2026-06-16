@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from promo.core.recipe_fingerprint import recipe_input_from_render_manifest
+
 
 class ReleaseHandoffError(ValueError):
     """Raised when approved outputs cannot form a safe release handoff."""
@@ -130,6 +132,15 @@ def build_release_candidate_record(
     manifest_id = _required_text(manifest.get("manifest_id"), "manifest_id")
     run_id = _required_text(manifest.get("run_id"), "run_id")
 
+    # Cross-paradigm content dedup (H1): the ordered source_content_hash list
+    # the DB BEFORE INSERT trigger hashes into recipe_fingerprint. We supply
+    # recipe_input only — never recipe_fingerprint (the trigger owns that).
+    # Fail-loud: a missing/empty content_hash raises ValueError; we let it
+    # propagate so a broken manifest never silently yields a record.
+    recipe_input = recipe_input_from_render_manifest(
+        manifest, variant_index=variant_index
+    )
+
     record = {
         "source_pipeline": (
             _optional_text(item.get("source_pipeline")) or default_source_pipeline
@@ -145,6 +156,7 @@ def build_release_candidate_record(
             "approved_at",
         ),
         "music_label": _music_label(output),
+        "recipe_input": recipe_input,
     }
 
     source_batch_id = (
