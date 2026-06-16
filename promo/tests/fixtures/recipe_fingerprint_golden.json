@@ -1,0 +1,42 @@
+[
+  {
+    "name": "single_clip",
+    "recipe_input": [
+      "sha256:aaaa"
+    ],
+    "expected": "rfp2:6032ab112489c857ff2a4b58cd21bdb5df3112bedcb08855d83456178e8593ba"
+  },
+  {
+    "name": "two_clips_ordered",
+    "recipe_input": [
+      "sha256:aaaa",
+      "sha256:bbbb"
+    ],
+    "expected": "rfp2:90fe09c518b2ec3b33ce026a17b859e482d3516782e61b5e4f66844269f2c48f"
+  },
+  {
+    "name": "reordered_is_different",
+    "recipe_input": [
+      "sha256:bbbb",
+      "sha256:aaaa"
+    ],
+    "expected": "rfp2:2a2dbc2deed5eda20457b590190ca8f2cfc9fb2da9124114f4f8b5e509f2be3d"
+  },
+  {
+    "name": "repeated_clip",
+    "recipe_input": [
+      "sha256:aaaa",
+      "sha256:aaaa"
+    ],
+    "expected": "rfp2:91052af14ef99ef0a723a9df49aabc5a6f5d6f5739918629bd6b4e78345624c2"
+  },
+  {
+    "name": "realistic_64hex",
+    "recipe_input": [
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "expected": "rfp2:0f02c0ba8147df384a9c11ffd721f66aa6dd25b1d107dd5a94067d7cbaec1ff1"
+  }
+]

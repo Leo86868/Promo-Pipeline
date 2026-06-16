@@ -115,11 +115,97 @@ def test_insert_release_candidates_uses_release_candidates_table():
 
     result = insert_release_candidates(client, [record])
 
-    assert result == {"inserted_count": 1}
+    assert result == {"inserted_count": 1, "skipped_count": 0}
     assert client.calls == [
         ("table", RELEASE_CANDIDATES_TABLE),
         ("insert", RELEASE_CANDIDATES_TABLE, [record]),
     ]
+
+
+class _ApiError(Exception):
+    """Mimics postgrest.exceptions.APIError: carries a SQLSTATE .code."""
+
+    def __init__(self, code, message="error"):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class _CollidingTable:
+    """Table double that raises a per-row error for chosen source_video_keys."""
+
+    def __init__(self, client, table_name):
+        self.client = client
+        self.table_name = table_name
+
+    def insert(self, records):
+        self._records = records if isinstance(records, list) else [records]
+        return self
+
+    def execute(self):
+        for record in self._records:
+            key = record.get("source_video_key")
+            err = self.client.errors_by_key.get(key)
+            if err is not None:
+                self.client.attempts.append(("raise", key, err.code))
+                raise err
+            self.client.attempts.append(("insert", key))
+            self.client.rows.append(record)
+        return SimpleNamespace(data=list(self._records))
+
+
+class _CollidingClient:
+    def __init__(self, errors_by_key):
+        self.errors_by_key = errors_by_key
+        self.rows = []
+        self.attempts = []
+
+    def table(self, name):
+        return _CollidingTable(self, name)
+
+
+def test_insert_release_candidates_skips_23505_per_row_not_whole_batch(caplog):
+    import logging
+
+    from promo.core.release_candidates import insert_release_candidates
+
+    row_a = _record(source_video_key="manifest:m_a:variant:1")
+    row_b = _record(source_video_key="manifest:m_b:variant:1")  # collides
+    row_c = _record(source_video_key="manifest:m_c:variant:1")
+    client = _CollidingClient({
+        "manifest:m_b:variant:1": _ApiError("23505", "duplicate key"),
+    })
+
+    with caplog.at_level(logging.WARNING):
+        result = insert_release_candidates(client, [row_a, row_b, row_c])
+
+    # The colliding row is skipped; the OTHER rows still land (per-row, not
+    # whole-batch dropped).
+    assert result == {"inserted_count": 2, "skipped_count": 1}
+    landed_keys = {row["source_video_key"] for row in client.rows}
+    assert landed_keys == {"manifest:m_a:variant:1", "manifest:m_c:variant:1"}
+    # The batch attempt rolled back (it raised), then per-row retry ran.
+    assert "manifest:m_b:variant:1" in caplog.text
+    assert "23505" in caplog.text
+
+
+def test_insert_release_candidates_reraises_non_23505(caplog):
+    import logging
+
+    from promo.core.release_candidates import insert_release_candidates
+
+    row_a = _record(source_video_key="manifest:m_a:variant:1")
+    row_b = _record(source_video_key="manifest:m_b:variant:1")
+    client = _CollidingClient({
+        "manifest:m_b:variant:1": _ApiError("23502", "not-null violation"),
+    })
+
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(_ApiError) as exc_info:
+            insert_release_candidates(client, [row_a, row_b])
+
+    # A non-23505 error is NOT swallowed — it propagates.
+    assert exc_info.value.code == "23502"
 
 
 def test_verify_release_candidates_confirms_matching_rows():

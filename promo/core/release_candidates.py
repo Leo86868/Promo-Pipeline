@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
+
+#: Postgres unique-violation SQLSTATE. Raised when an insert collides with the
+#: UNIQUE (poi_id, recipe_fingerprint) index — i.e. the same content recipe was
+#: already registered (cross-paradigm content dedup, H1).
+UNIQUE_VIOLATION_CODE = "23505"
 
 RELEASE_CANDIDATES_TABLE = "release_candidates"
 VERIFY_SELECT_COLUMNS = (
@@ -120,21 +128,95 @@ def summarize_release_candidates(records: list[dict[str, Any]]) -> dict[str, int
     }
 
 
+def _is_unique_violation(exc: BaseException) -> bool:
+    """True iff ``exc`` is a Postgres 23505 unique-violation.
+
+    Inspects the supabase/postgrest ``APIError`` shape (a ``.code`` attribute
+    carrying the SQLSTATE) without importing postgrest, so this stays usable
+    against test doubles. Only the 23505 code is matched — every other error is
+    treated as fatal by the caller (never swallowed).
+    """
+    return getattr(exc, "code", None) == UNIQUE_VIOLATION_CODE
+
+
+def _inserted_count_from_response(response: Any, fallback_count: int) -> int:
+    data = _response_data(response)
+    if data is None:
+        return fallback_count
+    if isinstance(data, list):
+        return len(data)
+    raise ReleaseCandidateRegistrationError(
+        "release_candidates insert returned an unexpected shape"
+    )
+
+
 def insert_release_candidates(
     client: Any,
     records: list[dict[str, Any]],
 ) -> dict[str, int]:
-    response = client.table(RELEASE_CANDIDATES_TABLE).insert(records).execute()
-    data = _response_data(response)
-    if data is None:
-        inserted_count = len(records)
-    elif isinstance(data, list):
-        inserted_count = len(data)
-    else:
-        raise ReleaseCandidateRegistrationError(
-            "release_candidates insert returned an unexpected shape"
-        )
-    return {"inserted_count": inserted_count}
+    """Insert release-candidate rows, tolerating per-row content-dedup collisions.
+
+    A batch insert is atomic, so a single ``(poi_id, recipe_fingerprint)``
+    unique-violation (Postgres 23505) would otherwise abort the WHOLE batch.
+    Here we try the batch first; on a 23505 we fall back to inserting row by
+    row, SKIPPING (and logging) only the rows that collide on the content index
+    and keeping every other row. Any non-23505 error still raises — collisions
+    are tolerated, real failures are not.
+    """
+    if not records:
+        return {"inserted_count": 0, "skipped_count": 0}
+
+    try:
+        response = client.table(RELEASE_CANDIDATES_TABLE).insert(records).execute()
+    except Exception as exc:  # noqa: BLE001 - re-raised below unless 23505
+        if not _is_unique_violation(exc):
+            raise
+        # At least one row in the batch collided on content dedup; the atomic
+        # batch rolled back. Retry per-row so the non-colliding rows still land.
+        return _insert_release_candidates_per_row(client, records)
+
+    return {
+        "inserted_count": _inserted_count_from_response(response, len(records)),
+        "skipped_count": 0,
+    }
+
+
+def _insert_release_candidates_per_row(
+    client: Any,
+    records: list[dict[str, Any]],
+) -> dict[str, int]:
+    inserted_count = 0
+    skipped_count = 0
+    for record in records:
+        try:
+            response = (
+                client.table(RELEASE_CANDIDATES_TABLE).insert(record).execute()
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised below unless 23505
+            if not _is_unique_violation(exc):
+                raise
+            skipped_count += 1
+            # Honest log (do not assert WHICH index fired): a 23505 here is most
+            # likely the content-dedup UNIQUE(poi_id, recipe_fingerprint), but the
+            # source_video_key index — though pre-filtered by register_*'s preflight
+            # — is not impossible under a race. We deliberately do NOT narrow to a
+            # specific index by name yet: that narrowing depends on the real
+            # postgrest error shape, which is unverified (both PGC's .code check and
+            # music_remix's text scan are fake-double-tested). Distinguish precisely
+            # only after the P1g live-collision capture; until then, log the raw
+            # error so the actual constraint is visible.
+            logger.warning(
+                "release_candidates: skipping unique-violation (23505): "
+                "poi_id=%s source_video_key=%s — likely content-dedup "
+                "UNIQUE(poi_id, recipe_fingerprint); exact constraint not yet "
+                "distinguished from the source_video_key index (P1g). error=%s",
+                record.get("poi_id"),
+                record.get("source_video_key"),
+                exc,
+            )
+            continue
+        inserted_count += _inserted_count_from_response(response, 1)
+    return {"inserted_count": inserted_count, "skipped_count": skipped_count}
 
 
 def register_release_candidates(
@@ -153,15 +235,16 @@ def register_release_candidates(
         if record["source_video_key"] in missing_keys
     ]
     inserted_count = 0
+    skipped_count = 0
     if records_to_insert:
-        inserted_count = insert_release_candidates(
-            client,
-            records_to_insert,
-        )["inserted_count"]
+        insert_result = insert_release_candidates(client, records_to_insert)
+        inserted_count = insert_result["inserted_count"]
+        skipped_count = insert_result.get("skipped_count", 0)
 
     verification = verify_release_candidates(client, records)
     return {
         "inserted_count": inserted_count,
+        "skipped_count": skipped_count,
         "already_registered_count": len(records) - len(records_to_insert),
         "verification": verification,
     }
