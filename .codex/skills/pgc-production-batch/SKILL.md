@@ -68,6 +68,13 @@ operator-supplied numbers.
   release_candidate stays distributable in `release_unassigned_candidates`.
   See "Reverts And Smoke Cleanup" for the dry-run/checkpoint/verify contract.
 
+  **Coverage caveat (dead-key blind spot):** `--final-upscale-provider
+  disabled` skips the WaveSpeed call entirely, so it never authenticates the
+  WaveSpeed key. A healthcheck therefore passes GREEN even with a dead or
+  rotated key — only a real-upscale batch would surface it (the 2026-06-15
+  stranded-key incident). A disabled healthcheck proves Drive + usage +
+  release, NOT that the upscale key still works.
+
 ## Natural-language → command
 
 The skill translates Leo's request into flags; the operator supplies NO numeric

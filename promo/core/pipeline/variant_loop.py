@@ -191,7 +191,7 @@ def _run_variant_loop(
             )
         except ClipAssignmentError as exc:
             logger.error(
-                "Variant %d aborted after Sprint 10 F3 retry: %s",
+                "Variant %d aborted on clip-assignment failure: %s",
                 variant_index, exc,
             )
             pool_exhaustion_hard_fails += 1
