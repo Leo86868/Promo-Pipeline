@@ -288,6 +288,9 @@ def prepare_selected_batch(
         "status": payload["status"],
         "shortage_count": payload["shortage_count"],
         "cooldown_days": int(cooldown_days),
+        "fresh_eligible": payload.get("fresh_eligible"),
+        "cooled_eligible": payload.get("cooled_eligible"),
+        "cooled_fallback_used": payload.get("cooled_fallback_used"),
     }
     if batch_spec.get("source_resolution_policy"):
         batch_spec["selection"]["source_resolution_policy"] = batch_spec[

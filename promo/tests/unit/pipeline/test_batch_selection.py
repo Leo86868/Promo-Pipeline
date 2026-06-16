@@ -37,7 +37,7 @@ def _rows_for_poi(poi_id, *, count, name, **overrides):
     ]
 
 
-def test_build_selection_payload_applies_threshold_cooldown_and_equal_random():
+def test_build_selection_payload_applies_threshold_and_equal_random():
     from promo.core.batch_selection import build_selection_payload
 
     rows = (
@@ -58,16 +58,163 @@ def test_build_selection_payload_applies_threshold_cooldown_and_equal_random():
 
     assert payload["status"] == "ok"
     assert payload["request"]["filters"]["required_active_assets"] == 70
-    assert {poi["poi_id"] for poi in payload["eligible_pois"]} == {"poi_aaa", "poi_ddd"}
+    # Soft cooldown: poi_ccc is cooled but passes the asset floor, so it is
+    # eligible (flagged), no longer skipped. Three POIs clear the floor; the
+    # fresh pair (aaa, ddd) is preferred over the cooled one.
+    assert {poi["poi_id"] for poi in payload["eligible_pois"]} == {
+        "poi_aaa",
+        "poi_ccc",
+        "poi_ddd",
+    }
     assert {poi["poi_id"] for poi in payload["selected_pois"]} == {"poi_aaa", "poi_ddd"}
     skipped = {poi["poi_id"]: poi["reason"] for poi in payload["skipped_pois"]}
     assert skipped == {
         "poi_bbb": "insufficient_active_assets",
-        "poi_ccc": "cooldown",
     }
+    cooldown_flags = {poi["poi_id"]: poi["cooldown"] for poi in payload["eligible_pois"]}
+    assert cooldown_flags == {
+        "poi_aaa": False,
+        "poi_ccc": True,
+        "poi_ddd": False,
+    }
+    assert payload["fresh_eligible"] == 2
+    assert payload["cooled_eligible"] == 1
+    assert payload["cooled_fallback_used"] == 0
     assert [poi["poi_id"] for poi in payload["batch_spec"]["pois"]] == [
         poi["poi_id"] for poi in payload["selected_pois"]
     ]
+
+
+def test_cooled_poi_passing_asset_floor_is_eligible_flagged_not_skipped():
+    from promo.core.batch_selection import summarize_pois
+
+    rows = (
+        _rows_for_poi("poi_aaa", count=80, name="A Hotel")
+        + _rows_for_poi("poi_ccc", count=80, name="C Hotel")
+    )
+
+    summary = summarize_pois(
+        rows,
+        min_active_assets=70,
+        cooldown_poi_ids={"poi_ccc"},
+    )
+
+    eligible = {poi["poi_id"]: poi for poi in summary["eligible_pois"]}
+    assert set(eligible) == {"poi_aaa", "poi_ccc"}
+    assert eligible["poi_ccc"]["cooldown"] is True
+    assert eligible["poi_aaa"]["cooldown"] is False
+    assert "poi_ccc" not in {poi["poi_id"] for poi in summary["skipped_pois"]}
+
+
+def test_cooled_poi_failing_asset_floor_keeps_asset_reason_not_cooldown():
+    from promo.core.batch_selection import summarize_pois
+
+    rows = (
+        _rows_for_poi("poi_aaa", count=80, name="A Hotel")
+        + _rows_for_poi("poi_ccc", count=10, name="C Hotel")
+    )
+
+    summary = summarize_pois(
+        rows,
+        min_active_assets=70,
+        cooldown_poi_ids={"poi_ccc"},
+    )
+
+    assert {poi["poi_id"] for poi in summary["eligible_pois"]} == {"poi_aaa"}
+    skipped = {poi["poi_id"]: poi["reason"] for poi in summary["skipped_pois"]}
+    # Cooldown does NOT rescue an asset-poor POI, and it does NOT relabel it:
+    # the asset reason wins, "cooldown" is never used as a skip reason.
+    assert skipped == {"poi_ccc": "insufficient_active_assets"}
+    assert all(poi["reason"] != "cooldown" for poi in summary["skipped_pois"])
+
+
+def test_select_random_pois_prefers_fresh_over_cooled():
+    from promo.core.batch_selection import select_random_pois
+
+    eligible = [
+        {"poi_id": "poi_f1", "poi_name": "F1", "cooldown": False},
+        {"poi_id": "poi_f2", "poi_name": "F2", "cooldown": False},
+        {"poi_id": "poi_c1", "poi_name": "C1", "cooldown": True},
+        {"poi_id": "poi_c2", "poi_name": "C2", "cooldown": True},
+    ]
+
+    selected = select_random_pois(eligible, poi_count=2, seed=8)
+
+    selected_ids = {poi["poi_id"] for poi in selected}
+    # Two fresh POIs cover the request, so no cooled POI may be chosen.
+    assert selected_ids == {"poi_f1", "poi_f2"}
+    assert all(poi["selected_as"] == "fresh" for poi in selected)
+
+
+def test_select_random_pois_falls_back_to_cooled_with_warning(caplog):
+    import logging
+
+    from promo.core.batch_selection import build_selection_payload
+
+    rows = (
+        _rows_for_poi("poi_aaa", count=80, name="A Hotel")
+        + _rows_for_poi("poi_bbb", count=80, name="B Hotel")
+        + _rows_for_poi("poi_ccc", count=80, name="C Hotel")
+    )
+
+    with caplog.at_level(logging.WARNING, logger="promo.core.batch_selection"):
+        payload = build_selection_payload(
+            rows=rows,
+            poi_count=2,
+            videos_per_poi=3,
+            cooldown_poi_ids={"poi_bbb", "poi_ccc"},
+            cooldown_days=3,
+            seed=8,
+        )
+
+    selected = {poi["poi_id"]: poi for poi in payload["selected_pois"]}
+    # Only poi_aaa is fresh; the second slot must be filled from the cooled pool.
+    assert "poi_aaa" in selected
+    assert selected["poi_aaa"]["selected_as"] == "fresh"
+    fallback = [poi for poi in selected.values() if poi["selected_as"] == "cooled_fallback"]
+    assert len(fallback) == 1
+    assert fallback[0]["poi_id"] in {"poi_bbb", "poi_ccc"}
+    assert payload["fresh_eligible"] == 1
+    assert payload["cooled_eligible"] == 2
+    assert payload["cooled_fallback_used"] == 1
+    assert any(
+        "recently-used (cooled) POIs as fallback" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_select_random_pois_is_deterministic_with_fixed_seed():
+    from promo.core.batch_selection import select_random_pois
+
+    eligible = [
+        {"poi_id": "poi_f1", "poi_name": "F1", "cooldown": False},
+        {"poi_id": "poi_f2", "poi_name": "F2", "cooldown": False},
+        {"poi_id": "poi_f3", "poi_name": "F3", "cooldown": False},
+        {"poi_id": "poi_c1", "poi_name": "C1", "cooldown": True},
+        {"poi_id": "poi_c2", "poi_name": "C2", "cooldown": True},
+    ]
+
+    first = select_random_pois(list(eligible), poi_count=4, seed=42)
+    second = select_random_pois(list(eligible), poi_count=4, seed=42)
+
+    assert [poi["poi_id"] for poi in first] == [poi["poi_id"] for poi in second]
+
+
+def test_select_random_pois_not_enough_only_when_fresh_plus_cooled_short():
+    from promo.core.batch_selection import BatchSelectionError, select_random_pois
+
+    eligible = [
+        {"poi_id": "poi_f1", "poi_name": "F1", "cooldown": False},
+        {"poi_id": "poi_c1", "poi_name": "C1", "cooldown": True},
+    ]
+
+    # fresh(1) + cooled(1) == 2 satisfies a request of 2 (no error).
+    selected = select_random_pois(list(eligible), poi_count=2, seed=1)
+    assert len(selected) == 2
+
+    # Requesting 3 exceeds fresh+cooled and is not allowed -> error.
+    with pytest.raises(BatchSelectionError, match="not enough eligible POIs"):
+        select_random_pois(list(eligible), poi_count=3, seed=1)
 
 
 def test_build_selection_payload_requires_candidate_ready_assets_when_provided():
