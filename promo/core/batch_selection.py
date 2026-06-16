@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -27,6 +28,8 @@ from promo.core.source_resolution_policy import (
     source_resolution_summary,
 )
 
+
+logger = logging.getLogger(__name__)
 
 USAGE_EVENTS_TABLE = "poi_asset_usage_events"
 DEFAULT_PGC_TARGET_DURATION_SEC = 65.0
@@ -266,9 +269,13 @@ def summarize_pois(
         if candidate_ready_asset_count is not None:
             record["candidate_ready_asset_count"] = candidate_ready_asset_count
             record["required_candidate_ready_assets"] = int(min_active_assets)
-        if poi_id in cooldown_poi_ids:
-            skipped.append({**record, "reason": "cooldown"})
-        elif active_asset_count < min_active_assets:
+        # Soft cooldown: the cooldown ledger is cross-paradigm (music_remix
+        # writes to it too) so a hard skip starved PGC's eligible pool. A
+        # cooled POI is no longer excluded — it stays eligible but flagged so
+        # selection prefers fresh POIs and only falls back to cooled ones when
+        # the fresh pool is exhausted. Asset-floor checks below still hard-skip
+        # (cooldown does NOT rescue an asset-poor POI).
+        if active_asset_count < min_active_assets:
             skipped.append({**record, "reason": "insufficient_active_assets"})
         elif len(effective_asset_ids) < min_active_assets:
             skipped.append({**record, "reason": "insufficient_source_resolution_assets"})
@@ -283,6 +290,7 @@ def summarize_pois(
             )
             skipped.append({**record, "reason": reason})
         else:
+            record["cooldown"] = poi_id in cooldown_poi_ids
             eligible.append(record)
 
     sort_key = lambda item: (str(item["poi_name"]), str(item["poi_id"]))
@@ -299,15 +307,41 @@ def select_random_pois(
     seed: int | None = None,
     allow_shortage: bool = False,
 ) -> list[dict[str, Any]]:
+    """Select up to ``poi_count`` POIs, preferring fresh over cooled.
+
+    Soft cooldown: ``eligible_pois`` may carry a ``cooldown`` flag (set by
+    ``summarize_pois``). Selection samples from the fresh pool first; only when
+    fresh is exhausted does it fall back to the cooled pool. Fresh is always
+    preferred. Each returned record is tagged ``selected_as`` ("fresh" or
+    "cooled_fallback") so callers can see which cooled POIs were used as
+    fallback. Determinism: the same seed + same inputs yield the same picks
+    (fresh and cooled are sampled with independent, seed-derived RNGs).
+    """
     if poi_count <= 0:
         raise BatchSelectionError("poi_count must be positive")
-    if len(eligible_pois) < poi_count and not allow_shortage:
+    fresh = [poi for poi in eligible_pois if not poi.get("cooldown")]
+    cooled = [poi for poi in eligible_pois if poi.get("cooldown")]
+    available = len(fresh) + len(cooled)
+    if available < poi_count and not allow_shortage:
         raise BatchSelectionError(
-            f"not enough eligible POIs: requested {poi_count}, available {len(eligible_pois)}"
+            f"not enough eligible POIs: requested {poi_count}, available {available}"
         )
-    count = min(poi_count, len(eligible_pois))
-    rng = random.Random(seed)
-    return rng.sample(list(eligible_pois), count)
+
+    fresh_count = min(poi_count, len(fresh))
+    selected = [
+        {**poi, "selected_as": "fresh"}
+        for poi in random.Random(seed).sample(list(fresh), fresh_count)
+    ]
+    remainder = min(poi_count - fresh_count, len(cooled))
+    if remainder > 0:
+        # Independent, seed-derived RNG keeps the cooled draw deterministic
+        # without coupling it to how many fresh POIs happened to exist.
+        cooled_seed = None if seed is None else seed + 1
+        selected.extend(
+            {**poi, "selected_as": "cooled_fallback"}
+            for poi in random.Random(cooled_seed).sample(list(cooled), remainder)
+        )
+    return selected
 
 
 def build_batch_spec(
@@ -375,6 +409,24 @@ def build_selection_payload(
         seed=seed,
         allow_shortage=allow_shortage,
     )
+    fresh_eligible = sum(
+        1 for poi in summary["eligible_pois"] if not poi.get("cooldown")
+    )
+    cooled_eligible = sum(
+        1 for poi in summary["eligible_pois"] if poi.get("cooldown")
+    )
+    cooled_fallback_used = sum(
+        1 for poi in selected if poi.get("selected_as") == "cooled_fallback"
+    )
+    if cooled_fallback_used:
+        # Fail-loud-ish observability: never silently use recently-used POIs.
+        logger.warning(
+            "selection used %d recently-used (cooled) POIs as fallback — "
+            "fresh pool had only %d for requested %d",
+            cooled_fallback_used,
+            fresh_eligible,
+            poi_count,
+        )
     shortage = max(poi_count - len(summary["eligible_pois"]), 0)
     return {
         "schema_version": 1,
@@ -404,6 +456,9 @@ def build_selection_payload(
         "eligible_pois": summary["eligible_pois"],
         "skipped_pois": summary["skipped_pois"],
         "shortage_count": shortage,
+        "fresh_eligible": fresh_eligible,
+        "cooled_eligible": cooled_eligible,
+        "cooled_fallback_used": cooled_fallback_used,
         "batch_spec": build_batch_spec(
             selected,
             videos_per_poi=videos_per_poi,
