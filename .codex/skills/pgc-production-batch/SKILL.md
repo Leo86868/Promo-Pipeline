@@ -82,7 +82,7 @@ operator types none of them.
 python3 -m promo.cli.run_batch \
   --select-random-pois --poi-count 4 --videos-per-poi 3 \
   --output-dir <run_dir> \
-  --supabase-music-library --production-autopilot --tail-workers 2
+  --supabase-music-library --production-autopilot --tail-workers 4
   # + the 720-transition flags while that phase is active (see Source Width Policy)
 ```
 
@@ -296,7 +296,7 @@ python3 -m promo.cli.run_batch \
   --output-dir "$output_dir" \
   --supabase-music-library \
   --production-autopilot \
-  --tail-workers 2
+  --tail-workers 4
 ```
 
 For the temporary 720-width source transition, add:
@@ -332,9 +332,12 @@ writes from old render-only commands.
 Tail pipelining (2026-06-10): by default the autopilot tail of video N
 (upscale/Drive/usage/release) runs on a worker thread while video N+1 renders;
 batch items are POI-round-robin ordered because same-POI videos must never
-overlap (usage-event ordering). `--tail-workers 2` adds a second concurrent
-tail (WaveSpeed allows 100 concurrent predictions; 2 is enough because
-upscale ~700s < 2× render ~450s). `--serial-tail` (or `--tail-workers 0`) is
+overlap (usage-event ordering). `--tail-workers 4` runs up to 4 concurrent
+tails (WaveSpeed allows 100 concurrent predictions). 4 (not 2) because upscale
+is the long pole and varies wildly — most ~700s but some "monster" upscales run
+45–50 min; with only 2 lanes one monster starves the pipeline and renders stall
+waiting for a tail slot. More lanes are cheap (tails are network-bound on
+WaveSpeed polling, not local CPU). `--serial-tail` (or `--tail-workers 0`) is
 the rollback switch: strictly serial render→tail per video. Per-video
 voice/music/seed assignments are order-independent (keyed to the canonical
 POI-major ordinal, byte-identical to the pre-pipelining mapping for the same
