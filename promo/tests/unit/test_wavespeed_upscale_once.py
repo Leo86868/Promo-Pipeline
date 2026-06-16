@@ -438,6 +438,8 @@ class TestPreflightMode:
         monkeypatch.setenv("WAVESPEED_API_KEY", "ws-key")
         monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        # Live auth probe: 400 = reached body validation = auth accepted.
+        monkeypatch.setattr(ws.requests, "post", lambda *a, **k: _Resp(status_code=400))
         exit_code = ws.main([
             "--input", "a.mp4", "--output", "b.mp4",
             "--source-host", "supabase", "--preflight",
@@ -464,3 +466,54 @@ class TestPreflightMode:
         assert result["preflight"] == "failed"
         assert any("WAVESPEED_API_KEY" in e for e in result["errors"])
         assert any("SUPABASE_URL" in e for e in result["errors"])
+
+    def test_preflight_fails_on_live_auth_401(self, monkeypatch, capsys):
+        """Key present but rejected by WaveSpeed (rotated/revoked) — the live
+        auth probe must FAIL preflight, not pass on key presence alone (the
+        2026-06-15 stranded-key incident)."""
+        monkeypatch.setenv("WAVESPEED_API_KEY", "rotated-bad-key")
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setattr(ws.requests, "post", lambda *a, **k: _Resp(status_code=401))
+        exit_code = ws.main([
+            "--input", "a.mp4", "--output", "b.mp4",
+            "--source-host", "supabase", "--preflight",
+        ])
+        assert exit_code == 1
+        result = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert result["preflight"] == "failed"
+        assert any("rejected" in e and "401" in e for e in result["errors"])
+
+    def test_preflight_passes_on_live_auth_400(self, monkeypatch, capsys):
+        """A 400 (body-validation error) means the key authenticated — the
+        empty-body probe reached body validation, so auth is good."""
+        monkeypatch.setenv("WAVESPEED_API_KEY", "good-key")
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+        monkeypatch.setattr(ws.requests, "post", lambda *a, **k: _Resp(status_code=400))
+        exit_code = ws.main([
+            "--input", "a.mp4", "--output", "b.mp4",
+            "--source-host", "supabase", "--preflight",
+        ])
+        assert exit_code == 0
+        result = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert result["preflight"] == "passed"
+        assert result["errors"] == []
+
+    def test_preflight_fails_loud_on_probe_network_error(self, monkeypatch, capsys):
+        """A network/timeout on the probe must fail loud, not silently pass."""
+        monkeypatch.setenv("WAVESPEED_API_KEY", "good-key")
+        monkeypatch.setenv("SUPABASE_URL", "https://proj.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "svc-key")
+
+        def _boom(*a, **k):
+            raise ws.requests.ConnectionError("network down")
+        monkeypatch.setattr(ws.requests, "post", _boom)
+        exit_code = ws.main([
+            "--input", "a.mp4", "--output", "b.mp4",
+            "--source-host", "supabase", "--preflight",
+        ])
+        assert exit_code == 1
+        result = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert result["preflight"] == "failed"
+        assert any("live-auth probe failed" in e for e in result["errors"])
