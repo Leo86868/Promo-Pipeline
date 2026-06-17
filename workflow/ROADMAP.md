@@ -1,76 +1,76 @@
 # PGC Pipeline — Forward Roadmap
 
 **Protocol: see the `roadmap-discipline` skill** (3-layer division · single-writer · done-migrate-out · event-triggered update · milestones-not-PRs).
-This file = the **position layer** (coarse, stable). PR-level detail → `gh pr list`; ground truth → the shared Supabase (`release_candidates` / `poi_asset_usage_events`) + VPS worktree deploy state; **deep detail / design contracts / full execution log → `docs/ROADMAP.md`** (the heavy doc); history trail → `workflow/daily-log.md`.
-**Last verified:** 2026-06-16 (scribe checked vs Supabase `release_candidates` + main HEAD).
+Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`; history → `workflow/daily-log.md`; **deep detail / design contracts / full execution log → `docs/ROADMAP.md`** (the heavy doc — this points to it).
+**Visual rule:** arrows + stable → Mermaid; status / path (churns daily) → text; real grid → table.
+**Last verified:** 2026-06-17 (scribe checked vs Supabase `release_candidates` + main HEAD `93f652e`).
+
+> Mermaid color note: status is in the node LABEL (✅/▶/⚰️) + a STROKE accent only — no hard `fill:` hex (stays readable on light AND dark themes).
 
 ---
 
-## In plain words: what stage is this in
+## One-line feed (fastest morning re-orient)
 
-PGC's video-gen **engine is built and mature** — the deterministic packer (翻转二) is the sole
-selection engine; the receipt/resume state machine, tail pipelining, and type-card system all
-landed and are live. The **product main-line has one clear next station (P5)**; everything after it
-is **decision-gated** (waits on Leo's product calls), so it's normal that there's no obvious
-"engineering push point" — the wheel is built, the steering is Leo's. Recent weeks' work was
-**off the product P-line**: a cross-paradigm dedup integration with AIGC + operational hardening,
-all merged and live as of `ac62df1`.
+引擎成熟、库存满(169 条 approved ≈ 50+ package)、新 POI 基本用光 → PGC 没硬性要做的活;产品主线就剩 P5(可能是个小旋钮,Leo 倾向暂不做)。今天落地:跨范式去重 live + 运营硬化四分支合入。真瓶颈在上游素材供给 / 脱 720,**不在 PGC 手里**。
 
-## Progress bar (milestones not PRs; for the PRs → `gh pr list`)
+## Where the system is (journey arc)
 
+```mermaid
+flowchart LR
+  E["翻转二·packer 引擎 ✅"] --> A["P3/P3.5b 架构 ✅"] --> T["P4 测试健康 ✅"] --> NOW["▶ now<br/>P5 门口(未进)"] --> G["信号灯项<br/>(等 Leo 拍板)"]
+  classDef done stroke:#3fb950,stroke-width:2px
+  classDef now stroke:#d29922,stroke-width:3px
+  class E,A,T done
+  class NOW now
 ```
-产品主线 (P-roadmap)   ⏳   at P5 门口 — P3/P3.5/P3.5b/P4 全✅;P5(TTS静音)未进
-跨范式去重 H1          🟡   PGC侧完工+生产实证;AIGC P1e唯一索引 ⚠️待确认开没开
-运营硬化               ✅   preflight探活/resume提速/cooldown软化/tail-workers4 → 合入 73eb804
-库存生产               ⏳   720-only过渡政策 + 强制升级;持续补库存(soft-cooldown已救饿死)
-
-Recently closed (done → migrate out; detail → docs/ROADMAP.md §执行日志 / gh):
-  P4测试健康 ✅   P3.5b架构校准 ✅   recipe_input(PGC) ✅   soft-cooldown ✅   tail-workers 2→4 ✅
-
-Active lanes: 3   ← ⏳/🟡 行数(产品主线 · 去重H1 · 库存生产)
-```
-
-## Layered backlog
-
-**This week (in flight / next):**
-- P1e 唯一索引确认(AIGC 侧;跟踪在 `workflow/CROSS-REPO.md`)。
-- P5 判断:用今天的真静音数据判"降 pause_cap 小旋钮 vs ffmpeg 静音清理大改"——先判再做。
-
-**Queued (want to, no slot this week):**
-- ⭐ **速度/并行研究**(Leo 2026-06-16 提,现在制作太慢):① 研究怎么提高并行能力+运行速度;② 评估 Remotion→ffmpeg 换引擎,以拿更多 worker。瓶颈现状:升级长尾 + 渲染串行(jobs=1)+ AIGC 间歇抢 VPS。
-- ⭐ **最终输出调优(学习+优化)**(Leo 2026-06-16 提):对输出视频的 ① size ② 结构 ③ hook 调优;先摸清现状实现再动(Leo 提到 "R-Sno/相关模块",具体模块名待定——hook=hook 发牌/arsenal,结构=script_skeleton,size=渲染配置,届时一起定位)。
-- P5 本体(TTS segment 间静音清理,§4a;翻转二已落地,word_timestamps 耦合自动安全)— Leo 倾向暂不做。
-- 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定。
-
-**Triggered (build only when the condition fires):** see Triggers below.
-
-## Live red-lines (only those bound to an in-flight lane)
-
-- **056 已开 → 任何 PGC 批必须从 `73eb804`+ 代码跑**;从旧 worktree(recipe_input 为空)跑 → RC 插入被 056 拒(fail-loud)。
-- key `de9214e4` 对话明文泄露过 — Leo 2026-06-16 决定**不轮换**(接受 transcript 暴露面,风险有限)。
-- 720-only 是过渡税:每条都得走 WaveSpeed 升级(花钱 + 升级长尾堵车);素材库原生 1080 后作废。
 
 ## Cross-repo (PGC ↔ AIGC asset_platform)
 
-- Handoff board: see `workflow/CROSS-REPO.md`. Iron rule: board ≠ lock; correctness lives in code + the shared `release_candidates` DB constraints (056 trigger / P1e unique index).
+> in-flight dep 就一个(AIGC P1e),用列表不画图。
 
-## Triggers (build only at the condition; don't build now)
+- 主线 = 跨范式去重 `recipe_input → 056 → P1e`。Board: `workflow/CROSS-REPO.md`。in-flight = AIGC P1e 唯一索引**待确认**。Iron rule: board ≠ 锁,正确性在 `release_candidates` DB 约束。
 
-| Deferred item | Graduation trigger |
+## 排期 / Scheduled (decided / in progress · with path)
+
+**跨范式去重 H1** · owner: PGC + AIGC
+= 两条范式都发片,但同内容绝不双发(共享 `release_candidates` + 指纹去重)
+◀ recipe_input 上线 + 056 触发器开 ✅　▶ 等 AIGC P1e 唯一索引(真"拦重复")　⏳ P1g 活体抓真 23505 → done
+blocker: P1e 开没开未确认(跟踪 `workflow/CROSS-REPO.md`)
+
+**库存生产** · owner: operator
+= 720-only 政策补库存(每条强制 WaveSpeed 升级)
+◀ stock_4x3 12/12 干净 ✅　▶ 暂停(库存已 169 + fresh POI 池≈干)
+blocker: 上游 fresh POI 供给(非 PGC;soft-cooldown 已避免硬饿死)
+
+## 排队 / Queued (might do · not scheduled)
+
+- ⭐ **速度/并行研究**(现在太慢):提并行 + 提速;评估 Remotion→ffmpeg 换引擎拿更多 worker。
+- ⭐ **最终输出调优**(学习+优化):视频 ① size ② 结构 ③ hook;先摸清现状实现(模块名待定)。
+- P5 TTS 静音清理(Leo 倾向暂不做;可能小旋钮)。
+- 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定。
+
+## 触发 / Triggered (parked · revisit only when the condition fires)
+
+| Deferred item | Trigger condition |
 |---|---|
-| 720p 真超分 A/B → 脱离 720-only | 素材库出现足量原生 1080(查库判时机) |
-| 120s type | 先与 AIGC 对资产门槛(~90-100) |
+| 脱离 720-only(原生 1080) | 素材库出现足量原生 1080 → 同时解速度长尾 + POI 荒 |
+| 120s type | 与 AIGC 对齐资产门槛 ~90-100 |
 | 价格政策 / POI 档案袋 | Leo 拍板(禁价 or 喂真实档案);纯 arsenal 一行 |
 | 停顿中切镜(mid-silence bridges) | Leo 看片决定(口味题) |
-| ffmpeg vs Remotion 调研 | upscale 消失后渲染重新成大头时 |
 | 翻转三(分发数据回流) | 远期;manifest 钩子已留好 |
 
-## History pointers (done; detail → docs/ROADMAP.md §执行日志 / git / daily-log)
+## History (milestone timeline — newest on LEFT)
 
-- **2026-06-16 ✅**: 跨范式去重 recipe_input/H1 上线(056 开、end-to-end 通)+ 运营硬化四分支合入 `73eb804`(186 tests green)。详见 `docs/ROADMAP.md` §执行日志 2026-06-15→16。
-- **2026-06-15 ✅**: P3.5b 架构圣经校准 + P4 测试健康。
-- **2026-06-11 ✅**: 翻转二 cutover(packer 唯一引擎,Gemini #2 退役 `1f28902`)+ P2 type 卡片化。
-- 更早(止损/翻转一/尾巴流水线)→ `docs/ROADMAP.md` §执行日志。
+```mermaid
+timeline
+  title milestones (newest left ← older right)
+  2026-06-16 : 跨范式去重上线(056开,end-to-end通) : 运营硬化4分支合(73eb804)
+  2026-06-15 : P3.5b架构校准 : P4测试健康 : 库存批401仗(换独立key)
+  2026-06-13 : V1/V2范文·采样验证收官
+  2026-06-11 : 翻转二cutover(packer唯一引擎,Gemini#2退役) : P2卡片化
+  2026-06-10 : 翻转一resume : 尾巴流水线
+```
+> 全量历史细节 → `docs/ROADMAP.md` §执行日志 + `workflow/daily-log.md`。Grows leftward over time.
 
 ## projects directory
 
