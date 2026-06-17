@@ -33,7 +33,7 @@
 - ✅ **运营硬化四分支**(main=`73eb804`,三分支 fresh-context agent 独立复核 MERGEABLE 后合,186 tests green):① **preflight 活体探活**(死 key 开跑前就响,不再渲 8 分钟才炸)· ② **resume 接 tail_workers**(补救也并发,抽 `_AutopilotTailPipeline` 两路共享、同 POI 守门保留)· ④ **cooldown 软化**(跨范式 usage 不再硬饿死 PGC 选片;优先 fresh、不够回退 cooled,资产门槛仍硬;某批 `fresh_eligible=0` 全靠回退才跑起来 = 生产现证)· **SKILL tail-workers 默认 2→4**(治升级长尾:多数 ~700s 但有 45–50min「怪兽」,2 路一只怪兽就饿死流水线)。
 
 **主线(按序)**:
-1. ▶ **[下一关] P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
+1. ⏸ **P5 TTS 静音清理**(去 segment 间 ffmpeg 静音拼接,§4a)— Leo 2026-06-17 **倾向暂不做**(数据显示降 pause_cap 小旋钮可能就够);不再作为"下一关"。当前 PGC 处成熟期,无硬性工程主线项,详见 `workflow/ROADMAP.md`。
 
 **等信号灯(有外部输入才动)**:
 - **价格政策 / POI 档案袋**:`hotel_description`/`notable_details` 通道常年为空、价格数字来自模型记忆未核实(LEARNING §14)——等 Leo 拍板(禁提价格 or 喂真实档案),纯 arsenal 一行;

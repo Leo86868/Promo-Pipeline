@@ -17,7 +17,7 @@ Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`;
 
 ```mermaid
 flowchart LR
-  E["翻转二·packer 引擎 ✅"] --> A["P3/P3.5b 架构 ✅"] --> T["P4 测试健康 ✅"] --> NOW["▶ now<br/>P5 门口(未进)"] --> G["信号灯项<br/>(等 Leo 拍板)"]
+  E["翻转二·packer 引擎 ✅"] --> A["P3/P3.5b 架构 ✅"] --> T["P4 测试健康 ✅"] --> NOW["▶ now<br/>成熟期·等上游/决策"] --> G["信号灯项<br/>(等 Leo 拍板)"]
   classDef done stroke:#3fb950,stroke-width:2px
   classDef now stroke:#d29922,stroke-width:3px
   class E,A,T done
@@ -46,17 +46,15 @@ blocker: 上游 fresh POI 供给(非 PGC;soft-cooldown 已避免硬饿死)
 
 - ⭐ **速度/并行研究**(现在太慢):提并行 + 提速;评估 Remotion→ffmpeg 换引擎拿更多 worker。
 - ⭐ **最终输出调优**(学习+优化):视频 ① size ② 结构 ③ hook;先摸清现状实现(模块名待定)。
-- P5 TTS 静音清理(Leo 倾向暂不做;可能小旋钮)。
-- 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定。
+- 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定(soft-cooldown 已解痛点)。
 
 ## 触发 / Triggered (parked · revisit only when the condition fires)
 
 | Deferred item | Trigger condition |
 |---|---|
 | 脱离 720-only(原生 1080) | 素材库出现足量原生 1080 → 同时解速度长尾 + POI 荒 |
-| 120s type | 与 AIGC 对齐资产门槛 ~90-100 |
-| 价格政策 / POI 档案袋 | Leo 拍板(禁价 or 喂真实档案);纯 arsenal 一行 |
-| 停顿中切镜(mid-silence bridges) | Leo 看片决定(口味题) |
+| 加新视频类型(type):120s(现仅 65s) | 想做长视频时;每店素材门槛 50→~90-100 + 对齐 AIGC |
+| POI 档案信息:给 POI 补"可被脚本引用的真实信息"(治脚本瞎编价格/数字) | Leo 拍板(禁价 or 用真 facts);⚠️ facts **供给**大概率是上游(AIGC ingest 写 `poi_asset_pois`)的活,PGC 只消费 → 需跟 AIGC 谈边界 |
 | 翻转三(分发数据回流) | 远期;manifest 钩子已留好 |
 
 ## History (milestone timeline — newest on LEFT)
