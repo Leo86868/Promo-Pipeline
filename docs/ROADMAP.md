@@ -1,5 +1,7 @@
 # PGC Pipeline 下一阶段路线图(2026-06)
 
+> **角色(roadmap-discipline)**:本文件 = **详情层**(设计契约 §翻转二 + 全量 §执行日志 + 深度 §当前排期)。精简 **position 层**(进度条/lanes/红线/触发器)→ `workflow/ROADMAP.md`;跨仓 handoff board → `workflow/CROSS-REPO.md`;历史 trail → `workflow/daily-log.md`。两边里程碑同步,正确性永远在代码/DB。
+
 > **新 session 自举(60 秒)**:① 读本文件(重点:§当前排期 + §执行日志 最后一天);② `git log --oneline -15` 看落了什么;③ auto-memory 会自动带上下文;④ **已完成项的工作原理在 `LEARNING.md`(同 docs/ 目录)**(给 Leo 的学习手册;P2 的 type 卡片体系在 §14)。**已完成勿重做**(均已实战验证):第一二梯队、翻转一(receipt 状态机 + `--resume`)、尾巴流水线化(`--tail-workers`,双批 6 分/条实测)、**翻转二全链 + Gemini #2 遗产退役**(排片员是唯一选片引擎,回滚 = `git revert 1f28902`)、P1 范文冲突修复、**P2 type 卡片化七步**(性格进 skeleton YAML、路由查表、hook 发牌接 per-video seed、范文法规)。**下一步看 §当前排期**。VPS 部署流程:push origin → 新 worktree → **必须 `cd promo/remotion && npm install`** → preflight → detached 启动。
 
 **写作日期**: 2026-06-09
