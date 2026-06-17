@@ -33,12 +33,13 @@ Active lanes: 3   ← ⏳/🟡 行数(产品主线 · 去重H1 · 库存生产)
 ## Layered backlog
 
 **This week (in flight / next):**
-- 🔐 轮换暴露的 key `de9214e4`(库存批跑完后)— red-line。
 - P1e 唯一索引确认(AIGC 侧;跟踪在 `workflow/CROSS-REPO.md`)。
 - P5 判断:用今天的真静音数据判"降 pause_cap 小旋钮 vs ffmpeg 静音清理大改"——先判再做。
 
 **Queued (want to, no slot this week):**
-- P5 本体(TTS segment 间静音清理,§4a;翻转二已落地,word_timestamps 耦合自动安全)。
+- ⭐ **速度/并行研究**(Leo 2026-06-16 提,现在制作太慢):① 研究怎么提高并行能力+运行速度;② 评估 Remotion→ffmpeg 换引擎,以拿更多 worker。瓶颈现状:升级长尾 + 渲染串行(jobs=1)+ AIGC 间歇抢 VPS。
+- ⭐ **最终输出调优(学习+优化)**(Leo 2026-06-16 提):对输出视频的 ① size ② 结构 ③ hook 调优;先摸清现状实现再动(Leo 提到 "R-Sno/相关模块",具体模块名待定——hook=hook 发牌/arsenal,结构=script_skeleton,size=渲染配置,届时一起定位)。
+- P5 本体(TTS segment 间静音清理,§4a;翻转二已落地,word_timestamps 耦合自动安全)— Leo 倾向暂不做。
 - 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定。
 
 **Triggered (build only when the condition fires):** see Triggers below.
@@ -46,7 +47,7 @@ Active lanes: 3   ← ⏳/🟡 行数(产品主线 · 去重H1 · 库存生产)
 ## Live red-lines (only those bound to an in-flight lane)
 
 - **056 已开 → 任何 PGC 批必须从 `73eb804`+ 代码跑**;从旧 worktree(recipe_input 为空)跑 → RC 插入被 056 拒(fail-loud)。
-- 🔐 暴露 key `de9214e4`(对话明文泄露过)未轮换 — 用着先,尽快换。
+- key `de9214e4` 对话明文泄露过 — Leo 2026-06-16 决定**不轮换**(接受 transcript 暴露面,风险有限)。
 - 720-only 是过渡税:每条都得走 WaveSpeed 升级(花钱 + 升级长尾堵车);素材库原生 1080 后作废。
 
 ## Cross-repo (PGC ↔ AIGC asset_platform)
