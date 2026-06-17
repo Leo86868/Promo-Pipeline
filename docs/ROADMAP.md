@@ -42,6 +42,8 @@
 
 **远期**:翻转三(分发数据回流;manifest 钩子已留好,不关门即可)。
 
+**跨仓协调(PGC ↔ AIGC asset_platform)**:in-flight handoff board → `workflow/CROSS-REPO.md`(当前主线 = 跨范式去重 recipe_input→056→P1e;铁律:board ≠ 锁,正确性在 release_candidates DB 约束)。协议 = `roadmap-discipline` skill。
+
 **三块常转仪表(每个生产批顺手读)**:
 1. **字数摩擦率**:LONG 下限已降 150→145(`38ad7a2`)——P4-health smoke 见 3/6 条 <150 重抽(全恢复,终稿 152-160);下个生产批验 <145 重抽率下降;
 2. **F3 基线**:新配方 F3=0(批次 1 0/6)持续确认;
