@@ -364,6 +364,78 @@ def test_cooldown_cutoff_iso_uses_utc_days():
     ) == "2026-06-05T12:00:00Z"
 
 
+def test_fetch_recent_usage_scopes_to_pgc_run_prefix():
+    # Pins the paradigm-scope convention (Leo 2026-06-17): cooldown must count
+    # only PGC's own usage (run_id LIKE 'pgc_run_%'), never music_remix's —
+    # which shares poi_asset_usage_events but uses other run_id prefixes.
+    from datetime import datetime, timezone
+
+    from promo.core.batch_selection import fetch_recent_usage_poi_ids
+
+    all_rows = [
+        {"poi_id": "poi_pgc1", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "pgc_run_aaaaaaaaaaaa"},
+        {"poi_id": "poi_pgc2", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "pgc_run_bbbbbbbbbbbb"},
+        {"poi_id": "poi_mr1", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "music_remix_batch_20260615T_poi_x"},
+        {"poi_id": "poi_mr2", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "eu_expl_720drain_live_20260617_poi_y_v3"},
+    ]
+
+    class FakeQuery:
+        def __init__(self, rows):
+            self.rows = rows
+            self.like_filters = []
+            self.current_range = (0, len(rows) - 1)
+
+        def select(self, _columns):
+            return self
+
+        def gte(self, _column, _value):
+            return self
+
+        def like(self, column, pattern):
+            self.like_filters.append((column, pattern))
+            self.rows = [
+                row
+                for row in self.rows
+                if str(row.get(column, "")).startswith(pattern.rstrip("%"))
+            ]
+            self.current_range = (0, len(self.rows) - 1)
+            return self
+
+        def order(self, _column):
+            return self
+
+        def range(self, start, end):
+            self.current_range = (start, end)
+            return self
+
+        def execute(self):
+            start, end = self.current_range
+            return self.rows[start:end + 1]
+
+    class FakeClient:
+        def __init__(self, rows):
+            self.query = FakeQuery(rows)
+
+        def table(self, name):
+            assert name == "poi_asset_usage_events"
+            return self.query
+
+    client = FakeClient(all_rows)
+    result = fetch_recent_usage_poi_ids(
+        client,
+        cooldown_days=3,
+        now=datetime(2026, 6, 18, 0, 0, 0, tzinfo=timezone.utc),
+    )
+
+    # Only PGC's own POIs are cooled; music_remix usage is ignored.
+    assert result == {"poi_pgc1", "poi_pgc2"}
+    assert client.query.like_filters == [("run_id", "pgc_run_%")]
+
+
 def test_fetch_valid_clip_rows_paginates_supabase_results():
     from promo.core.batch_selection import fetch_valid_clip_rows
 

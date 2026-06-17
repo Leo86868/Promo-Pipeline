@@ -34,6 +34,29 @@ logger = logging.getLogger(__name__)
 USAGE_EVENTS_TABLE = "poi_asset_usage_events"
 DEFAULT_PGC_TARGET_DURATION_SEC = 65.0
 
+# Paradigm scope for cooldown (Leo 2026-06-17): PGC's selection cooldown must
+# count only PGC's OWN recent usage, not the music_remix (AIGC) paradigm that
+# shares poi_asset_usage_events — otherwise a busy music_remix run cools PGC's
+# pool (measured 2026-06-16: 145 POIs cooled by music_remix alone).
+#
+# CONVENTION-DEPENDENT: the shared table has NO paradigm column, so we partition
+# by run_id prefix. PGC run_ids are emitted as ``pgc_run_<uuid>`` by
+# run_manifest._new_id("pgc_run"). Verified airtight against live data
+# (2026-06-17, 14749 events): every row whose output is PGC content (65s /
+# pgc_batch_runs) carries a ``pgc_run_`` run_id (0 missed), and every
+# ``pgc_run_`` row is PGC content (0 false-include); all non-pgc_run_ rows are
+# music_remix (incl. descriptively-named batches like ``eu_expl_720drain_*``,
+# which live under video_paradigms/music_remix/). If PGC ever runs a batch with
+# a custom (non-default) run_id, this filter would silently drop it — pinned by
+# test_fetch_recent_usage_scopes_to_pgc_run_prefix.
+#
+# NB: in SQL LIKE the underscore is a single-char WILDCARD, so the deployed
+# pattern ``pgc_run_%`` technically means "p g c <any> r u n <any> ...". Live
+# fidelity check (2026-06-17) confirmed it returns EXACTLY the literal-prefix
+# set (53 POIs, 0 false-match) because no other run_id is shaped like that —
+# safe in practice, but that's why this is the prefix and not an arbitrary one.
+PGC_RUN_ID_PREFIX = "pgc_run_"
+
 
 class BatchSelectionError(ValueError):
     """Raised when read-only batch selection cannot satisfy the request."""
@@ -149,7 +172,9 @@ def fetch_recent_usage_poi_ids(
     rows = _fetch_all_rows(
         client.table(USAGE_EVENTS_TABLE)
         .select("poi_id,created_at")
-        .gte("created_at", cutoff),
+        .gte("created_at", cutoff)
+        # Paradigm scope: count only PGC's own usage (see PGC_RUN_ID_PREFIX).
+        .like("run_id", f"{PGC_RUN_ID_PREFIX}%"),
         table_name=USAGE_EVENTS_TABLE,
         page_size=page_size,
         order_by="event_id",
