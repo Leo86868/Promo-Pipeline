@@ -32,8 +32,8 @@ points there for the heavy narrative.
 - roadmap 不重复建:`workflow/ROADMAP.md`=精简 position 层,`docs/ROADMAP.md`=详情/设计/全历史层(被指向)。
 
 ### Next (teed up for the new reviewer)
-- **落地 cooldown paradigm-scope**(小活,~soft-cooldown 大小):改 `batch_selection.py::fetch_recent_usage_poi_ids` 只数 PGC 自己的 usage + 测试。**坑:表无 paradigm 列,只能按 `run_id` 前缀过滤(PGC=`pgc_run_*`,music_remix=`music_remix_*`)→ 注释标 convention-依赖、测试钉住。soft-cooldown 保留(互补)。**
-- 跟 AIGC 确认 **P1e 唯一索引**开没开(跟踪 `workflow/CROSS-REPO.md`)。
+- ✅ **DONE 2026-06-17(branch `feat/cooldown-paradigm-scope`)cooldown paradigm-scope**:`batch_selection.py::fetch_recent_usage_poi_ids` 加 `.like("run_id","pgc_run_%")` 只数 PGC 自己 usage + 注释 + 测试钉死;595 单测绿。**交接里"music_remix=`music_remix_*`"的假设不准** → 实证(14749 events):非 `pgc_run_` 的全是 music_remix,含 **`eu_expl_720drain_*`(看着像 720 榨干,其实是 music_remix,产物在 `video_paradigms/music_remix/`、16s)**。`pgc_run_%` allowlist 真库 fidelity 实测 A==B(53 POI,0 误伤),`_` 是 LIKE 通配但当下数据无误伤。⚠️ soft-cooldown 保留(互补)。**未做端到端:VPS 还是旧码,需部署后真跑一批验选片。**
+- 🔎 **P1e 行为级实证(2026-06-17)**:`release_candidates` 1352 条带指纹非 rejected 行 = **0 重复**(现在没双发)。但"索引物理装没装"PostgREST 读不到目录 = **仍需 AIGC 一句确认**(行为干净 ≠ 索引一定在)。
 - 两个 ⭐ 待办(速度/并行、输出调优)等 Leo 想推时开;荐先输出调优(先摸清现状)。
 
 ### Don't do (yet)
