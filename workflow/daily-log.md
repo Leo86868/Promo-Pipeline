@@ -12,9 +12,35 @@ points there for the heavy narrative.
 
 ## Milestones (the spine — big closes, newest first)
 
+- **2026-06-17** — roadmap-discipline 按更新版 skill 重建(Mermaid 版 workflow/ROADMAP.md)+ backlog 剪枝;cooldown 设计拍板=**改成范式各算自己**(待落地);reviewer 交接。
 - **2026-06-16** — 跨范式去重 recipe_input/H1 上线(056 开,end-to-end 通)+ 运营硬化四分支合入 `73eb804` + roadmap 补到今天 + roadmap-discipline skill 装上(跨仓 board)。
 - **2026-06-15** — P3.5b 架构校准 + P4 测试健康完工;库存批 401 仗(换独立 key)。
 - **2026-06-11** — 翻转二 cutover(packer 唯一引擎,Gemini #2 退役)+ P2 type 卡片化。
+
+---
+
+## 2026-06-17  (reviewer 交接点)
+
+### What happened
+- roadmap-discipline skill 更新了(6 文件重写,加 Mermaid)→ 按新版重建 `workflow/ROADMAP.md`(旅程弧 + 历史时间线 Mermaid + 排期/排队/触发卡片);`CLAUDE.md` 指针改回模版原话 + repo-specific 另起;daily-log/CROSS-REPO 模板没变、原样留。
+- backlog 剪枝:**删** 停顿切镜(纯锦上添花);**P5 撤出活跃位置**(Leo 倾向不做 → 旅程图 ▶now=成熟期,docs §当前排期 标 ⏸ 暂不做、不再是"下一关");**120s** 改成"加新视频类型(type)"一眼懂;**价格政策** 改成"POI 档案信息"+ 标边界。
+- 讨论清:PGC 处**成熟期**——引擎建完、库存满(169 approved)、fresh POI 池≈干;真瓶颈在上游(POI 供给/脱 720),不在 PGC。PGC 自己能推的只有两个 ⭐(速度/并行、输出调优);判断:**输出调优 ROI > 速度**(POI 受限时,提速=更快重复老店)。
+
+### Decisions (with the why)
+- **cooldown 改成范式各算自己(不跨范式)** — why:跨范式 cooldown 让 music_remix 一忙就把 PGC 选片池冷干(实测 145 POI 被它冷);soft-cooldown 是创可贴,paradigm-scope 才是根治。**⚠️ 待落地**(见 Next)。
+- key `de9214e4` **不轮换** — Leo 接受 transcript 暴露面(风险有限)。
+- roadmap 不重复建:`workflow/ROADMAP.md`=精简 position 层,`docs/ROADMAP.md`=详情/设计/全历史层(被指向)。
+
+### Next (teed up for the new reviewer)
+- **落地 cooldown paradigm-scope**(小活,~soft-cooldown 大小):改 `batch_selection.py::fetch_recent_usage_poi_ids` 只数 PGC 自己的 usage + 测试。**坑:表无 paradigm 列,只能按 `run_id` 前缀过滤(PGC=`pgc_run_*`,music_remix=`music_remix_*`)→ 注释标 convention-依赖、测试钉住。soft-cooldown 保留(互补)。**
+- 跟 AIGC 确认 **P1e 唯一索引**开没开(跟踪 `workflow/CROSS-REPO.md`)。
+- 两个 ⭐ 待办(速度/并行、输出调优)等 Leo 想推时开;荐先输出调优(先摸清现状)。
+
+### Don't do (yet)
+- 别重新加回 停顿切镜 / P5(已是 Leo 决定撤的)。
+- 别从 <`73eb804` 的旧 worktree 跑生产批(recipe_input 空 → 056 拒)。
+- 别轮换 key(Leo 决定不换)。
+- cooldown 落地时别盲收窄 23505 索引名(等 P1g 抓真错形状)——这是另一条线。
 
 ---
 
