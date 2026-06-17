@@ -5,7 +5,6 @@ Gate 0: Soft normalization (``normalize_script``) — strip forbidden openers,
         max. Runs BEFORE Gate 1 so the validator never has to hard-reject
         on cosmetic/arithmetic rules a regex or trim can fix.
 Gate 1: Structural validation (instant, free)
-Gate 2: LLM quality scoring (handled in script_generator.py)
 Gate 3: Deduplication check
 Gate 4: Pacing validation
 
