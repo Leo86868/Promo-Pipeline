@@ -18,13 +18,17 @@
 
 ---
 
-## 当前排期(2026-06-15 刷新)
+## 当前排期(2026-06-16 刷新)
 
 **已完成(真实环境体检通过 2026-06-14,P4-health 2×3 smoke 全链绿)**:
 - ✅ **P3 根目录瘦身**:5 份 .md → docs/(改名 ROADMAP)、README 目录树、registry 唯一换模型入口、自举路径+memory 指针同步(C1/C2/C4);
 - ✅ **P3.5 架构圣经重写**:root `architecture.md` 全量重写到 packer 现实 + 数据流图上墙 + 焚草稿;连带 umbrella `core/architecture.md`、`llm/architecture.md`、README 校准;《退役档案》留回滚记录;
 - ✅ **P3.5b stage 子目录圣经校准**:`pipeline/render/narrate/script/architecture.md` 把当现役写的 Gemini #2 + F3 改到 packer 现实(退役/回滚语境保留);4 本独立 commit、reviewer 双层过(硬验收 + fresh-agent 逐符号对码,零新错)(2026-06-15,`5f5f9a6..2cbcf30`);
 - ✅ **P4 测试健康**:assert-weld → 验产物;私有内脏焊点 → stub 真边界+跑真逻辑+验输出(test_compile_promo / clip_analyzer / wavespeed,变异检验防假绿);协作者隔离 🟡17 + IO seam 🟢5 + crux 40 私有边界包装按裁定**留**;项目级测试约定写进 LEARNING §15。
+
+**已完成(2026-06-16,主线外 — 跨范式去重 + 运营硬化,生产实证)**:
+- ✅ **跨范式内容去重(recipe_input / H1)**:RC insert 供有序 `source_content_hash`(排音乐排 trim),DB **056 触发器**算 `recipe_fingerprint`(PGC 不碰);vendor 逐字节复制平台 oracle + golden 钉死防漂移、23505 宽接+诚实日志逐条跳(`release_candidates` 上所有唯一冲突皆"已注册跳过"语义、无一致命 → 宽接是永久正确基线,精确收窄降为 P1g 可观测性)。`feat/recipe-input-dedup` 合并部署上线,**056 已开、真候选 rfp2 指纹已算出 = end-to-end 通**。边界守法同 usage 账本(供数据/不算指纹/不 import 平台内部);vendor 复制代价(改 rfp 要重 vendor+重钉 golden)记账。**解了 line 189「去重风险现在进行时」的 cross-paradigm 那层。**
+- ✅ **运营硬化四分支**(main=`73eb804`,三分支 fresh-context agent 独立复核 MERGEABLE 后合,186 tests green):① **preflight 活体探活**(死 key 开跑前就响,不再渲 8 分钟才炸)· ② **resume 接 tail_workers**(补救也并发,抽 `_AutopilotTailPipeline` 两路共享、同 POI 守门保留)· ④ **cooldown 软化**(跨范式 usage 不再硬饿死 PGC 选片;优先 fresh、不够回退 cooled,资产门槛仍硬;某批 `fresh_eligible=0` 全靠回退才跑起来 = 生产现证)· **SKILL tail-workers 默认 2→4**(治升级长尾:多数 ~700s 但有 45–50min「怪兽」,2 路一只怪兽就饿死流水线)。
 
 **主线(按序)**:
 1. ▶ **[下一关] P5 TTS 静音清理**:去掉 segment 间 ffmpeg 静音拼接(§4a;翻转二已落地,word_timestamps 耦合已自动安全)。
@@ -186,7 +190,7 @@
 ### 2026-06-10
 
 - `2951adc` `run_batch --resume`(skip/tail-only/re-render 三分;tail 沿用原 manifest 防 usage 双记);`f6e72b3` review 加固(验证器查时长+音轨、resume 策略推导、真 preflight、upscale 回执留痕);`39caa85` `promo.cli.revert_usage`(dry-run 默认,distribution 一票否决,候选只标 rejected 永不删)。
-- 与 AIGC 侧核实闭环:usage events **已**持久化窗口四字段(3,343 行完整);PGC trim 恒 0(去重风险现在进行时);music remix 是无状态散列、跨批次确定性复读,非可抄先例 → PGC packer 将是窗口查询的家族标准。中台零改动。
+- 与 AIGC 侧核实闭环:usage events **已**持久化窗口四字段(3,343 行完整);PGC trim 恒 0(去重风险现在进行时);music remix 是无状态散列、跨批次确定性复读,非可抄先例 → PGC packer 将是窗口查询的家族标准。中台零改动。 **[已解决 2026-06-16:within-PGC 由 packer 窗口轮换解(翻转二上线);cross-paradigm 由 recipe_input/056 解,见 §执行日志 2026-06-15→16 + §当前排期 ✅。]**
 - **部署 + 实战验证**:推送至 origin;VPS worktree `main_20260610T044026Z_hardened`(39caa85);storage 上传/签名/删除 live 往返通过;hardened smoke(2 POI × 1,production autopilot)双双 `complete`。
   - **split-repair 生产首秀**:7.63s vs 7.04s 违规被拆分修复,视频走完全链(首样本 2 条中 1 条触发——beat planner 重构的第一个硬数据点);
   - **resume 实战**:skip 与 re-render 路径验证通过(1 skip / 1 re-render → 全 complete);**tail-only 路径仅有单测覆盖,待下次真实尾部失败完成实战**;
@@ -237,3 +241,16 @@
 - **第 6 步(`5721108`)**:arsenal README 旋钮索引 + LEARNING §14(三抽屉/三层差异/简报链路 + 两条 Leo 批注口径 + 事实通道防失传:hotel_description/notable_details 空通道、价格来自模型记忆、政策待拍板)。
 - **第 7 步**:三块仪表写进 §当前排期(字数摩擦毕业考 / F3 基线 / 素材消耗+走牌验证),下一生产批顺手读。
 - 全程 693 tests passed(668 起步,+25);每步独立 commit,行为不变步骤有回归钉。
+
+### 2026-06-13(V1/V2 范文/采样验证收官)
+
+- 两批无升级验证批跑测后**全量 revert**(revert 机器实弹 ×2 均验证干净:usage→0、RC→rejected、distribution 未碰)。V1 修包(`610804b`→`11da0ac`):真 bug = hook 卡被 `n_variants>1` 挡住、生产 `--n-variants 1` 永不注入 → 修(注入即断言 prompt 含卡);CLOSE 反说教规则 + 两条长范文结尾重写。V2 简报采样器(`f1a2601`)收货留用(零运行成本、微助益)。裁决:服牌 1/6→6/6、banned 短语 5/6→0/6、首次零低抽字数;采样器**非**干净赢,差异随库存余量放大(假设待 cheap 实验)。详见 memory `project_v_series_findings`。
+
+### 2026-06-15→16(库存批仗 + 跨范式去重上线 + 运营硬化 + roadmap 补记)
+
+- **库存批 401 仗**:首批 stock_4x3 死在 WaveSpeed 升级 401 → 退货干净(fail-closed 守住、零真成本)。根因 = PGC 与 AIGC 共用 key、AIGC 轮换后 PGC 用着死 key(**非抢账号,401≠429**);装独立新 key `de9214e4`(⚠️ 对话明文暴露过、**待轮换**)、活体探活过。重跑 **12/12 干净**(SKILL 补 `--tail-workers 2`,纯一句话实测通过)。详见 memory `project_wavespeed_401_and_preflight_gap`。
+- **跨范式内容去重 recipe_input/H1 上线**(见 §当前排期 ✅):`feat/recipe-input-dedup`(`0793918`+`711e4ad`)合并 + 部署 + AIGC 拨 056 + 真候选 rfp2 指纹已算出 = **end-to-end 通**。设计经 PGC↔AIGC 来回对抗审收敛(PGC 审出 AIGC「立刻收窄索引名」过早会埋「认不出真错」雷;AIGC 反认自己 #300 对称偏严)。AIGC 侧待:P1e 唯一索引(真"拦重复")、P1g 两仓活体抓真 23505 形状。
+- **运营硬化四分支合入** main=`73eb804`(186 tests green):① preflight 活体探活 ② resume 接 tail_workers ④ cooldown 软化 + SKILL tail-workers 2→4。三分支 fresh-context agent 独立复核 MERGEABLE 后才合;all merges conflict-free。
+- **跨范式 cooldown 发现(待议设计点)**:PGC 选片 cooldown 读共享 usage 账本【跨范式无 paradigm 过滤】→ music_remix 一忙就把 PGC 选片池冷干(实测 162 POI 冷、145 由 music_remix)。soft-cooldown 软化解了"饿死",但"PGC 选片 cooldown 该不该跨范式 vs 各算自己"是 Leo 待拍的设计点。
+- **欠债**:🔐 key `de9214e4` 轮换(库存批跑完后);P1g 两仓活体验真 23505 形状(已降为可观测性,不急)。
+- **状态**:main=`73eb804`、产品 P 主线坐标不变(P5 仍下一关,今天的活全在主线外)。VPS 生产 worktree 已部署 `73eb804`。
