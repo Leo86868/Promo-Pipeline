@@ -3,7 +3,7 @@
 **Protocol: see the `roadmap-discipline` skill** (3-layer division · single-writer · done-migrate-out · event-triggered update · milestones-not-PRs).
 Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`; history → `workflow/daily-log.md`; **deep detail / design contracts / full execution log → `docs/ROADMAP.md`** (the heavy doc — this points to it).
 **Visual rule:** arrows + stable → Mermaid; status / path (churns daily) → text; real grid → table.
-**Last verified:** 2026-06-17 (scribe checked vs Supabase `release_candidates` + main HEAD `93f652e`).
+**Last verified:** 2026-06-18 (reviewer checked vs code/Supabase; 2 feature branches not yet on main).
 
 > Mermaid color note: status is in the node LABEL (✅/▶/⚰️) + a STROKE accent only — no hard `fill:` hex (stays readable on light AND dark themes).
 
@@ -11,7 +11,7 @@ Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`;
 
 ## One-line feed (fastest morning re-orient)
 
-引擎成熟、库存满(169 条 approved ≈ 50+ package)、新 POI 基本用光 → PGC 没硬性要做的活;产品主线就剩 P5(可能是个小旋钮,Leo 倾向暂不做)。今天落地:跨范式去重 live + 运营硬化四分支合入。真瓶颈在上游素材供给 / 脱 720,**不在 PGC 手里**。
+引擎成熟、库存满(169 approved)、新 POI 基本用光 → PGC 没硬性要做的活。今天(06-18):cooldown 范式各算自己**上线**、arsenal 操作手册成文、渲染提速调研**收口**(只白嫖 swangle/concurrency,GPU 没用、渲小再升否)、POI 软锁**建好 reviewed**、POI 档案(hotel_description)跨仓对齐(一列,与 AIGC 双向 sync)。真瓶颈仍在上游素材供给 / 脱 720,**不在 PGC 手里**。**两个 feature 分支待并 main。**
 
 ## Where the system is (journey arc)
 
@@ -42,11 +42,16 @@ blocker: P1e 开没开未确认(跟踪 `workflow/CROSS-REPO.md`)
 ◀ stock_4x3 12/12 干净 ✅　▶ 暂停(库存已 169 + fresh POI 池≈干)
 blocker: 上游 fresh POI 供给(非 PGC;soft-cooldown 已避免硬饿死)
 
+**POI 档案 hotel_description H2** · owner: AIGC(前置)+ PGC(桥)
+= 给 POI 补真实事实描述,治脚本瞎编;**一列**自由文本(Leo 2026-06-18)
+◀ 跨仓对齐 + AIGC reviewer 双向 sync ✅　▶ AIGC 发列(contract PR §1.1+视图)　⏳ PGC 写读-转发桥(`_SNAPSHOT_FIELDS`+run_batch 转发+`safe_substitute`)→ done
+blocker: AIGC 前置(PGC 不抢跑);详 `workflow/CROSS-REPO.md` H2
+
 ## 排队 / Queued (might do · not scheduled)
 
-- ⭐ **速度/并行研究**(现在太慢):提并行 + 提速;评估 Remotion→ffmpeg 换引擎拿更多 worker。
-- ⭐ **最终输出调优**(学习+优化):视频 ① size ② 结构 ③ hook;先摸清现状实现(模块名待定)。
-- 跨范式 cooldown 设计拍板(PGC 选片该不该跨范式数 usage)— Leo 决定(soft-cooldown 已解痛点)。
+- ⭐ **速度**(调研已收口):白嫖 swangle + concurrency(待 VPS 闲实测,worker 走正式 Protocol 真产视频观察);并行化(`--jobs>1`)留到 **1080 后**(先解同-POI staged-dir 互删坑);GPU 没用 / 渲小再升否 / Lambda 等爆量。
+- ⭐ **输出调优**:arsenal 操作手册已成文(`promo/arsenal/README.md`);脚本"事实地基"走 **H2**(见排期)。
+- 🔀 **待并 main 的分支**:`feat/cooldown-paradigm-scope`(cooldown 范式化,595 绿)、`feat/in-progress-poi-lock`(POI 软锁,739 绿,加原子写中)。
 
 ## 触发 / Triggered (parked · revisit only when the condition fires)
 
@@ -54,7 +59,6 @@ blocker: 上游 fresh POI 供给(非 PGC;soft-cooldown 已避免硬饿死)
 |---|---|
 | 脱离 720-only(原生 1080) | 素材库出现足量原生 1080 → 同时解速度长尾 + POI 荒 |
 | 加新视频类型(type):120s(现仅 65s) | 想做长视频时;每店素材门槛 50→~90-100 + 对齐 AIGC |
-| POI 档案信息:给 POI 补"可被脚本引用的真实信息"(治脚本瞎编价格/数字) | Leo 拍板(禁价 or 用真 facts);⚠️ facts **供给**大概率是上游(AIGC ingest 写 `poi_asset_pois`)的活,PGC 只消费 → 需跟 AIGC 谈边界 |
 | 翻转三(分发数据回流) | 远期;manifest 钩子已留好 |
 
 ## History (milestone timeline — newest on LEFT)

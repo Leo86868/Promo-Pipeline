@@ -48,6 +48,34 @@ supplies `recipe_input` (ordered `source_content_hash`, music+trim excluded); th
 
 ---
 
+### POI 事实描述通道:poi_asset_pois.hotel_description → 脚本事实地基 (H2)
+
+Goal: 给每个 POI 补一份**事实性描述**(这地方是什么 / 在哪 / 特色·设施·调性),让 PGC
+脚本生成有事实可依,而不是靠大模型训练记忆猜(现状:脚本里的数字/价格全是模型瞎编)。
+Brief(AIGC 起草)→ `workflow/projects/poi-dimension-info/brief-for-pgc.md`。
+
+- **Scope decided (Leo 2026-06-18): ONE column `hotel_description`(自由文本)** —— 不分
+  `notable_details`(单独"要点"块会变必背清单→过度依赖+复述,反增雷同);将来真出现特别
+  notable 的情况再加二列。防重机制(变体轮换/跨视频惩罚)暂不上。
+- [ ] **AIGC**: 加 `hotel_description` 到 `poi_asset_pois` + 投影进契约视图
+  `poi_asset_valid_clips`(契约级 §1.1 改动 → contract PR 先行 + 通知两仓);在
+  onboarding 建档(操作员/AI 起草皆可),回填现有 ~31 活跃 POI。料来自真实渠道(Booking 等);
+  **不强求"独特",别加严约束**;provenance(记来源)可选、非必须。owner=AIGC
+- [ ] **PGC**: 写"读-转发桥"(AIGC reviewer 2026-06-18 独立审 + PGC 复核确认)——
+  ① `hotel_description` 加进读适配器 `_SNAPSHOT_FIELDS`(`poi_asset_valid_clips.py:33`,
+  现在到 file_size_bytes 为止,会把该列丢弃);② 从 POI 摘要一路转发
+  `run_batch → compile_promo → pipeline`(`run_batch.py` 现在零引用、根本不传)。
+  ⚠️ 注意:prompt 模板侧已接到深层(`script_prompt_builder.py:378` 的
+  `$hotel_description_block` 有内容才插),**但桥没写 = 即便 AIGC 发了列,脚本仍拿空串、
+  DESCRIPTION 块不亮**(别误判"已通")。顺手:builder 用 `Template.substitute`(:386),
+  写桥时改 `safe_substitute` 防将来漏 key KeyError。prompt 维持现有"一个 fact/脚本"框架。
+  owner=PGC(前置依赖 AIGC 先发列;PGC 不抢跑)。
+- **Acceptance**: 活跃 POI 的 `hotel_description` 有真实内容 → PGC 脚本 DESCRIPTION 块点亮、
+  数字有据可依(real DB check:视图能读到非空 hotel_description)。
+- Read path: PGC 走 `poi_asset_valid_clips` 视图(事实跟 clip 行重复,PGC 去重到 POI 级)。
+
+---
+
 ## Adjacent (PGC-side, informed by cross-repo but NOT a handoff)
 
 - **Cross-paradigm cooldown design call (Leo)**: PGC's selection cooldown reads the SHARED

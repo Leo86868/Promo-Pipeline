@@ -12,10 +12,40 @@ points there for the heavy narrative.
 
 ## Milestones (the spine — big closes, newest first)
 
+- **2026-06-18** — cooldown 范式各算自己**上线**(branch,595 绿)+ arsenal 操作手册成文 + 渲染提速调研收口(只白嫖 swangle/concurrency,GPU 没用、渲小再升否)+ POI 软锁**建好 reviewed**(739 绿,加原子写中)+ POI 档案(hotel_description)跨仓对齐(一列,与 AIGC reviewer 双向 sync)。
 - **2026-06-17** — roadmap-discipline 按更新版 skill 重建(Mermaid 版 workflow/ROADMAP.md)+ backlog 剪枝;cooldown 设计拍板=**改成范式各算自己**(待落地);reviewer 交接。
 - **2026-06-16** — 跨范式去重 recipe_input/H1 上线(056 开,end-to-end 通)+ 运营硬化四分支合入 `73eb804` + roadmap 补到今天 + roadmap-discipline skill 装上(跨仓 board)。
 - **2026-06-15** — P3.5b 架构校准 + P4 测试健康完工;库存批 401 仗(换独立 key)。
 - **2026-06-11** — 翻转二 cutover(packer 唯一引擎,Gemini #2 退役)+ P2 type 卡片化。
+
+---
+
+## 2026-06-18  (reviewer + 多 worker session)
+
+### What happened
+- **cooldown 范式各算自己上线**:`batch_selection.py` 加 `.like("run_id","pgc_run_%")` 只数 PGC 自己 usage + 注释 + 测试钉死;595 单测绿;真库 fidelity 实测 A==B(53 POI,0 误伤)。commit 在 branch `feat/cooldown-paradigm-scope`(连 daily-log + arsenal 手册 + POI-lock 提案文档)。
+- **arsenal 操作手册成文**:`promo/arsenal/README.md`(74→243),全景图 + 全参数表 + "千篇一律"诊断 + 文档-vs-现实(纠正 2 条:PROMO_PERSONA_SELECTOR 没接线、加时长档零路由)。
+- **渲染提速调研收口**(3 worker 卡 + reviewer 审):单条 16 分 = 渲染 29% / 升级 71%;**只白嫖 swangle + concurrency**(待 VPS 闲实测);**GPU 没用**(主体是 OffthreadVideo,不吃 GPU,已验);**渲小再升(540)否**(Leo:比 720 源还低,WaveSpeed 补不回);并行化留到 1080 后(有同-POI staged-dir 互删坑);Lambda 等爆量。
+- **POI 软锁建好 + reviewed**:in-progress POI lock(选片前硬排除未完成兄弟批认领的店),默认开。3 agent + reviewer 自审:逻辑过硬、4 判断点全对、739 绿;**拆穿一个 agent 误报**("60s 窗口挡不住 26s Sandpearl"——扫描在拉数据之后紧挨写,残留窗口亚秒级,原始事故会被挡)。在 branch `feat/in-progress-poi-lock`,**加原子写中**(对齐 music_remix `write_receipt_atomic`,抄漏了)未 commit。
+- **POI 档案(hotel_description)跨仓对齐**:决定**一列自由文本**(不分 notable_details,避免必背清单→雷同);防重机制暂不上;契约只要"真实渠道好描述、不强求独特";与 AIGC reviewer 双向 sync——双方都发现"读-转发桥未写"(`_SNAPSHOT_FIELDS` 不含该列 + run_batch 零转发),白板 H2 已改准。
+
+### Decisions (with the why)
+- cooldown allowlist=`pgc_run_%`(非 denylist)— why:实证非 pgc_run_ 的全是 music_remix(含误导性 `eu_expl_720drain`),denylist 会错收。
+- 渲小再升(540→1080)**否** — why:渲在 540 比 720 源还低,先自废源细节再让 WaveSpeed 补,一定更糊。
+- POI 档案**一列** hotel_description — why:单列"要点"块会被模型当必背清单→过度依赖+同类店雷同;一段背景 prose 是参考不是考点。
+- POI 软锁 fail-closed 无 TTL(沿用 06-17 决定)+ 加原子写 — why:原版 music_remix 本就原子写,PGC 抄漏了;补回=对齐,堵住并发半写读的最后小缝。
+
+### Next
+- **POI 软锁**:worker 加原子写→重跑 739→commit(branch,不并 main)。之后排"只选片"烟测(在速度测试**之后**,别并行污染数据)。
+- **速度**:VPS 闲时跑 swangle/concurrency 实测(worker 走正式 Protocol 真产视频观察)。
+- **POI 档案**:AIGC 前置发列(contract PR §1.1+视图)→ 之后 PGC 写读-转发桥(`_SNAPSHOT_FIELDS`+run_batch 转发+`safe_substitute`)。PGC 不抢跑。
+- **欠确认**:AIGC P1e 唯一索引开没开。
+- 分支待并:`feat/cooldown-paradigm-scope`、`feat/in-progress-poi-lock`(都还没并 main)。
+
+### Don't do (yet)
+- POI 档案桥别在 AIGC 发列前写(空跑)。
+- 速度测试和 POI 锁真测别并行(污染计时)。
+- 渲小再升别上;GPU 别租。
 
 ---
 

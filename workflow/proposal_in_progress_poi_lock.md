@@ -59,6 +59,29 @@ Give PGC the same "don't pick a POI another running batch already claimed" guard
 | ② DB hard net (057 partial unique + 056 trigger) | exact twins → 23505 skip | ✅ | ✅ | ✅ |
 | ③ near-dup gate | visually-similar non-twins | ❌ | ❌ | ❌ |
 
+## AIGC music_remix learnings (studied 2026-06-18, commit 0021ff2) — fold into impl
+A code-reading pass over `AIGC Main/video_paradigms/music_remix/{receipt.py,batch_planner.py,scripts/plan_batch.py}` + its 3 tests. Validates the decisions above and pins the PGC-specific adaptations.
+
+**Mechanism (copy the semantics verbatim):**
+- `collect_in_progress_poi_ids(root)` globs `root/*/RUN_RECEIPT.json`; per file reads release-gate `receipt_status` (releases ONLY on `"completed"`; everything else — planned/running/failed/partial/blank — keeps the claim = fail-closed) and claimed POIs from `videos[].poi_id`. Returns `poi_id -> batch_id` map, `setdefault` = first-writer-wins (for audit).
+- Edge cases: missing root → `{}` no-op; corrupt/unreadable receipt → `except (OSError, ValueError, JSONDecodeError): continue` (skips ONLY that file, never disables the whole lock).
+- Applied as the FIRST skip check in the planner (before cooldown/asset/resolution gates), reason `in_progress_lock`; locked POIs never enter `eligible`, so the random pick can't choose them even as fallback; if the pool starves below count → **fail loud** with a skip-reason breakdown (no silent under-fill).
+- Default-ON `in_progress_lock=True` + `--no-in-progress-lock` opt-out; echoes the lock map + count into the output receipt for observability.
+- **Self-exclusion is implicit via read-before-write ordering** — the scan runs before the current run writes its own receipt, so its own dir contributes nothing. No name-based self-filter.
+
+**THE PGC ADAPTATION (the crux — AIGC has one file, PGC has two):**
+- Claimed POIs ← sibling `selection_summary.json:selected_pois[].poi_id` (written early at selection time = the lock fires earlier than AIGC's, narrowing the race — a genuine improvement).
+- Completion ← sibling `RUN_RECEIPT.json` per-video `state`. AIGC's gate is batch-level `receipt_status`; PGC's state is **per-video**, so the release rule is a roll-up: **release a sibling's claims only when its `RUN_RECEIPT.json` exists AND every video `state == "complete"`. If `RUN_RECEIPT.json` is MISSING (selected but not yet rendering) → keep locked (fail-closed).**
+- Per-dir corrupt `selection_summary.json` → that dir contributes no claims, BUT `log.warning` the path (do NOT inherit AIGC's silent skip — PGC's claim lives in this separate file, so losing it silently drops a real claim).
+- **Ordering constraint for the worker:** scan siblings BEFORE the current run writes its own `selection_summary.json` (currently `run_batch.py:304`), so self-exclusion stays implicit.
+
+**Tests — mirror AIGC's 4, then ADD 3 PGC-specific:**
+- Mirror: (a) non-completed sibling keeps its POIs / completed releases; (b) missing root → `{}`; (c) planner hard-excludes a locked POI with reason `in_progress_lock`; (d) end-to-end two-batch read-from-sibling-dir. Also: pass the lock OFF in unrelated selection tests to isolate them.
+- ADD (PGC-only, no AIGC equivalent): (e) the two-file split — claims from selection_summary, completion roll-up from RUN_RECEIPT, missing-RUN_RECEIPT = locked; (f) corrupt selection_summary → warn + skip-that-file, lock still works for siblings; (g) stale-receipt behavior (documents the fail-closed "crashed batch holds POIs until --resume/cleanup" choice).
+- **Green baseline:** do NOT trust a hardcoded count. Establish it by running the full suite BEFORE touching code (it currently collects ~726 tests via `python3 -m pytest --co -q`); keep that exact number green after.
+
+**Do NOT inherit AIGC's 3 gaps:** no stale-batch TTL (Leo's decision #1 = keep fail-closed, conscious), no concurrent-launch hard guard (it's a soft lock — document the same-instant race), silent corrupt-skip (PGC adds the loud warning per decision #5).
+
 ## Recommendation
 Worth doing IF Leo wants to run PGC batches in parallel routinely — cheap parity, closes the most
 common (staggered-start) overlap. It is **necessary but not sufficient** for "safe parallel": full
