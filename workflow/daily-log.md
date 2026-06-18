@@ -35,8 +35,12 @@ points there for the heavy narrative.
 - POI 档案**一列** hotel_description — why:单列"要点"块会被模型当必背清单→过度依赖+同类店雷同;一段背景 prose 是参考不是考点。
 - POI 软锁 fail-closed 无 TTL(沿用 06-17 决定)+ 加原子写 — why:原版 music_remix 本就原子写,PGC 抄漏了;补回=对齐,堵住并发半写读的最后小缝。
 
+### Later same day (上线 + 速度实测)
+- **cooldown + POI 软锁 + arsenal 手册 + 文档 全部并入 main**(快进 `ea23b09..190f227`,已推 origin,742 绿)。POI 软锁先过**真库对照烟测**(锁开两批不撞、锁关同 seed 撞=对照证明)才并。**未部署 VPS**(等下次跑批)。push/merge 自此归 reviewer(见 [[feedback_reviewer_owns_push]])。
+- **速度实测收口**(worker 真跑 3 配置,详 `docs/research/render-speedup-2026-06.md`):现设置已最优,**main 一行未动**。swangle **否决**(2.2× 慢,推翻"白嫖"推理);conc 保持 6;**8 核并行被 ffmpeg ~5 线程地板堵死** → 真并行只能加核/换机。
+
 ### Next
-- **POI 软锁**:worker 加原子写→重跑 739→commit(branch,不并 main)。之后排"只选片"烟测(在速度测试**之后**,别并行污染数据)。
+- **POI 软锁**:✅ 已上线 main(d00dbec)+ 烟测 PASS。待部署 VPS(下次跑批时)。
 - **速度**:VPS 闲时跑 swangle/concurrency 实测(worker 走正式 Protocol 真产视频观察)。
 - **POI 档案**:AIGC 前置发列(contract PR §1.1+视图)→ 之后 PGC 写读-转发桥(`_SNAPSHOT_FIELDS`+run_batch 转发+`safe_substitute`)。PGC 不抢跑。
 - **欠确认**:AIGC P1e 唯一索引开没开。

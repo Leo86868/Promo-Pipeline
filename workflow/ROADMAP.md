@@ -49,7 +49,7 @@ blocker: AIGC 前置(PGC 不抢跑);详 `workflow/CROSS-REPO.md` H2
 
 ## 排队 / Queued (might do · not scheduled)
 
-- ⭐ **速度**(调研已收口):白嫖 swangle + concurrency(待 VPS 闲实测,worker 走正式 Protocol 真产视频观察);并行化(`--jobs>1`)留到 **1080 后**(先解同-POI staged-dir 互删坑);GPU 没用 / 渲小再升否 / Lambda 等爆量。
+- ✅ **速度 — 实测收口(2026-06-18,详 `docs/research/render-speedup-2026-06.md`)**:现有设置(conc 6 / 不传 gl)**已最优,main 一行未动**。swangle **否决**(实测 2.2× 慢,非白嫖);concurrency 保持 6(4 慢 13%、是将来跟并行一起拉的牌);**8 核并行被 ffmpeg ~5 线程地板堵死**(单条 load~9,两条=18>8)→ 真并行只能加核/换机(= Lambda/横扩)。GPU 没用 / 渲小再升否。`--jobs>1` 留到加核 + 1080 后(还有同-POI staged-dir 坑)。
 - ⭐ **输出调优**:arsenal 操作手册已成文(`promo/arsenal/README.md`);脚本"事实地基"走 **H2**(见排期)。
 - 🔀 **待并 main 的分支**:`feat/cooldown-paradigm-scope`(cooldown 范式化,595 绿)、`feat/in-progress-poi-lock`(POI 软锁,739 绿,加原子写中)。
 
