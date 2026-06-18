@@ -32,6 +32,7 @@ from promo.core.batch_selection import (
     BatchSelectionError,
     asset_ids_from_valid_clip_rows,
     build_selection_payload,
+    collect_in_progress_poi_ids,
     fetch_recent_usage_poi_ids,
     fetch_ready_embedding_asset_ids,
     fetch_valid_clip_rows,
@@ -234,6 +235,11 @@ def prepare_selected_batch(
         [Any, list[str]], set[str]
     ] = fetch_ready_embedding_asset_ids,
     recent_usage_poi_ids_fetcher: Callable[..., set[str]] = fetch_recent_usage_poi_ids,
+    in_progress_lock: bool = True,
+    runs_root: str | None = None,
+    in_progress_poi_ids_collector: Callable[
+        ..., dict[str, str]
+    ] = collect_in_progress_poi_ids,
 ) -> PreparedSelectionBatch:
     if bool(classification_field) != bool(classification_value):
         raise BatchSelectionError(
@@ -255,12 +261,36 @@ def prepare_selected_batch(
         client,
         cooldown_days=int(cooldown_days),
     )
+    # In-progress lock: hard-exclude POIs claimed by not-yet-finished sibling
+    # batches under the runs-root (default = parent of this run's output dir).
+    # Scanning happens BEFORE this run writes its own selection_summary.json
+    # (written below), and we pass exclude_dir=output_root, so a batch never
+    # locks against itself. Default-on; --no-in-progress-lock opts out.
+    in_progress_poi_ids: set[str] = set()
+    in_progress_locks: dict[str, str] = {}
+    if in_progress_lock:
+        resolved_runs_root = runs_root or os.path.dirname(
+            os.path.abspath(output_root)
+        )
+        in_progress_locks = in_progress_poi_ids_collector(
+            resolved_runs_root,
+            exclude_dir=output_root,
+        )
+        in_progress_poi_ids = set(in_progress_locks)
+        if in_progress_poi_ids:
+            logger.warning(
+                "in-progress lock: excluding %d POI(s) claimed by running sibling "
+                "batches: %s",
+                len(in_progress_poi_ids),
+                ", ".join(sorted(in_progress_locks)),
+            )
     payload = build_selection_payload(
         rows=rows,
         poi_count=resolved_poi_count,
         videos_per_poi=resolved_videos_per_poi,
         candidate_ready_asset_ids=ready_embedding_asset_ids,
         cooldown_poi_ids=cooldown_poi_ids,
+        in_progress_poi_ids=in_progress_poi_ids,
         cooldown_days=int(cooldown_days),
         target_duration_sec=resolved_target_duration,
         seed=seed,
@@ -301,6 +331,9 @@ def prepare_selected_batch(
             "final_upscale_policy"
         ]
     payload["batch_spec"] = batch_spec
+    # Audit trail: record which sibling batch claimed each excluded POI (mirrors
+    # music_remix's receipt echo) so a post-incident reader can see the lock at work.
+    payload["in_progress_poi_locks"] = dict(sorted(in_progress_locks.items()))
     write_json(Path(selection_summary_path), payload)
     write_json(Path(batch_path), batch_spec)
     return PreparedSelectionBatch(
@@ -1571,6 +1604,8 @@ def run_selected_batch(
     final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
     tail_workers: int = 1,
+    in_progress_lock: bool = True,
+    runs_root: str | None = None,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -1587,6 +1622,8 @@ def run_selected_batch(
         valid_clip_rows_fetcher=valid_clip_rows_fetcher,
         ready_embedding_asset_ids_fetcher=ready_embedding_asset_ids_fetcher,
         recent_usage_poi_ids_fetcher=recent_usage_poi_ids_fetcher,
+        in_progress_lock=in_progress_lock,
+        runs_root=runs_root,
     )
     return run_batch(
         batch_path=prepared.batch_path,
@@ -1744,6 +1781,16 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--no-in-progress-lock",
+        action="store_true",
+        help=(
+            "Do not skip POIs claimed by not-yet-finished sibling batches under "
+            "the runs-root (parent of --output-dir). The in-progress lock is ON "
+            "by default; pass this to opt out. Soft lock: catches staggered "
+            "concurrent starts, not truly simultaneous ones."
+        ),
+    )
+    parser.add_argument(
         "--final-upscale-provider",
         choices=["disabled", "wavespeed"],
         default=None,
@@ -1826,6 +1873,7 @@ def main() -> None:
                 source_resolution_policy=source_resolution_policy,
                 final_upscale_policy=final_upscale_policy,
                 tail_workers=tail_workers,
+                in_progress_lock=not args.no_in_progress_lock,
             )
         else:
             exit_code = run_batch(

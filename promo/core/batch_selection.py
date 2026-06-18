@@ -19,6 +19,7 @@ from promo.core.assets.retrieval import (
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
 )
+from promo.core.atomic_io import atomic_write_text
 from promo.core.format_profiles import get_promo_format_profile
 from promo.core.run_receipt import required_active_assets
 from promo.core.source_resolution_policy import (
@@ -186,6 +187,104 @@ def fetch_recent_usage_poi_ids(
     }
 
 
+# In-progress POI lock (2026-06-18): skip POIs already claimed by a not-yet-
+# finished sibling batch under the same runs-root, so concurrent/overlapping
+# batches stop colliding on the same POI. Ported from music_remix's receipt
+# soft-lock (AIGC commit 0021ff2), ADAPTED because PGC splits the two facts that
+# music_remix keeps in one RUN_RECEIPT into two files:
+#   - CLAIMED POIs  -> selection_summary.json:selected_pois[].poi_id  (written
+#     at selection time, BEFORE rendering -> the lock fires early, narrowing the
+#     race vs music_remix which only learns the claim once the receipt lands)
+#   - COMPLETION    -> RUN_RECEIPT.json per-video ``state``
+# Release rule (fail-closed): a sibling releases its POIs ONLY when its
+# RUN_RECEIPT.json exists AND every video state == "complete". A missing receipt
+# (selected but not yet rendering), any non-complete video, or an unreadable
+# receipt all keep the claim. A crashed/abandoned batch therefore holds its POIs
+# until it is --resume'd or its dir is cleaned (deliberate, per Leo 2026-06-18 —
+# no TTL/staleness release; keep it simple + fail-loud). It is a SOFT lock: two
+# batches that both finish selection before either writes selection_summary.json
+# can still pick the same POI. Safe for staggered/sequential launches; NOT a
+# hard mutex for truly simultaneous launches.
+SELECTION_SUMMARY_FILENAME = "selection_summary.json"
+RUN_RECEIPT_FILENAME = "RUN_RECEIPT.json"
+RELEASED_VIDEO_STATE = "complete"
+
+
+def _sibling_batch_released(run_dir: Path) -> bool:
+    """True only when this sibling batch is fully done (releases its POI claims).
+
+    Fail-closed: returns False (claim held) when RUN_RECEIPT.json is missing,
+    has no videos, has any non-``complete`` video, or is unreadable/corrupt.
+    """
+    receipt_path = run_dir / RUN_RECEIPT_FILENAME
+    if not receipt_path.is_file():
+        return False
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "in-progress lock: unreadable receipt %s (%s) — treating as in-progress",
+            receipt_path,
+            exc,
+        )
+        return False
+    videos = receipt.get("videos")
+    if not isinstance(videos, list) or not videos:
+        return False
+    return all(
+        isinstance(video, dict) and video.get("state") == RELEASED_VIDEO_STATE
+        for video in videos
+    )
+
+
+def collect_in_progress_poi_ids(
+    runs_root: str | Path,
+    *,
+    exclude_dir: str | Path | None = None,
+) -> dict[str, str]:
+    """Map ``poi_id -> claiming batch dir name`` for every POI claimed by a
+    not-yet-finished sibling batch under ``runs_root``.
+
+    Scans ``runs_root/*/selection_summary.json`` for claims, and consults each
+    sibling's RUN_RECEIPT.json for completion (see ``_sibling_batch_released``).
+    ``exclude_dir`` (the current run's own output dir) is skipped so a batch
+    never locks against itself. A missing ``runs_root`` returns ``{}`` (no-op).
+    An unreadable selection_summary.json is warned-and-skipped for that one dir
+    only — it never disables the lock for the rest.
+    """
+    locks: dict[str, str] = {}
+    root = Path(runs_root)
+    if not root.is_dir():
+        return locks
+    exclude = Path(exclude_dir).resolve() if exclude_dir is not None else None
+    for summary_path in sorted(root.glob(f"*/{SELECTION_SUMMARY_FILENAME}")):
+        run_dir = summary_path.parent
+        if exclude is not None and run_dir.resolve() == exclude:
+            continue
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            # Loud, unlike music_remix's silent skip: PGC's claim lives in this
+            # separate file, so losing it silently would drop a real claim.
+            logger.warning(
+                "in-progress lock: skipping unreadable %s (%s) — its POI claims "
+                "are NOT enforced this round",
+                summary_path,
+                exc,
+            )
+            continue
+        if _sibling_batch_released(run_dir):
+            continue
+        batch_id = run_dir.name
+        for poi in summary.get("selected_pois") or []:
+            if not isinstance(poi, dict):
+                continue
+            poi_id = str(poi.get("poi_id") or "").strip()
+            if poi_id:
+                locks.setdefault(poi_id, batch_id)  # first claimant wins
+    return locks
+
+
 def _classification_matches(
     row: dict[str, Any],
     *,
@@ -219,6 +318,7 @@ def summarize_pois(
     min_active_assets: int,
     candidate_ready_asset_ids: set[str] | None = None,
     cooldown_poi_ids: set[str] | None = None,
+    in_progress_poi_ids: set[str] | None = None,
     classification_field: str | None = None,
     classification_value: str | None = None,
     source_resolution_policy: SourceResolutionPolicy | dict[str, Any] | None = None,
@@ -232,6 +332,7 @@ def summarize_pois(
     _require_classification_field(rows, classification_field=classification_field)
 
     cooldown_poi_ids = cooldown_poi_ids or set()
+    in_progress_poi_ids = in_progress_poi_ids or set()
     resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
     grouped: dict[str, dict[str, Any]] = {}
     asset_ids_by_poi: dict[str, set[str]] = defaultdict(set)
@@ -300,7 +401,12 @@ def summarize_pois(
         # selection prefers fresh POIs and only falls back to cooled ones when
         # the fresh pool is exhausted. Asset-floor checks below still hard-skip
         # (cooldown does NOT rescue an asset-poor POI).
-        if active_asset_count < min_active_assets:
+        # In-progress lock takes precedence over asset/cooldown gates (mirrors
+        # music_remix: a locked POI reports ``in_progress_lock`` regardless of
+        # its other state) and is a hard exclude — it never enters ``eligible``.
+        if poi_id in in_progress_poi_ids:
+            skipped.append({**record, "reason": "in_progress_lock"})
+        elif active_asset_count < min_active_assets:
             skipped.append({**record, "reason": "insufficient_active_assets"})
         elif len(effective_asset_ids) < min_active_assets:
             skipped.append({**record, "reason": "insufficient_source_resolution_assets"})
@@ -402,6 +508,7 @@ def build_selection_payload(
     videos_per_poi: int,
     candidate_ready_asset_ids: set[str] | None = None,
     cooldown_poi_ids: set[str] | None = None,
+    in_progress_poi_ids: set[str] | None = None,
     cooldown_days: int = 3,
     target_duration_sec: float = DEFAULT_PGC_TARGET_DURATION_SEC,
     seed: int | None = None,
@@ -419,11 +526,13 @@ def build_selection_payload(
         extra_variation_asset_buffer=gate_profile.assets_per_extra,
     )
     resolved_source_policy = normalize_source_resolution_policy(source_resolution_policy)
+    in_progress_poi_ids = in_progress_poi_ids or set()
     summary = summarize_pois(
         rows,
         min_active_assets=min_active_assets,
         candidate_ready_asset_ids=candidate_ready_asset_ids,
         cooldown_poi_ids=cooldown_poi_ids or set(),
+        in_progress_poi_ids=in_progress_poi_ids,
         classification_field=classification_field,
         classification_value=classification_value,
         source_resolution_policy=resolved_source_policy,
@@ -484,6 +593,7 @@ def build_selection_payload(
         "fresh_eligible": fresh_eligible,
         "cooled_eligible": cooled_eligible,
         "cooled_fallback_used": cooled_fallback_used,
+        "in_progress_locked_poi_count": len(in_progress_poi_ids),
         "batch_spec": build_batch_spec(
             selected,
             videos_per_poi=videos_per_poi,
@@ -494,9 +604,9 @@ def build_selection_payload(
 
 
 def write_json(path: str, payload: dict[str, Any]) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
+    # Atomic so a concurrent in-progress-lock scan never reads a half-written
+    # selection_summary.json (which would silently drop this batch's claim).
+    atomic_write_text(
+        path,
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
     )

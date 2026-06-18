@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from promo.core.atomic_io import atomic_write_text
 from promo.core.manifest_audit import audit_manifest_path
 
 
@@ -487,9 +488,11 @@ def write_run_receipt(path: str, receipt: dict[str, Any]) -> None:
     with _RECEIPT_IO_LOCK:
         receipt["updated_at"] = utc_now_iso()
         receipt["summary"] = summarize_videos(receipt.get("videos", []))
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
+        # Atomic so a concurrent in-progress-lock scan (which reads sibling
+        # RUN_RECEIPT.json for completion) never reads a half-written receipt.
+        # Composes with _RECEIPT_IO_LOCK: the lock serializes same-process tail
+        # writers; the atomic replace protects cross-process readers.
+        atomic_write_text(
+            path,
             json.dumps(receipt, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
         )
