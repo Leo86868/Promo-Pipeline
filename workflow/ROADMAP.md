@@ -11,7 +11,7 @@ Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`;
 
 ## One-line feed (fastest morning re-orient)
 
-引擎成熟、库存满(169 approved)、新 POI 基本用光 → PGC 没硬性要做的活。今天(06-18):cooldown 范式各算自己**上线**、arsenal 操作手册成文、渲染提速调研**收口**(只白嫖 swangle/concurrency,GPU 没用、渲小再升否)、POI 软锁**建好 reviewed**、POI 档案(hotel_description)跨仓对齐(一列,与 AIGC 双向 sync)。真瓶颈仍在上游素材供给 / 脱 720,**不在 PGC 手里**。**两个 feature 分支待并 main。**
+引擎成熟、库存满(169 approved)、新 POI 基本用光 → **PGC 转入闲置期,手头无活**。今天(06-18)全部收口并入 main + **部署到 VPS**(`main_20260618T_cooldownlock`,下次跑批生效):cooldown 范式各算自己、POI 软锁(+原子写,真库烟测过)、arsenal 手册/决策树、渲染提速调研收口(现设置已最优、swangle 否决、GPU 没用)、H1 跨范式去重**端到端闭环**(P1e 确认开)。**唯一还开着的活 = H2 hotel_description(AIGC 前置,不是 PGC 的活)。** 真瓶颈仍在上游素材供给 / 脱 720,**不在 PGC 手里**。
 
 ## Where the system is (journey arc)
 
@@ -26,9 +26,9 @@ flowchart LR
 
 ## Cross-repo (PGC ↔ AIGC asset_platform)
 
-> in-flight dep 就一个(AIGC P1e),用列表不画图。
+> in-flight dep 就一个(H2 hotel_description),用列表不画图。
 
-- 主线 = 跨范式去重 `recipe_input → 056 → P1e`。Board: `workflow/CROSS-REPO.md`。in-flight = AIGC P1e 唯一索引**待确认**。Iron rule: board ≠ 锁,正确性在 `release_candidates` DB 约束。
+- 去重主线 H1(`recipe_input → 056 → P1e`)✅ **闭环(P1e 已确认开)**。当前唯一 in-flight = **H2 hotel_description**(AIGC 发列 → PGC 写读-转发桥)。Board: `workflow/CROSS-REPO.md`。Iron rule: board ≠ 锁,正确性在 `release_candidates` DB 约束。
 
 ## 排期 / Scheduled (decided / in progress · with path)
 
@@ -51,7 +51,7 @@ blocker: AIGC 前置(PGC 不抢跑);详 `workflow/CROSS-REPO.md` H2
 
 - ✅ **速度 — 实测收口(2026-06-18,详 `docs/research/render-speedup-2026-06.md`)**:现有设置(conc 6 / 不传 gl)**已最优,main 一行未动**。swangle **否决**(实测 2.2× 慢,非白嫖);concurrency 保持 6(4 慢 13%、是将来跟并行一起拉的牌);**8 核并行被 ffmpeg ~5 线程地板堵死**(单条 load~9,两条=18>8)→ 真并行只能加核/换机(= Lambda/横扩)。GPU 没用 / 渲小再升否。`--jobs>1` 留到加核 + 1080 后(还有同-POI staged-dir 坑)。
 - ⭐ **输出调优**:arsenal 操作手册已成文(`promo/arsenal/README.md`);脚本"事实地基"走 **H2**(见排期)。
-- 🔀 **待并 main 的分支**:`feat/cooldown-paradigm-scope`(cooldown 范式化,595 绿)、`feat/in-progress-poi-lock`(POI 软锁,739 绿,加原子写中)。
+- ✅ **本轮已上线 + 部署**:cooldown 范式化、POI 软锁(+原子写,真库烟测过)、arsenal 手册/决策树 全在 main(`325c6a6`)+ 部署 worktree `main_20260618T_cooldownlock`。分支已清。
 
 ## 触发 / Triggered (parked · revisit only when the condition fires)
 
@@ -66,6 +66,7 @@ blocker: AIGC 前置(PGC 不抢跑);详 `workflow/CROSS-REPO.md` H2
 ```mermaid
 timeline
   title milestones (newest left ← older right)
+  2026-06-18 : cooldown范式化+POI软锁上线+部署 : 渲染提速调研收口(swangle否决) : H1去重闭环(P1e开) : arsenal手册
   2026-06-16 : 跨范式去重上线(056开,end-to-end通) : 运营硬化4分支合(73eb804)
   2026-06-15 : P3.5b架构校准 : P4测试健康 : 库存批401仗(换独立key)
   2026-06-13 : V1/V2范文·采样验证收官

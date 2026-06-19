@@ -39,8 +39,13 @@ points there for the heavy narrative.
 - **cooldown + POI 软锁 + arsenal 手册 + 文档 全部并入 main**(快进 `ea23b09..190f227`,已推 origin,742 绿)。POI 软锁先过**真库对照烟测**(锁开两批不撞、锁关同 seed 撞=对照证明)才并。**未部署 VPS**(等下次跑批)。push/merge 自此归 reviewer(见 [[feedback_reviewer_owns_push]])。
 - **速度实测收口**(worker 真跑 3 配置,详 `docs/research/render-speedup-2026-06.md`):现设置已最优,**main 一行未动**。swangle **否决**(2.2× 慢,推翻"白嫖"推理);conc 保持 6;**8 核并行被 ffmpeg ~5 线程地板堵死** → 真并行只能加核/换机。
 
+### EOD 收口(2026-06-18)
+- **部署完成**:开新 worktree `main_20260618T_cooldownlock @ f06d4b9`(含 73eb804 不回退)+ npm + .env + VPS 环境 31 测试绿。**下次跑批从它跑 → cooldown + 锁生效**。runbook 示例已改指向它(+红线警告,别从 .git 主仓旧 checkout 跑)。
+- **清理**:本轮 3 分支删净(cooldown/poi-lock/render-speed)。"老 worktree" `main_20260608` 查实=**VPS .git 主仓(不能删)**,其内容=6-9 引擎旧草稿(实测无 origin 没有的活东西;1143 行未提交已存 patch 备查)。
+- **PGC 状态 = 闲置**:手头无活;唯一开着的 = H2 hotel_description(AIGC 前置)。其余等 720→1080 / 加核(都 Leo 拍板)。
+
 ### Next
-- **POI 软锁**:✅ 已上线 main(d00dbec)+ 烟测 PASS。待部署 VPS(下次跑批时)。
+- **POI 软锁**:✅ 上线 + 部署 + 真库烟测 PASS,全收口。下次跑批从新 worktree 跑即生效。
 - **速度**:VPS 闲时跑 swangle/concurrency 实测(worker 走正式 Protocol 真产视频观察)。
 - **POI 档案**:AIGC 前置发列(contract PR §1.1+视图)→ 之后 PGC 写读-转发桥(`_SNAPSHOT_FIELDS`+run_batch 转发+`safe_substitute`)。PGC 不抢跑。
 - ✅ **AIGC P1e 唯一索引 = 开了**(Leo 2026-06-18 确认)→ H1 跨范式去重端到端闭环(盖指纹+真拦+0 重复)。
