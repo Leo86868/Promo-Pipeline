@@ -32,10 +32,10 @@ flowchart LR
 
 ## 排期 / Scheduled (decided / in progress · with path)
 
-**跨范式去重 H1** · owner: PGC + AIGC
+**跨范式去重 H1** · owner: PGC + AIGC · ✅ **闭环(2026-06-18)**
 = 两条范式都发片,但同内容绝不双发(共享 `release_candidates` + 指纹去重)
-◀ recipe_input 上线 + 056 触发器开 ✅　▶ 等 AIGC P1e 唯一索引(真"拦重复")　⏳ P1g 活体抓真 23505 → done
-blocker: P1e 开没开未确认(跟踪 `workflow/CROSS-REPO.md`)
+recipe_input ✅ + 056 盖指纹 ✅ + **P1e 唯一索引真拦 ✅(Leo 确认开了)** + 实测 0 重复 ✅
+余:P1g 活体抓真 23505 错形状(降为可观测性、不急)。
 
 **库存生产** · owner: operator
 = 720-only 政策补库存(每条强制 WaveSpeed 升级)

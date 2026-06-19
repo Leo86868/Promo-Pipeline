@@ -28,10 +28,10 @@ supplies `recipe_input` (ordered `source_content_hash`, music+trim excluded); th
       1165/1204 (97%) non-NULL ✓ (the "is music_remix deployed?" worry is resolved)
 - [x] **AIGC**: 056 `BEFORE INSERT` trigger computes `recipe_fingerprint` from recipe_input.
       owner=AIGC → ON (Leo flipped it); both paradigms' approved rows carry rfp2 fingerprints ✓
-- [ ] **AIGC**: P1e partial UNIQUE `(poi_id, recipe_fingerprint) WHERE recipe_fingerprint IS NOT
+- [x] **AIGC**: P1e partial UNIQUE `(poi_id, recipe_fingerprint) WHERE recipe_fingerprint IS NOT
       NULL AND status <> 'rejected'` = the actual "block duplicate" enforcement.
-      owner=AIGC  ⚠️ **待确认开没开** (after: backfill clears existing dups; both factories green ✓)
-      — until P1e is on, fingerprints compute but nothing is rejected = measuring, not yet blocking.
+      owner=AIGC → **ON, confirmed by Leo 2026-06-18.** Fingerprints now both compute (056) AND
+      block (P1e) = real cross-paradigm dedup enforced end-to-end.
 - [ ] **两仓 (PGC + AIGC)**: P1g — insert a real duplicate, capture the actual postgrest 23505
       error shape (.code? index name in .message/.details?), THEN narrow each side's detection
       precisely.  owner=PGC+AIGC  (downgraded to OBSERVABILITY — on this table all unique
@@ -39,7 +39,7 @@ supplies `recipe_input` (ordered `source_content_hash`, music+trim excluded); th
       baseline; narrowing only buys honest log labels, not control flow. Not urgent.)
 
 - **Acceptance** (= deploy + real DB check): both paradigms write recipe_input (✓ DB) · 056
-  computes fingerprint (✓) · P1e enforces uniqueness (⚠️ confirm) · among approved+fingerprinted
+  computes fingerprint (✓) · P1e enforces uniqueness (✓ Leo confirmed 2026-06-18) · among approved+fingerprinted
   rows: 0 duplicate `(poi_id, recipe_fingerprint)` and 0 same-fingerprint-cross-paradigm
   (✓ measured 2026-06-16: 1326 approved, 0 dup, 0 cross-paradigm double-publish).
 - **Deploy gate (out-of-order = fail-loud)**: 056 enforcement MUST come AFTER both factories

@@ -43,8 +43,9 @@ points there for the heavy narrative.
 - **POI 软锁**:✅ 已上线 main(d00dbec)+ 烟测 PASS。待部署 VPS(下次跑批时)。
 - **速度**:VPS 闲时跑 swangle/concurrency 实测(worker 走正式 Protocol 真产视频观察)。
 - **POI 档案**:AIGC 前置发列(contract PR §1.1+视图)→ 之后 PGC 写读-转发桥(`_SNAPSHOT_FIELDS`+run_batch 转发+`safe_substitute`)。PGC 不抢跑。
-- **欠确认**:AIGC P1e 唯一索引开没开。
-- 分支待并:`feat/cooldown-paradigm-scope`、`feat/in-progress-poi-lock`(都还没并 main)。
+- ✅ **AIGC P1e 唯一索引 = 开了**(Leo 2026-06-18 确认)→ H1 跨范式去重端到端闭环(盖指纹+真拦+0 重复)。
+- arsenal README 加"症状→抽屉"决策树(Mermaid)。
+- ⚠️ 发现:`main_20260608T000000Z @ e3600e9` 是 6-7 岔出的**老 stale worktree**(18 老 commit + 1143 行未提交,非生产);runbook 示例却指向它 = 谁照抄跑批会用老码、recipe_input 空 → 056 拒。待 Leo 确认废弃后清 + 修 runbook 示例。生产实际从 per-deploy worktree(如 `73eb804`)跑。
 
 ### Don't do (yet)
 - POI 档案桥别在 AIGC 发列前写(空跑)。

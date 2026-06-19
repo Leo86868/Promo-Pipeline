@@ -45,6 +45,24 @@ flowchart TD
 
 ## 旋钮索引 — "想控制什么 → 改哪里" (P2)
 
+```mermaid
+flowchart TD
+  Q{想改什么?}
+  Q -->|脚本结构都一样<br/>永远 HOOK→…→CLOSE| F["env PROMO_FORMAT_SELECTOR=random<br/>+ 加 script_skeletons/*.yaml ·零代码"]
+  Q -->|开头 hook 重复| H["script_hooks.yaml<br/>加条目 / 放宽措辞"]
+  Q -->|语气·用词·听感| P["personas/*.yaml<br/>扩范文 / 改禁用词"]
+  Q -->|话太密太散·停顿闷·镜头长短| S["script_skeletons/*.yaml<br/>total_words / pacing / pause_cap_ms"]
+  Q -->|选店素材门槛| A["script_skeletons/*.yaml<br/>assets.base_min / per_extra"]
+  Q -->|加新视频时长档 type| T["丢一张 script_skeletons/*.yaml<br/>零路由 · 零 Python"]
+  Q -->|换 / 轮换人设| W["⚠️ 非零代码:PROMO_PERSONA_SELECTOR 未接线<br/>先补 Python(仿 format selector)"]
+  Q -->|语速 · 创意温度| C["代码:tts_elevenlabs.py VOICE_SETTINGS<br/>/ script_gemini_caller.py temperature"]
+  classDef zero stroke:#3fb950,stroke-width:2px
+  classDef warn stroke:#d29922,stroke-width:2px
+  class F,H,P,S,A,T zero
+  class W,C warn
+```
+> 绿框 = 改 YAML / env 的零代码旋钮;黄框 = 要动 Python。详情见下表。
+
 | 想控制什么 | 改哪里 | 备注 |
 |---|---|---|
 | 镜头平均长度(beat 上下限) | 该 type 的 `script_skeletons/*.yaml` → `pacing.beat_min_sec` / `beat_max_sec` | 4s 顶有素材物理依据,卡上注释写明 |
