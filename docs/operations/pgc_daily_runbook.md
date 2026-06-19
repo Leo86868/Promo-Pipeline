@@ -97,7 +97,10 @@ Current one-command production path:
 
 ```bash
 ssh vps
-cd /home/deploy/pgc_batch_worktrees/main_20260608T000000Z
+# ⚠️ Run from the LATEST deploy worktree on origin/main — NEVER the .git main
+# clone (main_20260608T000000Z). That clone sits on a stale divergent branch =
+# pre-recipe_input code → 056 rejects the whole batch (operating red-line).
+cd /home/deploy/pgc_batch_worktrees/main_20260618T_cooldownlock   # current deploy @ origin/main (f06d4b9+: cooldown paradigm-scope + in-progress POI lock)
 set -a
 . ./.env
 set +a
@@ -109,6 +112,7 @@ python3 -m promo.cli.run_batch \
   --supabase-music-library \
   --production-autopilot
 ```
+> Deploy = `git worktree add <new dated path> origin/main` + `cd promo/remotion && npm install` + copy `.env`. Always point new runs at the newest such worktree; the `main_20260608T000000Z` directory is the shared `.git` root, not a run target.
 
 The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
 `--videos-per-poi 3`. The repo itself does not parse natural language.
