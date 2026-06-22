@@ -306,20 +306,24 @@ python3 -m promo.cli.run_batch \
   --tail-workers 4
 ```
 
-For the temporary 720-width source transition, add:
+**720→1080 flip (2026-06-22 — now STANDARD).** Append these to the command above
+— finals use native ≥1080 source and the upscale is dismantled:
 
 ```bash
-  --source-resolution-policy-mode transition_low_res_only \
-  --source-target-width 720 \
-  --source-width-tolerance-px 40
+  --source-resolution-policy-mode min_width \
+  --source-target-width 1080 \
+  --final-upscale-provider disabled
 ```
 
-This derives `final_upscale_policy.required=true` by default. Configure the
-runtime runner before live transition production:
+`min_width` is a TRUE ≥1080 floor (no upper bound, so native 1440/2160 also pass).
+POIs without enough native ≥1080 clips are fail-loud STRANDED at selection
+(`insufficient_source_resolution_assets`) — never silently soft. **No
+`PGC_WAVESPEED_UPSCALE_COMMAND` needed** (upscale dismantled; the WaveSpeed CLI is
+kept dormant for rollback). Per-video wall-clock drops ~16→~5 min.
 
-```text
-PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env --source-host supabase'
-```
+Legacy 720 transition (rollback only): `--source-resolution-policy-mode
+transition_low_res_only --source-target-width 720 --source-width-tolerance-px 40`
++ set `PGC_WAVESPEED_UPSCALE_COMMAND` to the `wavespeed_upscale_once` runner.
 
 The env file must provide `WAVESPEED_API_KEY`, and the process env (or the same
 env file) must provide `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` — the
