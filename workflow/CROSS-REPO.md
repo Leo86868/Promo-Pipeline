@@ -76,6 +76,31 @@ Brief(AIGC 起草)→ `workflow/projects/poi-dimension-info/brief-for-pgc.md`。
 
 ---
 
+### 720→1080 切换:拆过渡期成片 upscale (H3)
+
+Goal: 拆掉过渡期 720→1080 成片 upscale。成片改为"只用原生 ≥1080 片、不再补救升级",
+凑不齐的 POI **fail-loud 搁浅**。彩蛋:单条墙钟 ~16→~5 分(省掉 71% upscale)。
+Scope 经 **3-agent panel + 跨仓对齐(2026-06-22)** 校正;AIGC 工单原文见 superset worktree
+`.../720-to-1080-flip/pgc-flip-handoff.md`。
+
+- **共享库宽度实证(2026-06-22)**:`poi_asset_valid_clips` 宽度只有 704/720/1082/1088,
+  **>1088 = 0 片**。1088=HD(14946,61%)、704/720=720 档(39%)。两仓同库。
+- [ ] **PGC**(worker `feat/flip-720-to-1080`,reviewer 审+ship): ① 加真 `min_width`(≥N 下限)
+  模式——PGC/AIGC 现都只有对称带 `width_band`(no ≥N floor);今天 0 片 >1088 = 带"碰巧能跑",
+  故 min_width 是**稳健/未来保险、非 live blocker**。② **★完整-predicate 搁浅重算**
+  (≥1080+`embedding_ready`+9:16+`usage_remaining`+真 ≥50 片门槛)——粗代理 90%/142-157
+  **两仓都不当准**;这是真正决定"切了会不会突然搁浅一大片"的硬项。③ resume 显式 fail-loud
+  守卫(旧 720 receipt resume 不能静默 no-op,别靠 env 变量碰巧没了)。④ WaveSpeed 客户端
+  **关不删**(回滚保险)。⑤ flip 必须显式传 upscale-off(`final_upscale.py:51` 非 best_available 会自动重武装)。
+- [ ] **AIGC**(并行,独立 PR): 同 `min_width` 下限(已确认 `batch_planner.py:586` 同是对称带、
+  patch #3 改 ≥1060 下限)+ 完整-predicate 重算 + 关不删。
+- **bucket(纠正 AIGC 原"共享"假设)**:**不共享**——PGC 用 `pgc-upscale-staging`、AIGC 用
+  `upscale-staging`,各删单对象、从不删 bucket → **各清各的、单方,无跨仓握手**。
+- **不受影响**:upscale 只动成片、不碰 source clip → `poi_asset_valid_clips` 契约不变 → 取片不受影响。
+- 依赖拆两行:[PGC] gate 独立可做 · [AIGC] gate 独立可做 · [共享] 无(bucket 各管各)。
+
+---
+
 ## Adjacent (PGC-side, informed by cross-repo but NOT a handoff)
 
 - **Cross-paradigm cooldown design call (Leo)**: PGC's selection cooldown reads the SHARED
