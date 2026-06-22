@@ -57,19 +57,19 @@ Brief(AIGC 起草)→ `workflow/projects/poi-dimension-info/brief-for-pgc.md`。
 - **Scope decided (Leo 2026-06-18): ONE column `hotel_description`(自由文本)** —— 不分
   `notable_details`(单独"要点"块会变必背清单→过度依赖+复述,反增雷同);将来真出现特别
   notable 的情况再加二列。防重机制(变体轮换/跨视频惩罚)暂不上。
-- [ ] **AIGC**: 加 `hotel_description` 到 `poi_asset_pois` + 投影进契约视图
-  `poi_asset_valid_clips`(契约级 §1.1 改动 → contract PR 先行 + 通知两仓);在
-  onboarding 建档(操作员/AI 起草皆可),回填现有 ~31 活跃 POI。料来自真实渠道(Booking 等);
-  **不强求"独特",别加严约束**;provenance(记来源)可选、非必须。owner=AIGC
-- [ ] **PGC**: 写"读-转发桥"(AIGC reviewer 2026-06-18 独立审 + PGC 复核确认)——
-  ① `hotel_description` 加进读适配器 `_SNAPSHOT_FIELDS`(`poi_asset_valid_clips.py:33`,
-  现在到 file_size_bytes 为止,会把该列丢弃);② 从 POI 摘要一路转发
-  `run_batch → compile_promo → pipeline`(`run_batch.py` 现在零引用、根本不传)。
-  ⚠️ 注意:prompt 模板侧已接到深层(`script_prompt_builder.py:378` 的
-  `$hotel_description_block` 有内容才插),**但桥没写 = 即便 AIGC 发了列,脚本仍拿空串、
-  DESCRIPTION 块不亮**(别误判"已通")。顺手:builder 用 `Template.substitute`(:386),
-  写桥时改 `safe_substitute` 防将来漏 key KeyError。prompt 维持现有"一个 fact/脚本"框架。
-  owner=PGC(前置依赖 AIGC 先发列;PGC 不抢跑)。
+- [x] **AIGC**: 列名 = **`poi_description`**(非 hotel_description),已加进 `poi_asset_pois`
+  + 投影进 `poi_asset_valid_clips`;310 个活跃 POI 已填(grouped 事实卡片,~2700-5000 字)。
+  ⚠️ 视图上只见 118 个非空(其余应为"无有效片段"的 POI,PGC 本就用不到)——可顺手对一句。owner=AIGC ✓
+- [x] **PGC**: 读-转发桥**已上线 main `67aa7e7`**(2026-06-22)。**纠正 06-18 的设计**:经 3-agent
+  panel 复核,描述走 **raw_row / 管道 B(照抄 `location`),绝不进 `_SNAPSHOT_FIELDS`**——后者喂
+  recipe 指纹,塞进去会污染去重(panel 拦下了这个雷)。6 处接线 + compile_promo 的死线
+  (`full_pipeline(hotel_description=args.poi_description)`)+ fail-loud 哨兵(列缺失硬停、值 NULL 省略)
+  + 每批非空计数。750 测试绿。owner=PGC ✓
+- **A/B 实证(5 POI × 2 版,2026-06-22):正面、价值是"事实正确性的刹车"**——不喂卡片模型理直气壮
+  瞎编具体数字(180万加仑水族馆/泳池1870年凿/42种菜,全假);喂卡片编造消失、换真事实、还纠正了瞎编。
+  对外营销物料里瞎编=负债。**判定:值得全量(下批带上即生效,NULL 容忍)。**
+- [ ] **AIGC(下一棒)**: A/B 既已正面 → **把 onboarding 自动生成 `poi_description` 接上**(保准确),
+  让新 onboard 的 POI 也带卡片。这是这条价值链的根。owner=AIGC
 - **Acceptance**: 活跃 POI 的 `hotel_description` 有真实内容 → PGC 脚本 DESCRIPTION 块点亮、
   数字有据可依(real DB check:视图能读到非空 hotel_description)。
 - Read path: PGC 走 `poi_asset_valid_clips` 视图(事实跟 clip 行重复,PGC 去重到 POI 级)。
