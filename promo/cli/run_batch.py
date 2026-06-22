@@ -86,6 +86,9 @@ class BatchPoi:
     location: str
     poi_id: str | None
     canonical_key: str | None
+    # POI-level facts card; "" when the POI has no description (normal). Threaded
+    # to compile_promo as --poi-description only when non-empty.
+    poi_description: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,7 @@ def parse_batch_pois(spec: dict[str, Any]) -> list[BatchPoi]:
                 location=str(raw.get("location") or "").strip(),
                 poi_id=str(poi_id).strip() if poi_id else None,
                 canonical_key=str(canonical_key).strip() if canonical_key else None,
+                poi_description=str(raw.get("poi_description") or "").strip(),
             )
         )
     return pois
@@ -470,6 +474,8 @@ def build_compile_command(
     ]
     if item.poi.location:
         command.extend(["--location", item.poi.location])
+    if item.poi.poi_description:
+        command.extend(["--poi-description", item.poi.poi_description])
     if item.poi.poi_id:
         command.extend(["--supabase-poi-id", item.poi.poi_id])
     elif item.poi.canonical_key:

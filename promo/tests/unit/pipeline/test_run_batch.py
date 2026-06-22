@@ -128,6 +128,10 @@ def _selection_rows(*, poi_count=2, assets_per_poi=60):
                 "source_storage_path": f"{poi_id}/clips/{asset_id}.mp4",
                 "source_content_hash": "sha256:" + "a" * 64,
                 "duration_sec": 5.0,
+                # Live view always exposes this POI-level column (NULL =
+                # un-described); present it so the schema-drift sentinel stays
+                # quiet for these selection fixtures.
+                "poi_description": "",
             })
     return rows
 
@@ -2010,3 +2014,74 @@ def test_resume_serial_tail_workers_zero_runs_tails_strictly_serial(tmp_path):
     assert peak["peak"] == 1
     after = [v["state"] for v in json.loads(receipt_path.read_text())["videos"]]
     assert after == ["complete", "complete"]
+
+
+# ── poi_description bridge (pipeline B) ──────────────────────────────────────
+def test_parse_batch_pois_round_trips_poi_description():
+    """A poi_description in batch.json lands on BatchPoi (stripped)."""
+    from promo.cli.run_batch import parse_batch_pois
+
+    facts = "  Cliffside resort, 3 pools, Forbes 5-star spa.  "
+    pois = parse_batch_pois({
+        "pois": [
+            {"name": "Hotel A", "poi_id": "poi_1", "poi_description": facts},
+            {"name": "Hotel B", "poi_id": "poi_2"},  # NULL/absent → ""
+        ]
+    })
+
+    assert pois[0].poi_description == facts.strip()
+    assert pois[1].poi_description == ""
+
+
+def test_build_compile_command_threads_poi_description(tmp_path):
+    """A non-empty poi_description rides the --poi-description flag."""
+    from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
+
+    facts = "Cliffside resort, 3 pools, Forbes 5-star spa."
+    item = BatchItem(
+        poi=BatchPoi(
+            name="Hotel", location="X", poi_id="poi_1", canonical_key=None,
+            poi_description=facts,
+        ),
+        video_index=1,
+        output_dir=str(tmp_path),
+        output_path=str(tmp_path / "promo.mp4"),
+        voice_key="hope",
+        music_id=None,
+        seed=None,
+    )
+
+    command = build_compile_command(
+        item=item,
+        target_duration_sec=65,
+        use_music_library=False,
+        script_candidates=1,
+        tts_speed=0.95,
+    )
+
+    assert command[command.index("--poi-description") + 1] == facts
+
+
+def test_build_compile_command_omits_poi_description_when_empty(tmp_path):
+    """An empty poi_description (NULL POI) omits the flag entirely."""
+    from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
+
+    item = BatchItem(
+        poi=BatchPoi(name="Hotel", location="X", poi_id="poi_1", canonical_key=None),
+        video_index=1,
+        output_dir=str(tmp_path),
+        output_path=str(tmp_path / "promo.mp4"),
+        voice_key="hope",
+        music_id=None,
+        seed=None,
+    )
+
+    command = build_compile_command(
+        item=item,
+        target_duration_sec=65,
+        use_music_library=False,
+        script_candidates=1,
+        tts_speed=0.95,
+    )
+
+    assert "--poi-description" not in command

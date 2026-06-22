@@ -154,6 +154,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compile promo narration video via Remotion")
     parser.add_argument("--poi", type=str, help="Hotel/POI name")
     parser.add_argument("--location", type=str, default="", help="Location string")
+    parser.add_argument(
+        "--poi-description", type=str, default="",
+        help="POI-level facts card (grouped, ~2700 chars). Rendered into the "
+             "script prompt's DESCRIPTION段 (internal name: hotel_description). "
+             "Empty (default) omits the block.",
+    )
     parser.add_argument("--output", "-o", type=str, default=None, help="Output MP4 path")
     parser.add_argument(
         "--voice", type=str, default=None,
@@ -375,6 +381,7 @@ def main():
             n_variants=args.n_variants,
             script_candidates=args.script_candidates,
             tts_speed=args.tts_speed,
+            hotel_description=args.poi_description,
             seed=args.seed,
             hook_seed=args.hook_seed,
         )

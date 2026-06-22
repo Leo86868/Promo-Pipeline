@@ -344,6 +344,17 @@ def summarize_pois(
         else None
     )
     for raw_row in rows:
+        # Schema-drift sentinel (fail-loud): poi_description is a POI-level facts
+        # column the view is expected to expose. A NULL value (POI not yet
+        # described) is fine and handled downstream (DESCRIPTION段 omitted); the
+        # whole COLUMN going missing is schema drift and must hard-stop, never
+        # silently run every POI description-less. Check key presence, NOT value.
+        if "poi_description" not in raw_row:
+            raise BatchSelectionError(
+                "poi_asset_valid_clips is missing the poi_description column "
+                "(schema drift) — refusing to run a batch that would silently "
+                "drop every POI's facts. Fix the view, then re-run."
+            )
         if not _classification_matches(
             raw_row,
             classification_field=classification_field,
@@ -363,6 +374,11 @@ def summarize_pois(
                 "poi_name": row.get("display_name") or row.get("canonical_key") or poi_id,
                 "canonical_key": row.get("canonical_key"),
                 "location": raw_row.get("location") or "",
+                # POI-level facts card (~2700 chars). NULL/missing value → "" →
+                # DESCRIPTION段 omitted downstream (normal for un-described POIs).
+                # Pulled from raw_row, NOT the normalized snapshot, so it never
+                # touches _SNAPSHOT_FIELDS / the recipe dedup fingerprint.
+                "poi_description": raw_row.get("poi_description") or "",
             },
         )
 
@@ -489,6 +505,7 @@ def build_batch_spec(
                 "name": poi["poi_name"],
                 "location": poi.get("location") or "",
                 "canonical_key": poi.get("canonical_key"),
+                "poi_description": poi.get("poi_description") or "",
             }
             for poi in selected_pois
         ],
@@ -561,6 +578,20 @@ def build_selection_payload(
             fresh_eligible,
             poi_count,
         )
+    # Make silent degradation visible: how many of the POIs we're about to
+    # render actually carry a facts card. A NULL description is legitimate
+    # (un-described POI), but a sudden collapse to 0 is the signal that the
+    # upstream onboarding/backfill broke — surface it every batch.
+    described_selected = sum(
+        1 for poi in selected if (poi.get("poi_description") or "").strip()
+    )
+    logger.info(
+        "poi_description: %d/%d selected POIs carry a non-empty facts card "
+        "(%d will omit the DESCRIPTION段)",
+        described_selected,
+        len(selected),
+        len(selected) - described_selected,
+    )
     shortage = max(poi_count - len(summary["eligible_pois"]), 0)
     return {
         "schema_version": 1,

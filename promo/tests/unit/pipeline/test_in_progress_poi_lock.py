@@ -130,6 +130,10 @@ def _rows_for_poi(poi_id, *, count, name):
             "container": "mp4",
             "video_codec": "h264",
             "status": "active",
+            # The live view always exposes this POI-level column (NULL when the
+            # POI is un-described); present it so the schema-drift sentinel in
+            # summarize_pois stays quiet.
+            "poi_description": "",
         })
     return rows
 

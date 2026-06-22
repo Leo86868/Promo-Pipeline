@@ -18,6 +18,10 @@ def _row(poi_id, asset_id, clip_id, *, name, canonical_key=None, **overrides):
         "container": "mp4",
         "video_codec": "h264",
         "status": "active",
+        # The live view always exposes this POI-level column (NULL when the POI
+        # is un-described); default "" keeps the schema-drift sentinel quiet.
+        # Override per-test to exercise the DESCRIPTION-present path.
+        "poi_description": "",
     }
     row.update(overrides)
     return row
@@ -478,3 +482,48 @@ def test_fetch_valid_clip_rows_paginates_supabase_results():
     # 2026-06-09 fix: pagination must be ordered (stable pages under
     # concurrent writers) — exactly one ORDER BY, applied before paging.
     assert client.query.order_columns == ["asset_id"]
+
+
+# ── poi_description bridge (pipeline B) ──────────────────────────────────────
+def test_poi_description_value_threads_through_summarize_and_spec():
+    """A non-empty poi_description is carried verbatim from the raw view row
+    into the eligible record and the batch_spec POI dict."""
+    from promo.core.batch_selection import build_batch_spec, summarize_pois
+
+    facts = "Cliffside resort, 3 infinity pools, Forbes 5-star spa."
+    rows = _rows_for_poi("poi_aaa", count=80, name="A Hotel", poi_description=facts)
+
+    summary = summarize_pois(rows, min_active_assets=70)
+    eligible = {poi["poi_id"]: poi for poi in summary["eligible_pois"]}
+    assert eligible["poi_aaa"]["poi_description"] == facts
+
+    spec = build_batch_spec(summary["eligible_pois"], videos_per_poi=3)
+    assert spec["pois"][0]["poi_description"] == facts
+
+
+def test_poi_description_null_value_is_tolerated_and_emptied():
+    """A NULL poi_description (un-described POI) must NOT crash — it normalizes
+    to "" so the DESCRIPTION段 is simply omitted downstream."""
+    from promo.core.batch_selection import build_batch_spec, summarize_pois
+
+    rows = _rows_for_poi("poi_aaa", count=80, name="A Hotel", poi_description=None)
+
+    summary = summarize_pois(rows, min_active_assets=70)
+    eligible = {poi["poi_id"]: poi for poi in summary["eligible_pois"]}
+    assert eligible["poi_aaa"]["poi_description"] == ""
+
+    spec = build_batch_spec(summary["eligible_pois"], videos_per_poi=3)
+    assert spec["pois"][0]["poi_description"] == ""
+
+
+def test_missing_poi_description_column_raises_fail_loud():
+    """The COLUMN going missing (schema drift) is a hard stop — refuse to run a
+    batch that would silently drop every POI's facts."""
+    from promo.core.batch_selection import BatchSelectionError, summarize_pois
+
+    rows = _rows_for_poi("poi_aaa", count=80, name="A Hotel")
+    for row in rows:
+        del row["poi_description"]  # simulate the view dropping the column
+
+    with pytest.raises(BatchSelectionError, match="poi_description column"):
+        summarize_pois(rows, min_active_assets=70)

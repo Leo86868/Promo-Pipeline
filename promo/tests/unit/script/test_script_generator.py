@@ -1038,6 +1038,47 @@ class TestSprint10C1PromptSchema:
         assert "[secondary] beach: paddleboarders near a rocky coastline" in prompt
         assert "Clip 0001:" not in prompt
 
+    def test_poi_description_renders_description_block_when_present(self):
+        """A non-empty POI facts card lights up the DESCRIPTION段 in the
+        prompt (the dark-line target of the poi_description bridge)."""
+        from promo.core.script.script_generator import (
+            _build_prompt, load_persona, _DEFAULT_PERSONA_PATH,
+        )
+        from promo.core.format_profiles import get_promo_format_profile
+
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        profile = get_promo_format_profile(65)
+        facts = "Beachfront resort with 3 pools and a Forbes 5-star spa."
+        prompt = _build_prompt(
+            poi_name="Test Hotel",
+            location="Nowhere",
+            clips_metadata=self._clips_metadata(),
+            persona=persona,
+            profile=profile,
+            hotel_description=facts,
+        )
+        assert f"DESCRIPTION: {facts}" in prompt
+
+    def test_poi_description_omits_block_when_empty(self):
+        """Empty description (NULL POI) omits the block — no crash, no
+        empty 'DESCRIPTION:' header."""
+        from promo.core.script.script_generator import (
+            _build_prompt, load_persona, _DEFAULT_PERSONA_PATH,
+        )
+        from promo.core.format_profiles import get_promo_format_profile
+
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        profile = get_promo_format_profile(65)
+        prompt = _build_prompt(
+            poi_name="Test Hotel",
+            location="Nowhere",
+            clips_metadata=self._clips_metadata(),
+            persona=persona,
+            profile=profile,
+            hotel_description="",
+        )
+        assert "DESCRIPTION:" not in prompt
+
     def test_output_template_has_no_clips_array(self):
         """The JSON output block shown to Gemini #1 must NOT contain
         literal 'clips' / 'clip_id' / 'cut_after' fields. VIDEO CLIP
