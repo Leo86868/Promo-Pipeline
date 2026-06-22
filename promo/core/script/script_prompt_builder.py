@@ -34,6 +34,27 @@ from promo.core.schema import ClipMetadata, NarratorPersona
 logger = logging.getLogger(__name__)
 
 
+# DESCRIPTION-block usage guardrail (poi_description bridge, 2026-06-22).
+# The facts card is verified ground truth — feeding it kills fabrication
+# (model stops inventing prices/years/counts). But handed raw, the model
+# treats the 2700-char card as a checklist and recites amenities, which
+# reads as a brochure and flattens the story (blind A/B: raw-fed scripts
+# were flagged "list-y" 3/5 and scored worst on story feel). This sentence
+# tells the model HOW to use the card: stay accurate, weave at most one
+# fact, never list. Validated 3-way blind (same 5 POIs): with-guardrail
+# kept 5/5 facts accurate AND recovered story feel to a near-tie with the
+# no-card baseline, strictly beating raw-fed. Trailing blank line separates
+# the instruction from the facts that follow it in the rendered block.
+_DESCRIPTION_GUARDRAIL = (
+    "(These are VERIFIED facts about this property, given ONLY so you stay "
+    "accurate and never invent details like prices, dates, or counts. Do NOT "
+    "list amenities or recite several facts — the 'one specific number or "
+    "fact per script' rule still holds. Pick AT MOST ONE concrete detail that "
+    "genuinely serves the story and weave it in naturally; treat everything "
+    "else here as background to stay true to, not material to mention.)\n\n"
+)
+
+
 # V1-2: hook cards ({name, technique, must_not}); HOOK_TECHNIQUES keeps
 # the historical name-list shape for rotation and consumers.
 # REPRODUCIBILITY: rotation is seed % len(HOOK_CARDS) — editing the card
@@ -376,7 +397,8 @@ def build_prompt(
     # `$identifier` substitution (no f-string-style ternaries in the
     # template body).
     hotel_description_block = (
-        f"DESCRIPTION: {hotel_description}" if hotel_description else ""
+        f"DESCRIPTION: {_DESCRIPTION_GUARDRAIL}{hotel_description}"
+        if hotel_description else ""
     )
     notable_details_block = (
         f"NOTABLE DETAILS: {notable_details}" if notable_details else ""

@@ -1057,7 +1057,33 @@ class TestSprint10C1PromptSchema:
             profile=profile,
             hotel_description=facts,
         )
-        assert f"DESCRIPTION: {facts}" in prompt
+        # Facts land under the DESCRIPTION header...
+        assert "DESCRIPTION:" in prompt
+        assert facts in prompt
+        # ...preceded by the usage guardrail (weave-don't-list), which is what
+        # keeps the fed card from turning the script into an amenity list.
+        assert "Do NOT list amenities" in prompt
+        assert "AT MOST ONE concrete detail" in prompt
+
+    def test_poi_description_guardrail_absent_when_no_description(self):
+        """The guardrail rides the DESCRIPTION block — no card, no guardrail
+        (it must never leak into a description-less prompt)."""
+        from promo.core.script.script_generator import (
+            _build_prompt, load_persona, _DEFAULT_PERSONA_PATH,
+        )
+        from promo.core.format_profiles import get_promo_format_profile
+
+        persona = load_persona(_DEFAULT_PERSONA_PATH)
+        profile = get_promo_format_profile(65)
+        prompt = _build_prompt(
+            poi_name="Test Hotel",
+            location="Nowhere",
+            clips_metadata=self._clips_metadata(),
+            persona=persona,
+            profile=profile,
+            hotel_description="",
+        )
+        assert "Do NOT list amenities" not in prompt
 
     def test_poi_description_omits_block_when_empty(self):
         """Empty description (NULL POI) omits the block — no crash, no
