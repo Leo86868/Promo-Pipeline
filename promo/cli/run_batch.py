@@ -1427,6 +1427,23 @@ def resume_batch(
         (request.get("filters") or {}).get("final_upscale_policy"),
         source_policy_mode=resolved_source_policy.mode,
     )
+    # 2026-06-22 flip guard: once 720->1080 final-upscale is dismantled,
+    # resuming a receipt that still REQUIRES upscale (e.g. an old
+    # transition_low_res_only run) cannot produce a compliant 1080 master.
+    # Fail loud HERE on the real, detectable state ("required, but no upscaler
+    # configured") instead of relying on the fragile path where the failure
+    # only surfaces because PGC_WAVESPEED_UPSCALE_COMMAND happens to be unset
+    # (and only inside the autopilot preflight). This catches the case before
+    # any render spend, regardless of mode/plan.
+    if resolved_final_upscale_policy.required and (
+        final_upscaler_factory(resolved_final_upscale_policy) is None
+    ):
+        raise FinalUpscaleError(
+            "resume requires final-video upscale but no upscaler is configured: "
+            "needs upscale but upscale has been dismantled. Re-run from native "
+            ">=1080 sources (source_resolution_policy mode=min_width), or restore "
+            "PGC_WAVESPEED_UPSCALE_COMMAND to finish this legacy low-res batch."
+        )
     output_root = str(request.get("output_root") or receipt_file.parent)
     resolved_handoff_dir = handoff_dir or os.path.join(output_root, "handoff")
 
@@ -1702,7 +1719,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source-resolution-policy-mode",
-        choices=["best_available", "transition_low_res_only", "width_band"],
+        choices=["best_available", "transition_low_res_only", "width_band", "min_width"],
         default="best_available",
         help="Shared asset source-width policy. Default uses all eligible assets.",
     )

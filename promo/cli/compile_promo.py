@@ -235,7 +235,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Directory to save output")
     parser.add_argument("--source-resolution-policy-mode",
-                        choices=["best_available", "transition_low_res_only", "width_band"],
+                        choices=["best_available", "transition_low_res_only", "width_band", "min_width"],
                         default="best_available")
     parser.add_argument("--source-target-width", type=int, default=720)
     parser.add_argument("--source-width-tolerance-px", type=int, default=40)

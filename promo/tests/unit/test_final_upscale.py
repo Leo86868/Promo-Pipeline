@@ -30,6 +30,28 @@ def test_final_upscale_policy_can_be_explicitly_required_but_disabled():
     assert policy.provider == "disabled"
 
 
+def test_min_width_mode_self_rearms_upscale_unless_explicitly_disabled():
+    """Flip trap (final_upscale.py:51): min_width is NOT best_available, so a
+    missing/None final_upscale_policy DEFAULTS to required=True and re-arms the
+    very upscale the flip removes. The flip MUST pass an explicit off."""
+    from promo.core.final_upscale import normalize_final_upscale_policy
+
+    # No explicit policy under min_width -> upscale silently re-armed.
+    rearmed = normalize_final_upscale_policy(None, source_policy_mode="min_width")
+    assert rearmed.required is True
+    assert rearmed.enabled is True
+
+    # The explicit off the flip invocation must send
+    # (`--final-upscale-provider disabled`) wins even under min_width.
+    off = normalize_final_upscale_policy(
+        {"required": False, "enabled": False, "provider": "disabled"},
+        source_policy_mode="min_width",
+    )
+    assert off.required is False
+    assert off.enabled is False
+    assert off.provider == "disabled"
+
+
 def test_verify_final_upscale_output_accepts_target_dimensions(tmp_path, monkeypatch):
     from types import SimpleNamespace
 

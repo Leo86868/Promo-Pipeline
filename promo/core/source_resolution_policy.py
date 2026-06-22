@@ -51,6 +51,8 @@ def normalize_source_resolution_policy(
             target_width = int(raw.get("target_width") or DEFAULT_TRANSITION_TARGET_WIDTH)
         elif mode == "width_band":
             target_width = int(raw.get("target_width") or DEFAULT_TRANSITION_TARGET_WIDTH)
+        elif mode == "min_width":
+            target_width = int(raw.get("target_width") or DEFAULT_TRANSITION_TARGET_WIDTH)
         elif mode == DEFAULT_SOURCE_RESOLUTION_MODE:
             target_width = (
                 int(raw["target_width"])
@@ -60,7 +62,7 @@ def normalize_source_resolution_policy(
         else:
             raise SourceResolutionPolicyError(
                 "source_resolution_policy.mode must be one of: "
-                "best_available, transition_low_res_only, width_band"
+                "best_available, transition_low_res_only, width_band, min_width"
             )
         policy = SourceResolutionPolicy(
             mode=mode,
@@ -84,7 +86,7 @@ def normalize_source_resolution_policy(
         raise SourceResolutionPolicyError(
             "aspect_ratio_min must be <= aspect_ratio_max"
         )
-    if policy.mode in {"transition_low_res_only", "width_band"}:
+    if policy.mode in {"transition_low_res_only", "width_band", "min_width"}:
         if policy.target_width is None or policy.target_width <= 0:
             raise SourceResolutionPolicyError(
                 "target_width must be positive for width-band policies"
@@ -109,10 +111,18 @@ def source_resolution_matches(
         return False
 
     assert resolved.target_width is not None
-    min_width = resolved.target_width - resolved.tolerance_px
-    max_width = resolved.target_width + resolved.tolerance_px
-    if width < min_width or width > max_width:
-        return False
+    if resolved.mode == "min_width":
+        # Floor, not a band: accept width >= target with NO upper bound, so a
+        # native 1440/2160 source passes (a symmetric width_band would reject
+        # it). The 9:16 sub-gate below still applies. This is the 1080-endgame
+        # policy — "use native >=1080, never upscale" (2026-06-22 flip).
+        if width < resolved.target_width:
+            return False
+    else:
+        min_width = resolved.target_width - resolved.tolerance_px
+        max_width = resolved.target_width + resolved.tolerance_px
+        if width < min_width or width > max_width:
+            return False
 
     ratio = height / width
     return resolved.aspect_ratio_min <= ratio <= resolved.aspect_ratio_max

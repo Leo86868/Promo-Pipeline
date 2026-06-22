@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """Upscale one local MP4 with WaveSpeed and write a local MP4 output.
 
+DORMANT post-flip (2026-06-22): the 720->1080 transition upscale was
+dismantled — production now uses native >=1080 sources (source policy
+mode=min_width) and never upscales. This CLI is RETAINED, not deleted, as
+the rollback path: ~39% of the shared library is still 720, and the real
+stranding count under a hard 1080 floor is not yet settled, so we may need
+to re-arm upscale. It is "off" purely by NOT exporting
+PGC_WAVESPEED_UPSCALE_COMMAND and passing ``--final-upscale-provider
+disabled`` — no code path here changed. Staging bucket is pgc- prefixed
+(independent, self-cleaning, no cross-repo handshake).
+
 Source-URL policy (2026-06-09): WaveSpeed fetches the input by URL. The
 preferred source host is Supabase Storage (private bucket + time-limited
 signed URL) — production masters must not transit public anonymous file

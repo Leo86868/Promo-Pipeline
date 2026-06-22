@@ -56,7 +56,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--source-resolution-policy-mode",
-        choices=["best_available", "transition_low_res_only", "width_band"],
+        choices=["best_available", "transition_low_res_only", "width_band", "min_width"],
         default="best_available",
         help="Shared asset source-width policy. Default uses all eligible assets.",
     )

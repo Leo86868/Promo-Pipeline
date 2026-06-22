@@ -1463,10 +1463,20 @@ def test_autopilot_preflight_runs_upscaler_deep_check(tmp_path):
 
 
 def test_resume_derives_required_upscale_from_source_policy(tmp_path):
-    """2026-06-10 review fix: a transition_low_res_only receipt that lacks
-    an explicit final_upscale_policy must still REQUIRE upscale on resume
-    (preflight demands an upscaler instead of silently skipping the gate)."""
-    from promo.cli.run_batch import DriveUploadTarget, resume_batch
+    """2026-06-10: a transition_low_res_only receipt that lacks an explicit
+    final_upscale_policy must still REQUIRE upscale on resume.
+
+    2026-06-22 flip (ticket #4): the failure mechanism is now an EXPLICIT,
+    early ``FinalUpscaleError`` raised on the real detectable state
+    ("required, but no upscaler configured") — replacing the old fragile path
+    where the failure only surfaced as a preflight error that happened to
+    mention the unset env var. The intent (fail closed, never resume a
+    low-res batch without the mandatory upscale gate) is unchanged."""
+    from promo.cli.run_batch import (
+        DriveUploadTarget,
+        FinalUpscaleError,
+        resume_batch,
+    )
 
     receipt = {
         "schema_version": 1,
@@ -1507,24 +1517,20 @@ def test_resume_derives_required_upscale_from_source_policy(tmp_path):
     receipt_path = tmp_path / "RUN_RECEIPT.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
 
-    exit_code = resume_batch(
-        receipt_path=str(receipt_path),
-        command_runner=lambda command: pytest.fail("must not render"),
-        drive_upload_target_factory=lambda: DriveUploadTarget(
-            uploader=_FakeUploader(),
-            parent_folder_id="parent-folder",
-            parent_folder_name="AIGC Production Masters",
-        ),
-        supabase_client_factory=lambda: object(),
-        final_upscaler_factory=lambda policy: None,  # not configured
-    )
-
-    # Required upscale was derived from the source policy → preflight fails
-    # closed instead of resuming without the mandatory upscale gate.
-    assert exit_code == 1
-    after = json.loads(receipt_path.read_text())
-    assert after["preflight"]["status"] == "failed"
-    assert "PGC_WAVESPEED_UPSCALE_COMMAND" in after["preflight"]["errors"][0]
+    # Required upscale derived from the source policy + no upscaler configured
+    # → explicit fail-loud raise, before any render or receipt mutation.
+    with pytest.raises(FinalUpscaleError, match="dismantled"):
+        resume_batch(
+            receipt_path=str(receipt_path),
+            command_runner=lambda command: pytest.fail("must not render"),
+            drive_upload_target_factory=lambda: DriveUploadTarget(
+                uploader=_FakeUploader(),
+                parent_folder_id="parent-folder",
+                parent_folder_name="AIGC Production Masters",
+            ),
+            supabase_client_factory=lambda: object(),
+            final_upscaler_factory=lambda policy: None,  # not configured
+        )
 
 
 # --- Tail pipelining (2026-06-10) -------------------------------------------
