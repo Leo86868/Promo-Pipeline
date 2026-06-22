@@ -203,7 +203,35 @@ When you intentionally change a system prompt body:
 
 这是 Leo 最关心的起点。复刻自 `docs/ROADMAP.md §4c`,用大白话重写,并标出哪些是**零代码改 YAML**、哪些**要动 Python**。每条 file:line 都 2026-06-17 重新 grep 核过;对不上的在下一节「文档 vs 现实」标明。
 
-按影响排序(雷同从大到小):
+**先看这张「省力 × 影响」地图**——同样去雷同,哪个最划算先动:
+
+```
+影响大 ↑
+        │  judge 打分(first-valid→挑最强)     ⭐ format=random(env 开关)
+        │  persona 多人设轮换 ⚠️要补接线         加范文(persona YAML)
+        │  ── 大工程但值 ──                    ── 先做这格 ──
+────────┼───────────────────────────────────────────────────→ 越省力
+        │                                      加 hook 卡 / 加 skeleton 卡
+        │  temperature 扫(动 Python·收益薄)    (零代码,中等影响)
+        │  ── 别先碰 ──                        ── 顺手就做 ──
+影响小 ↓        费力(要动 Python)        省力(零代码改 YAML)
+```
+
+右上格 = 先动:`format=random` ⭐ + 加范文,都是高影响 + 零代码。左上「值但大工程」:judge 打分、persona 多人设轮换(后者还卡在下文「文档 vs 现实」第 1 条那个没接线的坑)。左下 temperature 收益薄、别先浪费力气。
+
+**再看这张「我想改啥 → 开哪个抽屉」决策树**:
+
+```
+我想让脚本不那么千篇一律
+├─ 改"听感/语气"        → persona YAML(范文 example_scripts / 禁用词)   零代码
+├─ 改"结构不要永远一样"  → ① format=random 开关(env)        ⭐ 零代码·最省力起点
+│                        └ ② 加 skeleton 卡(新档 / 新段落结构)         零代码
+├─ 改"开场套路"          → script_hooks.yaml(加卡 / 放宽强制措辞)      加卡零代码·放宽要动 Python
+├─ 改"随机性/温度"       → temperature(script_gemini_caller.py:35)     ⚠️ 要动 Python
+└─ 想要"真挑最好的一条"  → first-valid-wins 换 judge 打分               ⚠️ 要动 Python
+```
+
+下面这张表是同样 7 条的**细节版**(file:line + 解法),按影响排序(雷同从大到小):
 
 | # | 为什么都一样 | 真实位置 | 怎么治 | 改 YAML 还是改 Python |
 |---|---|---|---|---|
