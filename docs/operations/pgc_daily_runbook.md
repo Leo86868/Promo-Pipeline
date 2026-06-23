@@ -230,42 +230,43 @@ Examples:
 If not enough POIs pass the filters, the system should stop before production
 and ask whether to run fewer or wait for zhongtai to add more assets.
 
-## Source Width Transition
+## Source Width Policy
 
-For the temporary low-res transition, PGC uses source asset `width` as the main
-resolution field. The current policy is:
+PGC uses source asset `width` as the main resolution field. The current standard
+policy (since the 2026-06-22 720→1080 flip) is:
 
 ```text
-mode = transition_low_res_only
-target_width = 720
-tolerance_px = 40
+mode = min_width          # ≥1080 floor, no upper bound
+target_width = 1080
+final upscale = disabled  # sources are already ≥1080
 aspect ratio sanity = near 9:16
 ```
 
 Grandma version:
 
 ```text
-This is how PGC intentionally eats the old 720-width vertical clips.
-It is not a forever rule.
+PGC now uses only clips that are already ≥1080 wide.
+POIs without enough of them are stranded (fail-loud), not quietly softened.
+The old "eat 720 clips then upscale" policy is the rollback path, not the rule.
 ```
 
 The rule applies twice:
 
-- when choosing POIs, the POI must have enough 720-width, active,
+- when choosing POIs, the POI must have enough ≥1080-width, active,
   embedding-ready clips;
 - when retrieval downloads clips, fallback/reserve clips must still come from
-  that same 720-width pool.
+  that same ≥1080-width pool.
 
-If this transition policy is active, final-video upscale is required before
-Drive handoff. In production autopilot, the system must stop before Drive,
-usage, and `release_candidates` if the WaveSpeed final upscale was not applied
-and verified.
+**Rollback only — `transition_low_res_only` / target_width 720:** the original
+policy that eats old 720-width clips. Retained, not deleted. When it is active,
+final-video upscale is required before Drive handoff: in production autopilot the
+system must stop before Drive, usage, and `release_candidates` if the WaveSpeed
+final upscale was not applied and verified.
 
 Verified means ffprobe reads the finished MP4 and confirms the configured target
 dimensions, currently 1080x1920 by default.
 
-Current repo support expects the WaveSpeed runner to be configured as a runtime
-command:
+For the rollback path, the WaveSpeed runner is configured as a runtime command:
 
 ```text
 PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env'
@@ -276,10 +277,10 @@ The env file must provide `WAVESPEED_API_KEY`. The command receives
 upscaled MP4 to `{output_path}`. If this command is missing while final upscale
 is required, production fails closed before handoff.
 
-When the old 720-width pool is drained or zhongtai provides only 1080-width
-assets, switch the source policy back to `best_available` or a future 1080
-policy and disable the final-upscale requirement. PGC should not update
-zhongtai asset quality fields directly.
+The standard→rollback switch is already settled: the flip to `min_width` (≥1080,
+upscale off) is the default. Reverting to the 720 pool means switching the
+source policy back to `transition_low_res_only` AND re-arming the upscale
+command above. PGC should not update zhongtai asset quality fields directly.
 
 ## Failure Rules
 

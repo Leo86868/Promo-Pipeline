@@ -101,26 +101,34 @@ Future paradigms can define their own base value and buffer formula.
 ## Source Resolution Policy
 
 PGC source-resolution policy uses the shared asset `width` field as the main
-selector for vertical videos. Do not key transition logic off `height`.
+selector for vertical videos. Do not key this policy off `height`.
 
-Current controlled low-res transition policy:
+Current standard policy (since the 2026-06-22 720→1080 flip) — a ≥1080 floor
+with final upscale disabled:
 
 ```json
 {
-  "mode": "transition_low_res_only",
-  "target_width": 720,
-  "tolerance_px": 40,
+  "mode": "min_width",
+  "target_width": 1080,
   "aspect_ratio_min": 1.70,
   "aspect_ratio_max": 1.86
 }
 ```
 
-This means PGC may intentionally consume old 720-width-ish vertical source
-clips such as `704x1248` and `720x1280`. The policy must be applied twice:
+`min_width` is a TRUE floor (width ≥ target, no upper bound); native 1440/2160
+also qualify. POIs without enough qualifying clips are fail-loud stranded at
+selection.
+
+Rollback only — the original low-res transition policy (retained, not the
+default): `{"mode": "transition_low_res_only", "target_width": 720,
+"tolerance_px": 40}`, which intentionally consumes old 720-width-ish clips such
+as `704x1248` / `720x1280` and then upscales them.
+
+Either way the policy must be applied twice:
 
 - POI eligibility counts only active, embedding-ready, policy-matching assets;
 - retrieval/download uses the same filtered ready-asset pool and must not widen
-  fallback padding back to mixed 720/1080 assets.
+  fallback padding back to mixed-resolution assets.
 
 For `pgc_65s`, the existing candidate-ready threshold still applies after the
 source policy. For example, `3 videos per POI` requires 70 policy-matching,
@@ -177,8 +185,8 @@ manifest because the source asset timeline does not change.
 Verified means ffprobe reports the actual final MP4 dimensions match the
 configured target dimensions, currently 1080x1920 by default.
 
-Current repo support treats WaveSpeed as a detachable runtime provider. Before
-live transition production, configure:
+WaveSpeed is a detachable runtime provider, kept dormant post-flip. It is needed
+only on the `transition_low_res_only` rollback path; to re-arm it, configure:
 
 ```text
 PGC_WAVESPEED_UPSCALE_COMMAND='python3 -m promo.cli.wavespeed_upscale_once --input {input_path} --output {output_path} --env /path/to/wavespeed.env'
@@ -265,14 +273,13 @@ Recommended structure:
       "extra_variation_asset_buffer": 10,
       "required_active_assets": 70,
       "source_resolution_policy": {
-        "mode": "transition_low_res_only",
-        "target_width": 720,
-        "tolerance_px": 40
+        "mode": "min_width",
+        "target_width": 1080
       },
       "final_upscale_policy": {
-        "required": true,
-        "enabled": true,
-        "provider": "wavespeed"
+        "required": false,
+        "enabled": false,
+        "provider": "disabled"
       }
     }
   },
@@ -290,9 +297,9 @@ Recommended structure:
       "source_video_key": "manifest:manifest_example:variant:1",
       "source_output_uri": "drive:file_id",
       "final_upscale": {
-        "required": true,
-        "status": "verified",
-        "output_path": "..."
+        "required": false,
+        "status": "not_required",
+        "output_path": null
       },
       "usage": {
         "event_count": 18,

@@ -45,17 +45,19 @@ Every batch is one of two modes. Pick it from Leo's words, not from extra
 operator-supplied numbers.
 
 - **Stockpile batch** (default — "补库存", "make N POIs", "production run"):
-  real inventory. `--production-autopilot` WITH real WaveSpeed upscale (during
-  the 720 transition upscale is required, so don't disable it) → real Drive
-  upload + usage writeback + `release_candidates`. **Never reverted** — these
-  are real products.
+  real inventory. `--production-autopilot` → real Drive upload + usage
+  writeback + `release_candidates`. **Never reverted** — these are real
+  products. Standard source/upscale config is the 720→1080 flip (native ≥1080
+  `min_width` + upscale dismantled; see Source Width Policy) — there is no
+  WaveSpeed spend to "not disable" anymore.
 
 - **Healthcheck / test batch** ("体检", "smoke", "test the chain"): proves the
-  live chain end-to-end without spending WaveSpeed or shipping product. Add
-  `--final-upscale-provider disabled` — but note it ONLY skips the paid
-  upscale. The batch STILL does real Drive upload + usage writeback +
-  `release_candidates`; `disabled` does NOT make it no-publish. So a
-  healthcheck MUST be reverted when done, via FULL cleanup (collect each
+  live chain end-to-end without shipping product. Runs the SAME standard
+  command as a stockpile batch — the difference is NOT a flag (post-flip the
+  standard command already carries `--final-upscale-provider disabled`, and
+  there is no WaveSpeed spend either way). A healthcheck STILL does real Drive
+  upload + usage writeback + `release_candidates` — it is NOT no-publish — so it
+  MUST be reverted when done, via FULL cleanup (collect each
   video's `manifest_id` from the receipt — the CLI keys on manifest-id, there
   is no batch-id flag):
 
@@ -68,12 +70,12 @@ operator-supplied numbers.
   release_candidate stays distributable in `release_unassigned_candidates`.
   See "Reverts And Smoke Cleanup" for the dry-run/checkpoint/verify contract.
 
-  **Coverage caveat (dead-key blind spot):** `--final-upscale-provider
-  disabled` skips the WaveSpeed call entirely, so it never authenticates the
-  WaveSpeed key. A healthcheck therefore passes GREEN even with a dead or
-  rotated key — only a real-upscale batch would surface it (the 2026-06-15
-  stranded-key incident). A disabled healthcheck proves Drive + usage +
-  release, NOT that the upscale key still works.
+  **Coverage caveat (dead-key blind spot) — now ROLLBACK-scoped:** a batch that
+  does not upscale never authenticates the WaveSpeed key, so it passes GREEN
+  even with a dead or rotated key (the 2026-06-15 stranded-key incident).
+  Post-flip the standard flow upscales nothing at all, so the WaveSpeed key is
+  exercised ONLY on the 720 rollback path — this blind spot is no longer a daily
+  concern, it matters only if/when you re-arm upscale for rollback.
 
 ## Natural-language → command
 
@@ -90,7 +92,7 @@ python3 -m promo.cli.run_batch \
   --select-random-pois --poi-count 4 --videos-per-poi 3 \
   --output-dir <run_dir> \
   --supabase-music-library --production-autopilot --tail-workers 4
-  # + the 720-transition flags while that phase is active (see Source Width Policy)
+  # + the 720→1080 flip flags (now standard — see Source Width Policy)
 ```
 
 "health-check the chain, 2 POIs × 3" → the same command PLUS
@@ -223,12 +225,26 @@ carry their own card.
 
 ## Source Width Policy
 
-For the controlled low-res transition, PGC uses the shared asset `width` field
-as the main source-resolution selector for vertical assets. Do not key this
-policy off `height`.
+PGC uses the shared asset `width` field as the main source-resolution selector
+for vertical assets. Do not key this policy off `height`.
 
-The transition is an operator decision passed as CLI flags (transient — drop
-it when zhongtai has enough native-1080 assets or the 720 pool drains):
+**Standard (since the 2026-06-22 flip): `min_width` at a ≥1080 floor**, with
+final-video upscale dismantled. Finals use only native ≥1080 source; POIs
+without enough qualifying clips are fail-loud STRANDED at selection. `min_width`
+is a TRUE floor (no upper bound, so native 1440/2160 also pass):
+
+```text
+--source-resolution-policy-mode min_width
+--source-target-width 1080
+--final-upscale-provider disabled
+```
+
+**Rollback only — `transition_low_res_only` at 720:** the original transition
+policy that eats old 720-width clips and upscales them to 1080. Retained but NOT
+the default; use it only to fall back to the 720 pool (and then upscale is
+required again — see below). Note `width_band` is a separate, symmetric
+±tolerance band (NOT a floor) — do not reach for it as a ≥1080 selector; that is
+what `min_width` is for.
 
 ```text
 --source-resolution-policy-mode transition_low_res_only
@@ -240,15 +256,16 @@ The aspect-ratio band that defines a vertical asset is NOT operator-typed — it
 lives as code defaults `DEFAULT_ASPECT_RATIO_MIN` / `DEFAULT_ASPECT_RATIO_MAX`
 in `promo/core/source_resolution_policy.py`; do not copy the numbers here.
 
-This policy must be applied both at POI eligibility time and at
+Whichever policy is active must be applied both at POI eligibility time and at
 retrieval/download time. Retrieval fallback or reserve padding must not widen
-back to mixed 720/1080 assets. The candidate-ready asset floor (above) still
+back to mixed-resolution assets. The candidate-ready asset floor (above) still
 applies after the width filter.
 
-When this transition policy is active, final-video upscale is required for
-production handoff. The policy is detachable: when zhongtai has enough
-1080-width assets or the 720-width pool is drained, switch back to
-`best_available` or a future 1080 policy and disable final-upscale requirement.
+Final-video upscale is keyed to the policy: under the standard `min_width` flow
+it is OFF (sources are already ≥1080); under the `transition_low_res_only`
+rollback it is REQUIRED for production handoff. The mechanism is detachable and
+kept dormant, not deleted — see the upscale gate behavior under "Per-Video
+Production Order".
 
 PGC must not mutate asset-platform quality fields.
 

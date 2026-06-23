@@ -119,6 +119,12 @@ def source_resolution_matches(
         if width < resolved.target_width:
             return False
     else:
+        # transition_low_res_only and width_band are SYMMETRIC +/-tolerance
+        # bands (target +/- tolerance_px), NOT floors: a width above
+        # target+tolerance is REJECTED. Do not reach for width_band as a ">=1080"
+        # selector — at 1080 it only "happens to work" while no source exceeds
+        # ~1088; use min_width (above) for a true floor. width_band is retained
+        # as a general symmetric-band tool / rollback-adjacent mode.
         min_width = resolved.target_width - resolved.tolerance_px
         max_width = resolved.target_width + resolved.tolerance_px
         if width < min_width or width > max_width:
