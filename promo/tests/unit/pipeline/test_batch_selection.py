@@ -55,6 +55,7 @@ def test_build_selection_payload_applies_threshold_and_equal_random():
         rows=rows,
         poi_count=2,
         videos_per_poi=3,
+        candidate_ready_asset_ids=None,  # not exercising the readiness gate
         cooldown_poi_ids={"poi_ccc"},
         cooldown_days=3,
         seed=8,
@@ -166,6 +167,7 @@ def test_select_random_pois_falls_back_to_cooled_with_warning(caplog):
             rows=rows,
             poi_count=2,
             videos_per_poi=3,
+            candidate_ready_asset_ids=None,  # not exercising the readiness gate
             cooldown_poi_ids={"poi_bbb", "poi_ccc"},
             cooldown_days=3,
             seed=8,
@@ -308,12 +310,14 @@ def test_build_selection_payload_reports_shortage_unless_allowed():
             rows=rows,
             poi_count=2,
             videos_per_poi=3,
+            candidate_ready_asset_ids=None,
         )
 
     payload = build_selection_payload(
         rows=rows,
         poi_count=2,
         videos_per_poi=3,
+        candidate_ready_asset_ids=None,
         allow_shortage=True,
     )
 
@@ -332,6 +336,7 @@ def test_build_selection_payload_requires_available_classification_field():
             rows=rows,
             poi_count=1,
             videos_per_poi=3,
+            candidate_ready_asset_ids=None,
             classification_field="market",
             classification_value="EU",
         )
@@ -349,12 +354,25 @@ def test_build_selection_payload_filters_by_classification():
         rows=rows,
         poi_count=1,
         videos_per_poi=3,
+        candidate_ready_asset_ids=None,
         classification_field="market",
         classification_value="EU",
     )
 
     assert [poi["poi_id"] for poi in payload["selected_pois"]] == ["poi_aaa"]
     assert payload["batch_spec"]["pois"][0]["name"] == "A Hotel"
+
+
+def test_build_selection_payload_requires_explicit_readiness_set():
+    """2026-06-22 footgun fix: candidate_ready_asset_ids has NO default, so a
+    caller that FORGETS it crashes loud (TypeError) instead of silently
+    degrading the gate to width-only and stranding POIs at retrieval. Skipping
+    the readiness gate now demands a conscious, greppable `=None`."""
+    from promo.core.batch_selection import build_selection_payload
+
+    rows = _rows_for_poi("poi_aaa", count=70, name="A Hotel")
+    with pytest.raises(TypeError, match="candidate_ready_asset_ids"):
+        build_selection_payload(rows=rows, poi_count=1, videos_per_poi=3)
 
 
 def test_cooldown_cutoff_iso_uses_utc_days():

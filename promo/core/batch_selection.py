@@ -316,6 +316,10 @@ def summarize_pois(
     rows: list[dict[str, Any]],
     *,
     min_active_assets: int,
+    # Internal helper: default kept for unit-test ergonomics. The PRODUCTION
+    # boundary that enforces "you must decide about readiness" is
+    # build_selection_payload (which has NO default); production never reaches
+    # this helper except through it, so the silent-skip footgun is closed there.
     candidate_ready_asset_ids: set[str] | None = None,
     cooldown_poi_ids: set[str] | None = None,
     in_progress_poi_ids: set[str] | None = None,
@@ -523,7 +527,17 @@ def build_selection_payload(
     rows: list[dict[str, Any]],
     poi_count: int,
     videos_per_poi: int,
-    candidate_ready_asset_ids: set[str] | None = None,
+    # REQUIRED, no default (2026-06-22): this is the production boundary, and a
+    # silent default here was a latent footgun — a missing readiness set
+    # degrades the gate from "width-matched AND embedding-ready >= floor" to
+    # "width-matched only", so a POI with enough wide clips but too few embedded
+    # assets passes selection then HARD-FAILS at retrieval (retrieve_candidates
+    # demands >=50 ready assets regardless of source policy). Forcing the caller
+    # to pass it makes "forgot it" an immediate TypeError, not a silent skip.
+    # Pass the real set (fetch_ready_embedding_asset_ids); pass None ONLY as a
+    # conscious, reviewable choice to skip the readiness gate in unit tests that
+    # isolate other selection logic.
+    candidate_ready_asset_ids: set[str] | None,
     cooldown_poi_ids: set[str] | None = None,
     in_progress_poi_ids: set[str] | None = None,
     cooldown_days: int = 3,

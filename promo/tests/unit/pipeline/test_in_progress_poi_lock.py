@@ -178,6 +178,7 @@ def test_build_selection_payload_excludes_in_progress_from_selection(tmp_path):
         rows=rows,
         poi_count=2,
         videos_per_poi=3,
+        candidate_ready_asset_ids=None,
         in_progress_poi_ids=set(locks),
         seed=8,
     )
@@ -200,6 +201,7 @@ def test_locked_pool_starvation_fails_loud():
             rows=rows,
             poi_count=2,
             videos_per_poi=3,
+            candidate_ready_asset_ids=None,
             in_progress_poi_ids={"poi_aaa"},  # only poi_bbb left, need 2
             seed=1,
         )
@@ -209,6 +211,8 @@ def test_build_selection_payload_default_no_lock_is_noop():
     rows = _rows_for_poi("poi_aaa", count=80, name="A") + _rows_for_poi(
         "poi_bbb", count=80, name="B"
     )
-    payload = build_selection_payload(rows=rows, poi_count=2, videos_per_poi=3, seed=1)
+    payload = build_selection_payload(
+        rows=rows, poi_count=2, videos_per_poi=3, candidate_ready_asset_ids=None, seed=1
+    )
     assert payload["in_progress_locked_poi_count"] == 0
     assert {p["poi_id"] for p in payload["selected_pois"]} == {"poi_aaa", "poi_bbb"}
