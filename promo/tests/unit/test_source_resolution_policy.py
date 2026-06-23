@@ -16,6 +16,23 @@ def test_transition_low_res_policy_uses_width_and_vertical_ratio():
     assert not source_resolution_matches({"width": 720, "height": 720}, policy)
 
 
+def test_min_width_defaults_target_width_to_1080_not_720():
+    # Latent nit: min_width without an explicit target_width must default to the
+    # native-1080 floor, NOT the 720 transition target (opposite intents). A
+    # missing target_width that silently became 720 would let 720p clips pass.
+    from promo.core.source_resolution_policy import (
+        normalize_source_resolution_policy,
+    )
+
+    policy = normalize_source_resolution_policy({"mode": "min_width"})
+    assert policy.target_width == 1080
+    # And it really gates as a 1080 floor: 720 rejected, 1080 accepted.
+    from promo.core.source_resolution_policy import source_resolution_matches
+
+    assert not source_resolution_matches({"width": 720, "height": 1280}, policy)
+    assert source_resolution_matches({"width": 1080, "height": 1920}, policy)
+
+
 def test_min_width_is_a_floor_not_a_band():
     from promo.core.source_resolution_policy import source_resolution_matches
 

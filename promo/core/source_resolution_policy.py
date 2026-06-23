@@ -12,6 +12,9 @@ from typing import Any, Mapping
 
 DEFAULT_SOURCE_RESOLUTION_MODE = "best_available"
 DEFAULT_TRANSITION_TARGET_WIDTH = 720
+# min_width is the native-1080 floor; absent an explicit target_width it must
+# default to 1080, NOT the 720 transition target (those are opposite intents).
+DEFAULT_NATIVE_MIN_WIDTH = 1080
 DEFAULT_TRANSITION_WIDTH_TOLERANCE_PX = 40
 DEFAULT_ASPECT_RATIO_MIN = 1.70
 DEFAULT_ASPECT_RATIO_MAX = 1.86
@@ -52,7 +55,7 @@ def normalize_source_resolution_policy(
         elif mode == "width_band":
             target_width = int(raw.get("target_width") or DEFAULT_TRANSITION_TARGET_WIDTH)
         elif mode == "min_width":
-            target_width = int(raw.get("target_width") or DEFAULT_TRANSITION_TARGET_WIDTH)
+            target_width = int(raw.get("target_width") or DEFAULT_NATIVE_MIN_WIDTH)
         elif mode == DEFAULT_SOURCE_RESOLUTION_MODE:
             target_width = (
                 int(raw["target_width"])

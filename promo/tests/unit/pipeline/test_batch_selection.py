@@ -1,4 +1,29 @@
+import re
+
 import pytest
+
+
+def _like_to_regex(pattern):
+    """Faithful SQL-LIKE -> regex (Postgres default '\\' escape), so a FakeQuery
+    models real LIKE semantics: bare '_' = any single char, '%' = any run,
+    '\\_' / '\\%' = literal. Without this the fake would treat the escaped
+    pattern's '\\_' as two literal chars and silently pass/fail (假绿/假红)."""
+    out, i = [], 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\" and i + 1 < len(pattern):
+            out.append(re.escape(pattern[i + 1]))
+            i += 2
+        elif c == "_":
+            out.append(".")
+            i += 1
+        elif c == "%":
+            out.append(".*")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return "^" + "".join(out) + "$"
 
 
 def _row(poi_id, asset_id, clip_id, *, name, canonical_key=None, **overrides):
@@ -419,10 +444,11 @@ def test_fetch_recent_usage_scopes_to_pgc_run_prefix():
 
         def like(self, column, pattern):
             self.like_filters.append((column, pattern))
+            regex = _like_to_regex(pattern)
             self.rows = [
                 row
                 for row in self.rows
-                if str(row.get(column, "")).startswith(pattern.rstrip("%"))
+                if re.match(regex, str(row.get(column, "")))
             ]
             self.current_range = (0, len(self.rows) - 1)
             return self
@@ -455,7 +481,77 @@ def test_fetch_recent_usage_scopes_to_pgc_run_prefix():
 
     # Only PGC's own POIs are cooled; music_remix usage is ignored.
     assert result == {"poi_pgc1", "poi_pgc2"}
-    assert client.query.like_filters == [("run_id", "pgc_run_%")]
+    # Underscores are escaped so the prefix matches literally (see Nit2).
+    assert client.query.like_filters == [("run_id", "pgc\\_run\\_%")]
+
+
+def test_fetch_recent_usage_treats_prefix_underscores_as_literal():
+    # Nit2 regression: a bare '_' in SQL LIKE is a single-char wildcard, so the
+    # OLD pattern "pgc_run_%" also matched imposters like "pgcXrunY_...". The
+    # escaped pattern matches ONLY the literal "pgc_run_" prefix. With the
+    # faithful LIKE fake this imposter IS included under the old unescaped
+    # pattern and EXCLUDED by the fix — a real guard, not a 假绿.
+    from datetime import datetime, timezone
+
+    from promo.core.batch_selection import fetch_recent_usage_poi_ids
+
+    all_rows = [
+        {"poi_id": "poi_real", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "pgc_run_realbatch"},
+        # Matches the wildcard pattern 'pgc_run_%' (X/Y fill the '_' slots) but
+        # is NOT the literal 'pgc_run_' prefix:
+        {"poi_id": "poi_imposter", "created_at": "2026-06-17T00:00:00Z",
+         "run_id": "pgcXrunY_not_pgc"},
+    ]
+
+    class FakeQuery:
+        def __init__(self, rows):
+            self.rows = rows
+            self.current_range = (0, len(rows) - 1)
+
+        def select(self, _columns):
+            return self
+
+        def gte(self, _column, _value):
+            return self
+
+        def like(self, column, pattern):
+            regex = _like_to_regex(pattern)
+            self.rows = [
+                row
+                for row in self.rows
+                if re.match(regex, str(row.get(column, "")))
+            ]
+            self.current_range = (0, len(self.rows) - 1)
+            return self
+
+        def order(self, _column):
+            return self
+
+        def range(self, start, end):
+            self.current_range = (start, end)
+            return self
+
+        def execute(self):
+            start, end = self.current_range
+            return self.rows[start:end + 1]
+
+    class FakeClient:
+        def __init__(self, rows):
+            self.query = FakeQuery(rows)
+
+        def table(self, name):
+            assert name == "poi_asset_usage_events"
+            return self.query
+
+    result = fetch_recent_usage_poi_ids(
+        FakeClient(all_rows),
+        cooldown_days=3,
+        now=datetime(2026, 6, 18, 0, 0, 0, tzinfo=timezone.utc),
+    )
+
+    # Literal-prefix POI is cooled; the wildcard-only imposter is NOT.
+    assert result == {"poi_real"}
 
 
 def test_fetch_valid_clip_rows_paginates_supabase_results():

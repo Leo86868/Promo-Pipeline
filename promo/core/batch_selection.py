@@ -57,6 +57,11 @@ DEFAULT_PGC_TARGET_DURATION_SEC = 65.0
 # set (53 POIs, 0 false-match) because no other run_id is shaped like that —
 # safe in practice, but that's why this is the prefix and not an arbitrary one.
 PGC_RUN_ID_PREFIX = "pgc_run_"
+# SQL LIKE pattern for the prefix. A bare '_' in LIKE is a single-char wildcard,
+# so "pgc_run_%" would also match imposters like "pgcXrunY..."; escape each
+# underscore (Postgres default backslash escape -> '\_' = literal '_') so only
+# the literal prefix matches.
+PGC_RUN_ID_LIKE_PATTERN = PGC_RUN_ID_PREFIX.replace("_", r"\_") + "%"
 
 
 class BatchSelectionError(ValueError):
@@ -175,7 +180,7 @@ def fetch_recent_usage_poi_ids(
         .select("poi_id,created_at")
         .gte("created_at", cutoff)
         # Paradigm scope: count only PGC's own usage (see PGC_RUN_ID_PREFIX).
-        .like("run_id", f"{PGC_RUN_ID_PREFIX}%"),
+        .like("run_id", PGC_RUN_ID_LIKE_PATTERN),
         table_name=USAGE_EVENTS_TABLE,
         page_size=page_size,
         order_by="event_id",
