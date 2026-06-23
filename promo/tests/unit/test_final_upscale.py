@@ -30,19 +30,28 @@ def test_final_upscale_policy_can_be_explicitly_required_but_disabled():
     assert policy.provider == "disabled"
 
 
-def test_min_width_mode_self_rearms_upscale_unless_explicitly_disabled():
-    """Flip trap (final_upscale.py:51): min_width is NOT best_available, so a
-    missing/None final_upscale_policy DEFAULTS to required=True and re-arms the
-    very upscale the flip removes. The flip MUST pass an explicit off."""
+def test_min_width_mode_is_safe_by_default_no_upscale_rearm():
+    """Flip safety (final_upscale.py:51, L-001 fix 2026-06-22): min_width sources
+    are ALREADY native >=1080, so a missing/None final_upscale_policy must NOT
+    re-arm upscale. Unlike the transition modes, min_width defaults to
+    required=False even without an explicit `--final-upscale-provider disabled`
+    — closing the silent-rearm trap (re-encoding 1080 / wasted WaveSpeed spend).
+    The transition mode still defaults to required=True (unchanged)."""
     from promo.core.final_upscale import normalize_final_upscale_policy
 
-    # No explicit policy under min_width -> upscale silently re-armed.
-    rearmed = normalize_final_upscale_policy(None, source_policy_mode="min_width")
-    assert rearmed.required is True
-    assert rearmed.enabled is True
+    # Forgetting the explicit off under min_width is now SAFE: no rearm.
+    safe = normalize_final_upscale_policy(None, source_policy_mode="min_width")
+    assert safe.required is False
+    assert safe.enabled is False
 
-    # The explicit off the flip invocation must send
-    # (`--final-upscale-provider disabled`) wins even under min_width.
+    # Transition mode is unchanged — it genuinely needs upscale and still
+    # defaults to required=True (guards against regressing the 720 path).
+    transition = normalize_final_upscale_policy(
+        None, source_policy_mode="transition_low_res_only"
+    )
+    assert transition.required is True
+
+    # Explicit off remains belt-and-suspenders and still wins under min_width.
     off = normalize_final_upscale_policy(
         {"required": False, "enabled": False, "provider": "disabled"},
         source_policy_mode="min_width",

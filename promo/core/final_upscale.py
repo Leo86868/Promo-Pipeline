@@ -48,7 +48,15 @@ def normalize_final_upscale_policy(
     if isinstance(value, FinalUpscalePolicy):
         return value
     raw = dict(value or {})
-    default_required = source_policy_mode != "best_available"
+    # "has a width policy" must NOT be conflated with "needs upscale". Only the
+    # transition modes (720-era low-res sources) default to requiring upscale.
+    # min_width is the 1080-endgame policy — sources are ALREADY native >=1080,
+    # so it must default to required=False; otherwise a min_width batch that
+    # forgets `--final-upscale-provider disabled` would silently re-arm upscale
+    # (re-encoding already-1080 masters / burning WaveSpeed spend during the
+    # transition window when the env command is still present). Explicit off is
+    # now belt-and-suspenders, not the only line of defence (2026-06-22 flip).
+    default_required = source_policy_mode not in {"best_available", "min_width"}
     required = bool(raw.get("required", default_required))
     enabled = bool(raw.get("enabled", required))
     provider = str(raw.get("provider") or ("wavespeed" if enabled else "disabled"))

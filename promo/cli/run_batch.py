@@ -1435,6 +1435,16 @@ def resume_batch(
     # only surfaces because PGC_WAVESPEED_UPSCALE_COMMAND happens to be unset
     # (and only inside the autopilot preflight). This catches the case before
     # any render spend, regardless of mode/plan.
+    #
+    # Why call the factory instead of `required and not enabled`: the failure we
+    # must catch INCLUDES the enabled-but-unconfigured case (policy.enabled=True
+    # but PGC_WAVESPEED_UPSCALE_COMMAND unset) — only the factory returning None
+    # detects that; the property check alone would miss it (L-005). The factory
+    # (create_final_video_upscaler_from_env) is side-effect-free: it reads an env
+    # var and constructs an object, nothing more. Why mode-independent (not
+    # autopilot-only): a receipt that genuinely requires upscale cannot yield a
+    # compliant master in ANY mode, so failing closed here is correct (L-003).
+    # Placed BEFORE any receipt mutation/render so a fire leaves state untouched.
     if resolved_final_upscale_policy.required and (
         final_upscaler_factory(resolved_final_upscale_policy) is None
     ):

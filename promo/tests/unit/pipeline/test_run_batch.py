@@ -1516,6 +1516,7 @@ def test_resume_derives_required_upscale_from_source_policy(tmp_path):
     }
     receipt_path = tmp_path / "RUN_RECEIPT.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    receipt_bytes_before = receipt_path.read_bytes()
 
     # Required upscale derived from the source policy + no upscaler configured
     # → explicit fail-loud raise, before any render or receipt mutation.
@@ -1531,6 +1532,10 @@ def test_resume_derives_required_upscale_from_source_policy(tmp_path):
             supabase_client_factory=lambda: object(),
             final_upscaler_factory=lambda policy: None,  # not configured
         )
+
+    # L-004: the guard fires before any state mutation — the receipt on disk
+    # must be byte-identical (no resume_history append, no quarantine clear).
+    assert receipt_path.read_bytes() == receipt_bytes_before
 
 
 # --- Tail pipelining (2026-06-10) -------------------------------------------
