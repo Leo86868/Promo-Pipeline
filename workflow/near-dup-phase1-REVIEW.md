@@ -4,6 +4,19 @@
 
 ---
 
+## 交叉复审结论(2 个独立 agent,2026-06-23)
+
+- **正确性/接线**:三条断言全 HOLD,**零 bug**;关态字节相同(差分验证)、三条 batch-start 路径(batch/select/**resume 靠录入命令重放**)全覆盖、fail-soft/fail-open 正确。默认关=零风险。
+- **数据**:饿到 0/9/36 独立重跑**逐数复现**;"EXACT 收益"确属真成片上算、**不依赖 56% 重放**。
+- **采纳的 3 处修正**(已改进本报告 + report.md):
+  1. **生产链路是【环境变量】中介**,非"参数穿到 packer":`compile_promo` 把 `--near-dup-threshold`
+     写进 `PROMO_NEAR_DUP_THRESHOLD`,`_assign_clips_packer` 从 `config.near_dup_threshold()` 读
+     (其 `near_dup_threshold` 形参目前是待用 hook,生产调用方未穿)。功能端到端验证过。
+  2. **"召回损失 2%" 是措辞夸大**:0.02 是绝对余弦差(低底数上约 8% 相对);稳的结论是"跨阈值不变"。
+  3. **0.85 是 margin call**:贴饿到悬崖边,0.88 是更稳的首发值。已在 report.md 改注。
+
+---
+
 ## TL;DR(给 reviewer 30 秒)
 
 给 packer 加了一道**单视频内"近似软闸"**:挑片时,候选若与本视频已选片的 embedding 余弦 ≥ 阈值,就跳过、取下一个多样片;**fail-soft**(找不到多样片就放宽、绝不让视频失败)。`--near-dup-threshold` 从 run_batch 一路贯通到 packer,**默认 None = 关 = 与今天逐字节相同**。推荐阈值 **0.85**。
