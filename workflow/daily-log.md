@@ -12,7 +12,7 @@ points there for the heavy narrative.
 
 ## Milestones (the spine — big closes, newest first)
 
-- **2026-06-23** — **720→1080 切换 live + 实证**(main `2c03d9a`):min_width ≥1080 下限 + 完整-predicate 搁浅(102存活/27搁浅)+ resume 守卫 + L-001 默认安全 + footgun 堵 + SKILL 翻;live smoke(Club Wyndham 1×2)ffprobe 真1080/零WaveSpeed/render 5–6分 vs 16 → **71% 提速杠杆落地**。多轮 panel(3-agent ×2 + 跨仓对齐)拦掉裸切泄漏/指纹污染/静默烧钱。poi_description 桥 + A/B(事实正确性刹车)同期上线。
+- **2026-06-23** — **720→1080 切换 live + 实证**(main `2c03d9a`):min_width ≥1080 下限 + 完整-predicate 搁浅(102存活/27搁浅)+ resume 守卫 + L-001 默认安全 + footgun 堵 + SKILL 翻;live smoke(Club Wyndham 1×2)ffprobe 真1080/零WaveSpeed/render 5–6分 vs 16 → **71% 提速杠杆落地**。多轮 panel(3-agent ×2 + 跨仓对齐)拦掉裸切泄漏/指纹污染/静默烧钱。poi_description 桥 + A/B(事实正确性刹车)同期上线。首个 1080 生产批 `stock_1x2_…002353Z`(Club Wyndham,2/2 入库)顺手发现成片素材**近似重复** → 只读实验证 embedding 余弦能判近似(0.942=同镜头)→ **挂 P0 明日 #1**(packer MMR 去重,dry-run 先;详 ROADMAP)。另记毛病 A 清晰度(软-但-1080,无字段可判,跨仓 AIGC 活)。
 - **2026-06-18** — cooldown 范式各算自己**上线**(branch,595 绿)+ arsenal 操作手册成文 + 渲染提速调研收口(只白嫖 swangle/concurrency,GPU 没用、渲小再升否)+ POI 软锁**建好 reviewed**(739 绿,加原子写中)+ POI 档案(hotel_description)跨仓对齐(一列,与 AIGC reviewer 双向 sync)。
 - **2026-06-17** — roadmap-discipline 按更新版 skill 重建(Mermaid 版 workflow/ROADMAP.md)+ backlog 剪枝;cooldown 设计拍板=**改成范式各算自己**(待落地);reviewer 交接。
 - **2026-06-16** — 跨范式去重 recipe_input/H1 上线(056 开,end-to-end 通)+ 运营硬化四分支合入 `73eb804` + roadmap 补到今天 + roadmap-discipline skill 装上(跨仓 board)。

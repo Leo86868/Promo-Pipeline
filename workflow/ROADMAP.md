@@ -50,6 +50,8 @@ blocker: AIGC 下一棒(自动生成);详 `workflow/CROSS-REPO.md` H2
 - ✅ **速度大杠杆落地**:720→1080 flip 砍掉 **71%**(16→5分/条)。render 现成最大头;再提速 = ffmpeg 换引擎 / 加核并行(**deferred**,8核被 ffmpeg ~5 线程地板堵)。详 `docs/research/render-speedup-2026-06.md`。
 - ▶ **输出调优(进行中)**:`feat/arsenal-quality` worker 落「质量轴 vs 雷同轴」两轴总纲 + 调真 input(范文→format/hook→persona 接线),每步同-POI 盲评。事实地基(poi_description)已 live。
 - ▶ **后-flip 残留清理(进行中)**:`chore/post-flip-cleanup` — 文档 de-720 + 死代码 + bucket 孤儿;**不删回滚基础设施**(WaveSpeed 客户端/transition 模式休眠保留)。
+- 🔴 **P0 明日 #1 · 素材近似去重(packer MMR 惩罚)**:2026-06-23 生产批发现成片里素材近似重复(喷泉/水滑梯反复)。packer 只防"同 clip 不复用 + 相邻类别不同",**无近似去重**(即"近似缺口"+ 暂缓的跨视频惩罚)。已只读验证:`poi_asset_embeddings` 的 embedding 余弦能判近似(0.942 对=抽帧同镜头,≥0.85 共 7 片扎堆)。⚠️ embedding 是**文字描述**算的(非像素)→ 堵明显近似、不是终极视觉去重。方案:packer 加 embedding 多样性惩罚,**先 dry-run**(阈值由数据定,起点 ~0.86)→ 先单视频内、跨视频留 phase 2;纯 PGC-side、不改生产默认。关键代码 `packer.py` / `assign/clip_embedder.py` / `assets/retrieval.py`(embedding 已在内存)。
+- 🅿️ **毛病 A · 清晰度(软-但-1080)**:有些片标 1088 实际清晰度差,**今天无任何字段能判**(宽高同、码率弱代理)。根治 = 跨仓请 AIGC 入库加**视觉指纹 + 清晰度评分**;PGC 只能选片时按它过滤。比 #1 重、优先级低、且不在 PGC 手里。
 - ✅ **本轮全上线 + 部署**:cooldown范式化 / POI软锁 / H1去重 / poi_description桥+护栏 / 720→1080 flip — 全在 main(`281fb2a`)+ 部署 worktree `cooldownlock @ 2c03d9a`。
 
 ## 触发 / Triggered (parked · revisit only when the condition fires)
