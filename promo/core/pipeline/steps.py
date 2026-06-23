@@ -686,6 +686,12 @@ def _assign_clips_packer(
     from promo.core.assign.packer import pack_clips
     from promo.core.assign.usage_windows import fetch_used_windows
 
+    if near_dup_threshold is None:
+        # EXPERIMENTAL render-path knob (default None = OFF). Never reaches
+        # the autopilot registration tail — only changes clip selection.
+        from promo.core import config as _promo_config
+        near_dup_threshold = _promo_config.near_dup_threshold()
+
     word_timestamps = narration["word_timestamps"]
     clip_to_asset = {
         str(row.get("clip_id")).zfill(4): str(row.get("asset_id"))

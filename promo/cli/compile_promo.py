@@ -261,6 +261,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Per-video hook-rotation offset (P2 step 5): run_batch passes "
              "(base seed or 0) + canonical ordinal; unset = legacy rotation.",
     )
+    parser.add_argument(
+        "--near-dup-threshold", type=float, default=None,
+        help="EXPERIMENTAL near-dup soft gate (default None = OFF). When set, "
+             "a candidate whose embedding cosine to an already-chosen clip "
+             ">= threshold is skipped for the next-ranked clip. Render-path "
+             "only; never touches release_candidates/usage. Sets "
+             "PROMO_NEAR_DUP_THRESHOLD for the packer step.",
+    )
 
     return parser
 
@@ -271,6 +279,10 @@ def main():
 
     parser = _build_parser()
     args = parser.parse_args()
+
+    if args.near_dup_threshold is not None:
+        # Render-path only; the packer step reads config.near_dup_threshold().
+        os.environ["PROMO_NEAR_DUP_THRESHOLD"] = str(args.near_dup_threshold)
 
     if args.render_props:
         output = args.output or os.path.join(REMOTION_DIR, "out", "promo_output.mp4")

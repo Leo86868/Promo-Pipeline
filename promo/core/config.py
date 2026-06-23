@@ -165,6 +165,29 @@ def render_crf() -> int:
     return value
 
 
+def near_dup_threshold() -> Optional[float]:
+    """EXPERIMENTAL near-dup soft-gate threshold (default None = OFF).
+
+    Render-path only (consumed in the packer step); never touches the
+    autopilot registration tail. Set via ``PROMO_NEAR_DUP_THRESHOLD`` or
+    ``compile_promo --near-dup-threshold``. Unset → gate off → packer
+    behaviour byte-identical to today.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_NEAR_DUP_THRESHOLD", "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ConfigError(
+            f"PROMO_NEAR_DUP_THRESHOLD must be a float, got {raw!r}"
+        ) from exc
+    if not 0.0 < value <= 1.0:
+        raise ConfigError("PROMO_NEAR_DUP_THRESHOLD must be in (0, 1]")
+    return value
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 
