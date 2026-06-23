@@ -57,7 +57,7 @@ blocker: AIGC 前置(PGC 不抢跑);详 `workflow/CROSS-REPO.md` H2
 
 | Deferred item | Trigger condition |
 |---|---|
-| 脱离 720-only(原生 1080) | 素材库出现足量原生 1080 → 同时解速度长尾 + POI 荒 |
+| ~~脱离 720-only(原生 1080)~~ ✅ **PGC 完成 2026-06-23**(min_width@1080 + upscale 拆,live 实证;71% 提速落地;102存活/27搁浅) | done — AIGC 并行同拆 |
 | 加新视频类型(type):120s(现仅 65s) | 想做长视频时;每店素材门槛 50→~90-100 + 对齐 AIGC |
 | 翻转三(分发数据回流) | 远期;manifest 钩子已留好 |
 
