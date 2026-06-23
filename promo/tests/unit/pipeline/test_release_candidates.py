@@ -208,6 +208,44 @@ def test_insert_release_candidates_reraises_non_23505(caplog):
     assert exc_info.value.code == "23502"
 
 
+def test_is_unique_violation_matches_real_postgrest_shape():
+    """Pin P1g's live capture: the REAL postgrest APIError for a P1e 23505.
+
+    PGC's ``_is_unique_violation`` depends on the SQLSTATE living in
+    ``APIError.code``. If a future postgrest upgrade stops mapping the SQLSTATE
+    into ``.code``, this breaks loudly here instead of silently letting a real
+    cross-paradigm collision abort the whole batch. The error body below was
+    captured LIVE from prod on 2026-06-23 (see workflow/p1g-23505-shape.md):
+    the index name lives in ``.message`` and the colliding key in ``.details``.
+    """
+    from postgrest.exceptions import APIError
+
+    from promo.core.release_candidates import _is_unique_violation
+
+    raw = {
+        "code": "23505",
+        "message": (
+            "duplicate key value violates unique constraint "
+            '"uq_release_candidates_poi_recipe_fingerprint"'
+        ),
+        "details": (
+            "Key (poi_id, recipe_fingerprint)=(poi_15d874e8787d, "
+            "rfp2:bccd5f3be3436084e0f9f2b7da8b2f44318a59d97adf83eb03791693d250a05e)"
+            " already exists."
+        ),
+        "hint": None,
+    }
+    exc = APIError(raw)
+
+    # The matcher's load-bearing assumption: SQLSTATE is exposed as .code.
+    assert exc.code == "23505"
+    assert _is_unique_violation(exc) is True
+    # WHICH index fired is recoverable from the error text (.message), and the
+    # colliding columns from .details — both used by the operator-facing log.
+    assert "uq_release_candidates_poi_recipe_fingerprint" in exc.message
+    assert "(poi_id, recipe_fingerprint)" in exc.details
+
+
 def test_verify_release_candidates_confirms_matching_rows():
     from promo.core.release_candidates import verify_release_candidates
 

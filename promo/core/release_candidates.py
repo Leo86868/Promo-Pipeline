@@ -135,6 +135,12 @@ def _is_unique_violation(exc: BaseException) -> bool:
     carrying the SQLSTATE) without importing postgrest, so this stays usable
     against test doubles. Only the 23505 code is matched — every other error is
     treated as fatal by the caller (never swallowed).
+
+    P1g (2026-06-23) verified this against a LIVE prod collision: postgrest
+    APIError puts the SQLSTATE string ``"23505"`` in ``.code`` (so this matcher
+    fires — pinned by ``test_is_unique_violation_matches_real_postgrest_shape``);
+    the index name lands in ``.message`` and the colliding key in ``.details``.
+    See ``workflow/p1g-23505-shape.md``.
     """
     return getattr(exc, "code", None) == UNIQUE_VIOLATION_CODE
 
@@ -196,20 +202,20 @@ def _insert_release_candidates_per_row(
             if not _is_unique_violation(exc):
                 raise
             skipped_count += 1
-            # Honest log (do not assert WHICH index fired): a 23505 here is most
-            # likely the content-dedup UNIQUE(poi_id, recipe_fingerprint), but the
-            # source_video_key index — though pre-filtered by register_*'s preflight
-            # — is not impossible under a race. We deliberately do NOT narrow to a
-            # specific index by name yet: that narrowing depends on the real
-            # postgrest error shape, which is unverified (both PGC's .code check and
-            # music_remix's text scan are fake-double-tested). Distinguish precisely
-            # only after the P1g live-collision capture; until then, log the raw
-            # error so the actual constraint is visible.
+            # A 23505 here is one of TWO unique indexes, and BOTH legitimately mean
+            # "already registered → skip": the content-dedup
+            # UNIQUE(poi_id, recipe_fingerprint) (P1e) or release_candidates_source_unique
+            # on (source_pipeline, source_video_key) (pre-filtered by register_*'s
+            # preflight, but possible under a race). We KEEP the broad 23505 catch as
+            # the gate on purpose — narrowing to one index would turn a benign
+            # source-key race from a skip into a whole-batch abort. P1g (2026-06-23)
+            # captured the real shape live: the index name is in the error .message
+            # and the colliding key in .details, so error=%s below already shows WHICH
+            # index fired. See workflow/p1g-23505-shape.md.
             logger.warning(
                 "release_candidates: skipping unique-violation (23505): "
-                "poi_id=%s source_video_key=%s — likely content-dedup "
-                "UNIQUE(poi_id, recipe_fingerprint); exact constraint not yet "
-                "distinguished from the source_video_key index (P1g). error=%s",
+                "poi_id=%s source_video_key=%s — already-registered/duplicate "
+                "content; offending constraint named in error. error=%s",
                 record.get("poi_id"),
                 record.get("source_video_key"),
                 exc,
