@@ -32,11 +32,17 @@ supplies `recipe_input` (ordered `source_content_hash`, music+trim excluded); th
       NULL AND status <> 'rejected'` = the actual "block duplicate" enforcement.
       owner=AIGC → **ON, confirmed by Leo 2026-06-18.** Fingerprints now both compute (056) AND
       block (P1e) = real cross-paradigm dedup enforced end-to-end.
-- [ ] **两仓 (PGC + AIGC)**: P1g — insert a real duplicate, capture the actual postgrest 23505
-      error shape (.code? index name in .message/.details?), THEN narrow each side's detection
-      precisely.  owner=PGC+AIGC  (downgraded to OBSERVABILITY — on this table all unique
-      violations are "already-registered, skip" semantics, so broad-accept is the permanent-safe
-      baseline; narrowing only buys honest log labels, not control flow. Not urgent.)
+- [x] **两仓 (PGC + AIGC)**: P1g — ✅ **DONE 2026-06-23 (PGC `313bb4d`, live-captured)**. Forced a
+      real duplicate against an already-committed prod row (net-zero: single insert rejected by
+      P1e, rolled back, 0 persisted) → **watched P1e actually reject** (no longer just "AIGC says on
+      + 0 dupes observed"). Shape: SQLSTATE `"23505"` in `.code` (PGC's matcher is correct), index
+      name `uq_release_candidates_poi_recipe_fingerprint` in `.message`, colliding key in `.details`.
+      **Verdict: KEEP broad-catch — do NOT narrow** (two unique indexes on this table — P1e + the
+      source_video_key unique — BOTH mean "already-registered, skip"; narrowing to one would turn a
+      benign source-key race from skip → whole-batch abort = regression). Only de-hedged the stale
+      "(P1g pending)" comment/log + pinned a real-APIError test. **AIGC: nothing to do** — error shape
+      is identical cross-repo (music_remix's .message text-scan also hits the stable index name).
+      Detail: `workflow/p1g-23505-shape.md`.
 
 - **Acceptance** (= deploy + real DB check): both paradigms write recipe_input (✓ DB) · 056
   computes fingerprint (✓) · P1e enforces uniqueness (✓ Leo confirmed 2026-06-18) · among approved+fingerprinted
@@ -68,6 +74,10 @@ Brief(AIGC 起草)→ `workflow/projects/poi-dimension-info/brief-for-pgc.md`。
 - **A/B 实证(5 POI × 2 版,2026-06-22):正面、价值是"事实正确性的刹车"**——不喂卡片模型理直气壮
   瞎编具体数字(180万加仑水族馆/泳池1870年凿/42种菜,全假);喂卡片编造消失、换真事实、还纠正了瞎编。
   对外营销物料里瞎编=负债。**判定:值得全量(下批带上即生效,NULL 容忍)。**
+- ✅ **真成片实证(2026-06-23,Great Wolf Lodge Minnesota 批 3/3 干净,`313bb4d`)**:输入侧
+  batch.json 真带 3726 字卡;输出侧 whisper 转写口播**真引卡片事实**(75,000 sq ft 水park / ropes
+  course / arcade,与卡逐字对得上)+ **零卡片外瞎编数字**(全片唯一硬数 75,000 就是卡里真值)+ 仍
+  native 1080。**= 桥从"代码+A/B" 升级到"真生产成片端到端实证闭环"。**
 - [ ] **AIGC(下一棒)**: A/B 既已正面 → **把 onboarding 自动生成 `poi_description` 接上**(保准确),
   让新 onboard 的 POI 也带卡片。这是这条价值链的根。owner=AIGC
 - **Acceptance**: 活跃 POI 的 `hotel_description` 有真实内容 → PGC 脚本 DESCRIPTION 块点亮、
