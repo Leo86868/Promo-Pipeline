@@ -452,6 +452,7 @@ def build_compile_command(
     script_candidates: int,
     tts_speed: float,
     source_resolution_policy: dict[str, Any] | None = None,
+    near_dup_threshold: float | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -502,6 +503,8 @@ def build_compile_command(
             "--source-aspect-ratio-max",
             str(resolved_source_policy.aspect_ratio_max),
         ])
+    if near_dup_threshold is not None:
+        command.extend(["--near-dup-threshold", str(near_dup_threshold)])
     return command
 
 
@@ -1138,6 +1141,7 @@ def run_batch(
     final_upscaler_factory: Callable[[FinalUpscalePolicy], Any | None] = create_final_video_upscaler_from_env,
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
     tail_workers: int = 1,
+    near_dup_threshold: float | None = None,
 ) -> int:
     if jobs != 1:
         raise ValueError("run_batch currently supports --jobs 1 only")
@@ -1198,6 +1202,7 @@ def run_batch(
             script_candidates=script_candidates,
             tts_speed=tts_speed,
             source_resolution_policy=resolved_source_policy.to_dict(),
+            near_dup_threshold=near_dup_threshold,
         )
         for item in items
     ]
@@ -1639,6 +1644,7 @@ def run_selected_batch(
     tail_workers: int = 1,
     in_progress_lock: bool = True,
     runs_root: str | None = None,
+    near_dup_threshold: float | None = None,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -1684,6 +1690,7 @@ def run_selected_batch(
         final_upscaler_factory=final_upscaler_factory,
         final_upscale_verifier=final_upscale_verifier,
         tail_workers=tail_workers,
+        near_dup_threshold=near_dup_threshold,
     )
 
 
@@ -1814,6 +1821,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--near-dup-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Near-dup soft gate (default None = OFF). Skips a candidate clip whose "
+            "embedding cosine to an already-chosen clip >= threshold, picking the "
+            "next-ranked diverse clip; fail-soft (relaxes rather than failing a "
+            "video). Recommended 0.85 (zero starvation, ~flat recall cost). The "
+            "value is passed to each compile_promo render so it is recorded in the "
+            "command and replayed on --resume. Catches description-similar dups "
+            "only (text embedding), not visual-only dups."
+        ),
+    )
+    parser.add_argument(
         "--no-in-progress-lock",
         action="store_true",
         help=(
@@ -1907,6 +1928,7 @@ def main() -> None:
                 final_upscale_policy=final_upscale_policy,
                 tail_workers=tail_workers,
                 in_progress_lock=not args.no_in_progress_lock,
+                near_dup_threshold=args.near_dup_threshold,
             )
         else:
             exit_code = run_batch(
@@ -1926,6 +1948,7 @@ def main() -> None:
                 source_resolution_policy=source_resolution_policy,
                 final_upscale_policy=final_upscale_policy,
                 tail_workers=tail_workers,
+                near_dup_threshold=args.near_dup_threshold,
             )
     except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))

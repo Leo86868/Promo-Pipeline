@@ -924,6 +924,30 @@ def test_build_compile_command_threads_hook_seed(tmp_path):
     assert "--seed" not in command  # hook_seed rides its own channel
 
 
+def test_build_compile_command_near_dup_threshold(tmp_path):
+    from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
+
+    item = BatchItem(
+        poi=BatchPoi(name="Hotel", location="X", poi_id="poi_1", canonical_key=None),
+        video_index=1,
+        output_dir=str(tmp_path),
+        output_path=str(tmp_path / "promo.mp4"),
+        voice_key="hope",
+        music_id=None,
+        seed=None,
+        hook_seed=0,
+    )
+    base_kwargs = dict(
+        item=item, target_duration_sec=65, use_music_library=False,
+        script_candidates=1, tts_speed=0.95,
+    )
+    # Default OFF: flag absent from the recorded command (byte-identical to today).
+    assert "--near-dup-threshold" not in build_compile_command(**base_kwargs)
+    # Set: recorded so --resume replays it.
+    on = build_compile_command(near_dup_threshold=0.85, **base_kwargs)
+    assert on[on.index("--near-dup-threshold") + 1] == "0.85"
+
+
 def test_build_compile_command_uses_canonical_key_and_music_library(tmp_path):
     from promo.cli.run_batch import BatchItem, BatchPoi, build_compile_command
 
