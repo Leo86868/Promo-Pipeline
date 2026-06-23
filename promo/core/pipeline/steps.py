@@ -655,6 +655,7 @@ def _assign_clips_packer(
     rank_fn: Any | None = None,
     windows_fetcher: Any | None = None,
     usage_client_factory: Any | None = None,
+    near_dup_threshold: float | None = None,
 ) -> tuple[dict, dict, list[dict], dict]:
     """翻转二 B5 — deterministic assignment: beats → retrieval → packer.
 
@@ -786,6 +787,7 @@ def _assign_clips_packer(
         max_beat_sec=profile.beat_max_sec,
         used_windows=used_windows,
         clip_to_asset=clip_to_asset,
+        near_dup_threshold=near_dup_threshold,
     )
     assignments = _enforce_hard_constraint_and_enrich(
         raw_assignments,

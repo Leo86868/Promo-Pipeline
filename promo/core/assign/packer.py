@@ -110,6 +110,34 @@ def _least_overlap_trim(
     return min(valid, key=lambda t: (overlap(t), t))
 
 
+def unit_vector(vec: list[float] | tuple[float, ...] | None) -> list[float] | None:
+    """L2-normalize an embedding; None for missing/zero-norm (uncomparable)."""
+    if not vec:
+        return None
+    norm = math.sqrt(sum(float(x) * float(x) for x in vec))
+    if norm == 0.0:
+        return None
+    return [float(x) / norm for x in vec]
+
+
+def max_cosine_to_chosen(
+    cand_unit: list[float] | None, chosen_units: list[list[float]],
+) -> float:
+    """Largest cosine of a candidate (unit vec) against already-chosen clips.
+
+    Pure predicate shared by the production gate AND the offline simulate
+    harness, so both judge near-duplication identically. Inputs are
+    PRE-NORMALIZED unit vectors (cosine = dot). Returns 0.0 when the
+    candidate has no embedding (gate then cannot fire — fail-open, never
+    blocks a clip we cannot compare).
+    """
+    if cand_unit is None or not chosen_units:
+        return 0.0
+    return max(
+        sum(a * b for a, b in zip(cand_unit, uc)) for uc in chosen_units
+    )
+
+
 def pack_clips(
     beats: list[dict],
     rankings: list[list[tuple[str, float]]],
@@ -120,6 +148,7 @@ def pack_clips(
     max_beat_sec: float,
     used_windows: dict[str, list[UsedWindow]] | None = None,
     clip_to_asset: dict[str, str] | None = None,
+    near_dup_threshold: float | None = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Pick one clip per beat. Returns ``(raw_assignments, provenance)``.
 
@@ -133,9 +162,14 @@ def pack_clips(
     clips_packer`` normalizes when building it). Clips without a mapping
     (local dev) are treated as never shown.
 
-    Raises :class:`ClipAssignmentError` when a beat has no candidate
-    passing rules 1-2 — given the selection gate + beat seatbelt this
-    means the pool is genuinely smaller than the beat count.
+    ``near_dup_threshold`` (DEFAULT None = OFF) enables the within-video
+    near-duplicate soft gate: a candidate whose embedding cosine to ANY
+    already-chosen clip is ``>= threshold`` is skipped in favour of the
+    next-ranked clip. SOFT/fail-soft — when a beat's whole ranking is
+    gated out, a final relax pass allows the near-dup rather than failing
+    the video (recorded in provenance ``diversity_relaxed_beats``). When
+    None, behaviour is byte-identical to the pre-gate packer. The gate is
+    fail-open per clip: a candidate without an embedding is never blocked.
     """
     if len(beats) != len(rankings):
         raise ValueError(
@@ -153,43 +187,82 @@ def pack_clips(
         "adjacency_relaxed_beats": [],
         "picks": [],
     }
+    # New gate-only provenance keys are added ONLY when armed, so the
+    # serialized sidecar stays byte-identical with the gate off.
+    if near_dup_threshold is not None:
+        provenance["diversity_skipped_beats"] = []
+        provenance["diversity_relaxed_beats"] = []
+        provenance["near_dup_threshold"] = near_dup_threshold
     seen: set[str] = set()
     prev_category: str | None = None
 
+    # Pre-normalize embeddings once per video only when the gate is armed.
+    unit_by_id: dict[str, list[float]] = {}
+    if near_dup_threshold is not None:
+        for cid, m in meta_by_id.items():
+            u = unit_vector(m.get("embedding"))
+            if u is not None:
+                unit_by_id[cid] = u
+    chosen_units: list[list[float]] = []
+
     for beat_i, (beat, ranking, span) in enumerate(zip(beats, rankings, spans)):
         chosen: dict[str, Any] | None = None
-        for enforce_adjacency in (True, False):
-            for clip_id, score in ranking:
-                norm = str(clip_id).zfill(4)
-                if norm in seen:
-                    continue  # rule 1
-                if norm not in clip_durations:
-                    continue
-                source = float(clip_durations[norm])
-                if source + HARD_CONSTRAINT_TOL_SEC < span:
-                    continue  # rule 2: cannot cover at any trim
-                meta = meta_by_id.get(norm, {})
-                category = str(meta.get("category") or "")
-                if enforce_adjacency and prev_category and category == prev_category:
-                    continue  # rule 4 first pass
-                used = used_windows.get(clip_to_asset.get(norm, ""), [])
-                gaps = free_windows(source, used, min_len_sec=span)
-                if gaps:
-                    trim = _phase_trim(
-                        gaps[0], span, str(meta.get("dominant_motion_phase") or ""),
-                    )
-                    exhausted = False
-                else:
-                    continue  # rule 3: prefer ANY candidate with a free window
-                chosen = {
-                    "clip_id": norm, "score": score, "trim": trim,
-                    "category": category, "exhausted": exhausted,
-                }
-                break
+        # Relax ladder: near-dup diversity is the SOFTEST constraint —
+        # relaxed last, only when the whole ranking is otherwise gated out.
+        # Gate off → diversity_passes == (False,), collapsing to the
+        # original adjacency two-pass (byte-identical).
+        diversity_passes = (
+            (True, False) if near_dup_threshold is not None else (False,)
+        )
+        diversity_skipped_here = False
+        for enforce_diversity in diversity_passes:
+            for enforce_adjacency in (True, False):
+                for clip_id, score in ranking:
+                    norm = str(clip_id).zfill(4)
+                    if norm in seen:
+                        continue  # rule 1
+                    if norm not in clip_durations:
+                        continue
+                    source = float(clip_durations[norm])
+                    if source + HARD_CONSTRAINT_TOL_SEC < span:
+                        continue  # rule 2: cannot cover at any trim
+                    meta = meta_by_id.get(norm, {})
+                    category = str(meta.get("category") or "")
+                    if enforce_adjacency and prev_category and category == prev_category:
+                        continue  # rule 4 first pass
+                    if (
+                        enforce_diversity
+                        and near_dup_threshold is not None
+                        and max_cosine_to_chosen(
+                            unit_by_id.get(norm), chosen_units,
+                        ) >= near_dup_threshold
+                    ):
+                        diversity_skipped_here = True
+                        continue  # near-dup soft gate (insertion point A)
+                    used = used_windows.get(clip_to_asset.get(norm, ""), [])
+                    gaps = free_windows(source, used, min_len_sec=span)
+                    if gaps:
+                        trim = _phase_trim(
+                            gaps[0], span, str(meta.get("dominant_motion_phase") or ""),
+                        )
+                        exhausted = False
+                    else:
+                        continue  # rule 3: prefer ANY candidate with a free window
+                    chosen = {
+                        "clip_id": norm, "score": score, "trim": trim,
+                        "category": category, "exhausted": exhausted,
+                    }
+                    break
+                if chosen:
+                    if not enforce_adjacency:
+                        provenance["adjacency_relaxed_beats"].append(beat_i)
+                    break
             if chosen:
-                if not enforce_adjacency:
-                    provenance["adjacency_relaxed_beats"].append(beat_i)
+                if not enforce_diversity and near_dup_threshold is not None:
+                    provenance["diversity_relaxed_beats"].append(beat_i)
                 break
+        if diversity_skipped_here:
+            provenance["diversity_skipped_beats"].append(beat_i)
         if chosen is None:
             # Rule 3 fallback: every coverable candidate's source is
             # exhausted — take the least-overlap window on the best-ranked
@@ -227,6 +300,10 @@ def pack_clips(
             )
 
         seen.add(chosen["clip_id"])
+        if near_dup_threshold is not None:
+            chosen_unit = unit_by_id.get(chosen["clip_id"])
+            if chosen_unit is not None:
+                chosen_units.append(chosen_unit)
         prev_category = chosen["category"] or prev_category
         assignments.append({
             "segment": int(beat["segment"]),

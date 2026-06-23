@@ -216,3 +216,73 @@ def test_packed_output_passes_production_validator():
     enriched = _enforce_hard_constraint_and_enrich(raw, script, wts, durations)
     assert len(enriched) == len(beats)
     assert len(prov["picks"]) == len(beats)
+
+
+# --- near-dup soft gate (phase 1, insertion point A) ---------------------
+# Embeddings here are tiny hand-built vectors: 0001 and 0002 are IDENTICAL
+# (cosine 1.0 = near-dup), 0003 is orthogonal (cosine 0 = diverse).
+# Distinct categories so rule-4 adjacency never fires and the gate is
+# isolated as the only thing that can change a pick.
+_EMB_A = [1.0, 0.0, 0.0]
+_EMB_DIVERSE = [0.0, 1.0, 0.0]
+
+
+def _meta_emb(clip_id, emb, category):
+    return {"id": clip_id, "category": category, "scene_description": "x",
+            "dominant_motion_phase": "", "embedding": emb}
+
+
+_GATE_RANKINGS = [
+    [("0001", 0.90), ("0002", 0.85), ("0003", 0.70)],
+    [("0001", 0.95), ("0002", 0.90), ("0003", 0.60)],  # 0001 used; 0002≈0001
+]
+_GATE_DURATIONS = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+_GATE_META = [
+    _meta_emb("0001", _EMB_A, "c1"),
+    _meta_emb("0002", _EMB_A, "c2"),        # identical vector → near-dup of 0001
+    _meta_emb("0003", _EMB_DIVERSE, "c3"),  # orthogonal → diverse
+]
+
+
+def test_gate_off_is_byte_identical_to_today():
+    """threshold=None must reproduce today's picks AND add no provenance keys."""
+    assignments, prov = pack_clips(
+        BEATS, _GATE_RANKINGS, word_timestamps=WTS,
+        clip_durations=_GATE_DURATIONS, clip_metadata=_GATE_META,
+        near_dup_threshold=None,
+    )
+    # Without the gate, beat 2 takes the higher-ranked near-dup 0002.
+    assert [a["clip_id"] for a in assignments] == ["0001", "0002"]
+    # No gate-only provenance leaks into the serialized sidecar.
+    assert "diversity_skipped_beats" not in prov
+    assert "diversity_relaxed_beats" not in prov
+    assert "near_dup_threshold" not in prov
+
+
+def test_gate_on_skips_near_dup_for_diverse_clip():
+    """Armed gate skips the near-dup 0002 and takes the diverse 0003."""
+    assignments, prov = pack_clips(
+        BEATS, _GATE_RANKINGS, word_timestamps=WTS,
+        clip_durations=_GATE_DURATIONS, clip_metadata=_GATE_META,
+        near_dup_threshold=0.9,
+    )
+    assert [a["clip_id"] for a in assignments] == ["0001", "0003"]
+    assert prov["near_dup_threshold"] == 0.9
+    assert 1 in prov["diversity_skipped_beats"]   # beat 2 skipped a near-dup
+    assert prov["diversity_relaxed_beats"] == []  # a diverse clip existed
+
+
+def test_gate_fail_soft_all_near_dup_still_full_video():
+    """A POI of only mutually near-identical clips still yields a full video."""
+    rankings = [[("0001", 0.9)], [("0002", 0.9)]]  # only choice for beat 2 ≈ 0001
+    durations = {"0001": 5.0, "0002": 5.0}
+    meta = [_meta_emb("0001", _EMB_A, "c1"), _meta_emb("0002", _EMB_A, "c2")]
+    assignments, prov = pack_clips(
+        BEATS, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        near_dup_threshold=0.9,
+    )
+    # Never fails the video — relaxes and allows the near-dup.
+    assert [a["clip_id"] for a in assignments] == ["0001", "0002"]
+    assert prov["diversity_relaxed_beats"] == [1]
+    assert prov["unique_clip_count"] == 2
