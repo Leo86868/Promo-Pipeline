@@ -34,7 +34,7 @@ BATCHES = [
     "topup_secrets_zion_2x2_20260619T060057Z",
     "stock_1x2_20260623T002353Z",
 ]
-THRESH = [0.85, 0.88, 0.90]
+THRESH = [0.80, 0.82, 0.85, 0.88, 0.90]
 MAX_BEAT_SEC = 4.0
 
 url = os.environ["SUPABASE_URL"]
