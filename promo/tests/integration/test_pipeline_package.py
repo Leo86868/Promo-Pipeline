@@ -109,15 +109,16 @@ class TestSprint4SubpackageShape:
 
 
 class TestSprint4CompilePromoShellShape:
-    """AC2 — ``compile_promo.py`` ≤410 LOC, contains only the 4 shell-level
+    """AC2 — ``compile_promo.py`` ≤420 LOC, contains only the 4 shell-level
     defs, and zero definitions of the 16 functions that moved into
     ``promo/core/pipeline/``. The LOC cap is a soft proxy; the real guard is
     the shell-defs + no-moved-functions asserts below. Bumped 400→410 (2026-06-22)
-    to admit the --poi-description thin-shell CLI wiring (no logic added)."""
+    to admit the --poi-description thin-shell CLI wiring; 410→420 (2026-06-23)
+    to admit the --near-dup-threshold thin-shell CLI wiring (no logic added)."""
 
     def test_loc_ceiling_and_shell_defs(self):
         loc = sum(1 for _ in COMPILE_PROMO.open())
-        assert loc <= 410, f"compile_promo.py is {loc} LOC; AC2(a) caps at 410."
+        assert loc <= 420, f"compile_promo.py is {loc} LOC; AC2(a) caps at 420."
         import ast
         tree = ast.parse(COMPILE_PROMO.read_text())
         defs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
