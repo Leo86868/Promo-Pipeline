@@ -951,3 +951,36 @@ class TestSprint09bC6HelperExtractions:
         import pytest
         with pytest.raises(ValueError, match="Unknown --voice"):
             _resolve_voice_keys("nonexistent_voice")
+
+
+def test_final_concat_applies_loudnorm_from_constants(tmp_path, monkeypatch):
+    """Final assembly (normalize_loudness=True) folds an EBU R128 loudnorm built
+    from the named constants into the concat re-encode; intermediate concats
+    (default) do not."""
+    from promo.core.narrate import tts_assembly
+    from promo.core.narrate.tts_assembly import (
+        _ffmpeg_concat_mp3s,
+        NARRATION_LUFS_TARGET,
+        NARRATION_TRUE_PEAK_DBTP,
+        NARRATION_LRA,
+    )
+
+    assert NARRATION_LUFS_TARGET == -16.0
+    assert NARRATION_TRUE_PEAK_DBTP == -1.0
+
+    src = tmp_path / "seg.mp3"
+    src.write_bytes(b"x")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(tts_assembly, "_run_ffmpeg", lambda args: calls.append(args))
+
+    _ffmpeg_concat_mp3s([str(src)], str(tmp_path / "out.mp3"))  # intermediate
+    assert "-af" not in calls[-1]
+
+    _ffmpeg_concat_mp3s(
+        [str(src)], str(tmp_path / "final.mp3"), normalize_loudness=True,
+    )
+    af = calls[-1][calls[-1].index("-af") + 1]
+    assert af == (
+        f"loudnorm=I={NARRATION_LUFS_TARGET}:"
+        f"TP={NARRATION_TRUE_PEAK_DBTP}:LRA={NARRATION_LRA}"
+    )

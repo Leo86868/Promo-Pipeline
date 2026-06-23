@@ -255,7 +255,10 @@ def generate_narration(
                 else:
                     silence_durations_sec.append(0.0)
 
-        _ffmpeg_concat_mp3s(concat_inputs, audio_path)
+        # Final assembly: concat + EBU R128 loudnorm in one re-encode, so the
+        # voice sits above the ducked music bed (+TP cap). Single-pass loudnorm
+        # preserves duration → no word_timestamp drift below.
+        _ffmpeg_concat_mp3s(concat_inputs, audio_path, normalize_loudness=True)
         created_files.append(audio_path)
 
         # Stitch word_timestamps with per-batch offsets. Sprint 09b C6:

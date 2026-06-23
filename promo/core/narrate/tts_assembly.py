@@ -40,6 +40,15 @@ _SILENCE_SAMPLE_RATE = 44100
 _SILENCE_CODEC = "libmp3lame"
 _SILENCE_BITRATE = "128k"
 
+# EBU R128 loudness normalization for the assembled narration. Brings every
+# TTS engine's voice to a consistent integrated loudness so it sits ABOVE the
+# music bed (Remotion ducks music under the narration); the true-peak ceiling
+# prevents clipping structurally regardless of engine. Tune NARRATION_LUFS_TARGET
+# after listening (less negative = louder voice relative to music).
+NARRATION_LUFS_TARGET = -16.0     # integrated loudness, ffmpeg loudnorm I=
+NARRATION_TRUE_PEAK_DBTP = -1.0   # true-peak ceiling, loudnorm TP=
+NARRATION_LRA = 11.0              # loudness range, loudnorm LRA=
+
 
 # ---------------------------------------------------------------------------
 #  ffmpeg helpers
@@ -78,11 +87,20 @@ def _generate_silence_mp3(duration_sec: float, output_path: str) -> None:
     ])
 
 
-def _ffmpeg_concat_mp3s(inputs: list[str], output_path: str) -> None:
+def _ffmpeg_concat_mp3s(
+    inputs: list[str], output_path: str, *, normalize_loudness: bool = False,
+) -> None:
     """Concatenate ``inputs`` (ordered mp3 paths) into one mp3 at ``output_path``.
 
     Uses the concat demuxer, which re-encodes via libmp3lame to guarantee
     compatibility across mixed-source streams (TTS vs. silence).
+
+    ``normalize_loudness`` (final assembly only) applies a single-pass EBU R128
+    ``loudnorm`` in the SAME re-encode — raising the voice to
+    NARRATION_LUFS_TARGET and capping true peak at NARRATION_TRUE_PEAK_DBTP so
+    it sits above the ducked music bed and never clips. Single-pass loudnorm
+    preserves duration → no word_timestamp drift. Off for intermediate
+    (per-batch) concats. Engine-agnostic: this is the one final-assembly call.
     """
     if not inputs:
         raise ValueError("concat inputs list is empty")
@@ -94,11 +112,19 @@ def _ffmpeg_concat_mp3s(inputs: list[str], output_path: str) -> None:
             abs_p = os.path.abspath(p).replace("'", r"'\''")
             f.write(f"file '{abs_p}'\n")
         concat_list = f.name
+    loudnorm_args = (
+        ["-af", (
+            f"loudnorm=I={NARRATION_LUFS_TARGET}:"
+            f"TP={NARRATION_TRUE_PEAK_DBTP}:LRA={NARRATION_LRA}"
+        )]
+        if normalize_loudness else []
+    )
     try:
         _run_ffmpeg([
             "-f", "concat",
             "-safe", "0",
             "-i", concat_list,
+            *loudnorm_args,
             "-acodec", _SILENCE_CODEC,
             "-b:a", _SILENCE_BITRATE,
             "-ar", str(_SILENCE_SAMPLE_RATE),

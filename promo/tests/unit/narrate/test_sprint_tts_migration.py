@@ -320,7 +320,7 @@ class TestGenerateNarrationDispatch:
         def _fake_ffprobe(path):
             return 1.0
 
-        def _fake_concat(inputs, output_path):
+        def _fake_concat(inputs, output_path, **kwargs):
             Path(output_path).write_bytes(fake_path.read_bytes())
 
         with mock.patch.object(tts_engine, "_generate_segment_audio_elevenlabs", _fake_el), \
@@ -354,7 +354,7 @@ class TestGenerateNarrationDispatch:
         def _fake_ffprobe(path):
             return 1.0
 
-        def _fake_concat(inputs, output_path):
+        def _fake_concat(inputs, output_path, **kwargs):
             Path(output_path).write_bytes(fake_path.read_bytes())
 
         # Pick the first gemini-backed voice key in catalog.
