@@ -91,12 +91,14 @@ operator types none of them.
 python3 -m promo.cli.run_batch \
   --select-random-pois --poi-count 4 --videos-per-poi 3 \
   --output-dir <run_dir> \
-  --supabase-music-library --production-autopilot --tail-workers 4
-  # + the 720→1080 flip flags (now standard — see Source Width Policy)
+  --supabase-music-library --production-autopilot --tail-workers 4 \
+  --source-resolution-policy-mode min_width \
+  --source-target-width 1080 \
+  --final-upscale-provider disabled    # 720→1080 flip flags (now standard — see Source Width Policy)
 ```
 
-"health-check the chain, 2 POIs × 3" → the same command PLUS
-`--final-upscale-provider disabled`, then the mandatory full-cleanup revert
+"health-check the chain, 2 POIs × 3" → the SAME standard command, no extra flag
+(the flip flags above already disable upscale), then the mandatory full-cleanup revert
 (see Batch Modes).
 
 "shorter scripts" / "字数短一点" is NOT a per-batch flag. Video length is a

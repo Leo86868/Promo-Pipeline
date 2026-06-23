@@ -86,7 +86,8 @@ Grandma version:
 ```text
 Make the video.
 Check the receipt.
-Upscale the finished video first if this run consumed low-res source assets.
+(Upscale only on the 720 rollback path — the standard flow uses native ≥1080
+and does not upscale.)
 Put the final MP4 in the Drive safe.
 Write the asset ledger.
 Register that zhongtai can use this finished video.
@@ -110,8 +111,14 @@ python3 -m promo.cli.run_batch \
   --videos-per-poi 3 \
   --output-dir out/pgc_batch_xxx \
   --supabase-music-library \
-  --production-autopilot
+  --production-autopilot \
+  --source-resolution-policy-mode min_width \
+  --source-target-width 1080 \
+  --final-upscale-provider disabled
 ```
+> The last three flags are the 720→1080 flip (now standard — native ≥1080, no
+> upscale; see Source Width Policy). Omitting them reverts to mixed-resolution
+> `best_available` — do not drop them for a standard run.
 > Deploy = `git worktree add <new dated path> origin/main` + `cd promo/remotion && npm install` + copy `.env`. Always point new runs at the newest such worktree; the `main_20260608T000000Z` directory is the shared `.git` root, not a run target.
 
 The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
