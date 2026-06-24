@@ -15,6 +15,8 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+import requests
+
 from promo.core.backend import LocalBackend
 from promo.core.music_library import MusicLibraryError, SupabaseMusicLibrary
 from promo.core.pipeline.poi_asset_valid_clips import (
@@ -30,6 +32,7 @@ from promo.core.source_resolution_policy import (
 logger = logging.getLogger(__name__)
 _DOWNLOAD_ATTEMPTS = 3
 _DOWNLOAD_RETRY_DELAY_SEC = 1.0
+_DOWNLOAD_TIMEOUT_SEC = 120.0
 
 
 class PoiAssetBackendError(RuntimeError):
@@ -57,7 +60,8 @@ class PoiAssetSupabaseBackend:
     Args:
         client: Supabase client instance. The backend only calls
             ``table(...).select(...).eq(...).order(...).execute()`` and
-            ``storage.from_(bucket).download(path)``.
+            ``storage.from_(bucket).get_public_url(path)`` (clip bytes are then
+            fetched over the public CDN path with an unauthenticated HTTP GET).
         poi_id: Stable POI id to load. Preferred lookup key.
         canonical_key: Fallback lookup key while operators bridge old inputs.
         output_dir: Optional final-output directory, matching ``LocalBackend``.
@@ -272,12 +276,33 @@ class PoiAssetSupabaseBackend:
         return clip_paths
 
     def _download_clip_blob(self, row: Mapping[str, Any]) -> Any:
+        # Fetch via the bucket's PUBLIC CDN path ($0.03/GB) instead of the
+        # authenticated storage API ($0.09/GB). get_public_url only builds the
+        # URL string (no egress, no auth); the GET below is unauthenticated
+        # because poi-assets is a public bucket. The bytes-in/bytes-out contract
+        # is unchanged, and integrity is still enforced by the source_content_hash
+        # check in _download_snapshot (verify_hash). Fail-loud on purpose: a
+        # private bucket / missing object returns a non-200 with a JSON error
+        # body, which must NEVER be written as clip bytes.
+        url = self._client.storage.from_(row["source_storage_bucket"]).get_public_url(
+            row["source_storage_path"],
+        )
         last_error: Exception | None = None
         for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
             try:
-                return self._client.storage.from_(row["source_storage_bucket"]).download(
-                    row["source_storage_path"],
-                )
+                response = requests.get(url, timeout=_DOWNLOAD_TIMEOUT_SEC)
+                if response.status_code != 200:
+                    raise PoiAssetBackendError(
+                        f"public CDN fetch returned HTTP {response.status_code} "
+                        f"for asset_id={row.get('asset_id')}",
+                    )
+                content = response.content
+                if not content:
+                    raise PoiAssetBackendError(
+                        f"public CDN fetch returned an empty body "
+                        f"for asset_id={row.get('asset_id')}",
+                    )
+                return content
             except Exception as exc:
                 last_error = exc
                 if attempt == _DOWNLOAD_ATTEMPTS:

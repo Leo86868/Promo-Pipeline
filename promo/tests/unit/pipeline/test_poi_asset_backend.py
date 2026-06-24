@@ -64,30 +64,29 @@ class _FakeQuery:
 
 
 class _FakeBucket:
-    def __init__(self, blobs, downloads):
-        self._blobs = blobs
+    def __init__(self, downloads):
         self._downloads = downloads
 
-    def download(self, path):
+    def get_public_url(self, path):
+        # Mirrors storage3.get_public_url: pure string build, no egress/auth.
         self._downloads.append(path)
-        return self._blobs[path]
+        return f"https://cdn.test/{path}"
 
 
 class _FakeStorage:
-    def __init__(self, blobs):
-        self._blobs = blobs
+    def __init__(self):
         self.buckets = []
         self.downloads = []
 
     def from_(self, bucket):
         self.buckets.append(bucket)
-        return _FakeBucket(self._blobs, self.downloads)
+        return _FakeBucket(self.downloads)
 
 
 class _FakeSupabase:
     def __init__(self, rows, blobs):
         self.query = _FakeQuery(rows)
-        self.storage = _FakeStorage(blobs)
+        self.storage = _FakeStorage()
         self.tables = []
 
     def table(self, name):
@@ -95,7 +94,31 @@ class _FakeSupabase:
         return self.query
 
 
-def test_poi_asset_supabase_backend_reads_view_and_downloads_clips(tmp_path):
+class _FakeResponse:
+    def __init__(self, status_code, content):
+        self.status_code = status_code
+        self.content = content
+
+
+def _install_fake_http(monkeypatch, blobs):
+    """Route _download_clip_blob's public-CDN GET back to in-memory blobs.
+
+    get_public_url returns ``https://cdn.test/<path>``; this maps that URL back
+    to the blob bytes (HTTP 200) or, for an unknown path, a JSON error body with
+    HTTP 404 — mirroring how a real public bucket answers a missing object.
+    """
+    from promo.core import poi_asset_backend
+
+    def fake_get(url, timeout=None):
+        path = url.removeprefix("https://cdn.test/")
+        if path in blobs:
+            return _FakeResponse(200, blobs[path])
+        return _FakeResponse(404, b'{"statusCode":"404","error":"not_found"}')
+
+    monkeypatch.setattr(poi_asset_backend.requests, "get", fake_get)
+
+
+def test_poi_asset_supabase_backend_reads_view_and_downloads_clips(monkeypatch, tmp_path):
     from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
 
     first = b"clip-one"
@@ -109,6 +132,7 @@ def test_poi_asset_supabase_backend_reads_view_and_downloads_clips(tmp_path):
         "poi_123/clips/asset_b2.mp4": second,
     }
     client = _FakeSupabase(rows, blobs)
+    _install_fake_http(monkeypatch, blobs)
     backend = PoiAssetSupabaseBackend(client, canonical_key="hotel maya")
 
     clip_paths = backend.fetch_clips("Hotel Maya", str(tmp_path))
@@ -132,7 +156,7 @@ def test_poi_asset_supabase_backend_reads_view_and_downloads_clips(tmp_path):
     ]
 
 
-def test_poi_asset_supabase_backend_rejects_hash_mismatch(tmp_path):
+def test_poi_asset_supabase_backend_rejects_hash_mismatch(monkeypatch, tmp_path):
     from promo.core.poi_asset_backend import PoiAssetBackendError, PoiAssetSupabaseBackend
 
     data = b"clip-one"
@@ -142,7 +166,9 @@ def test_poi_asset_supabase_backend_rejects_hash_mismatch(tmp_path):
         data=data,
         source_content_hash="sha256:" + "0" * 64,
     )
-    client = _FakeSupabase([row], {"poi_123/clips/asset_a1.mp4": data})
+    blobs = {"poi_123/clips/asset_a1.mp4": data}
+    client = _FakeSupabase([row], blobs)
+    _install_fake_http(monkeypatch, blobs)
     backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
 
     with pytest.raises(PoiAssetBackendError, match="content hash mismatch"):
@@ -158,26 +184,17 @@ def test_poi_asset_supabase_backend_retries_transient_download_error(
 
     data = b"clip-one"
     row = _row(clip_id="0001", asset_id="asset_a1", data=data)
-
-    class FlakyBucket:
-        def __init__(self):
-            self.calls = 0
-
-        def download(self, path):
-            self.calls += 1
-            if self.calls == 1:
-                raise TimeoutError("temporary timeout")
-            return data
-
-    class FlakyStorage:
-        def __init__(self):
-            self.bucket = FlakyBucket()
-
-        def from_(self, bucket):
-            return self.bucket
-
     client = _FakeSupabase([row], {"poi_123/clips/asset_a1.mp4": data})
-    client.storage = FlakyStorage()
+
+    calls = {"n": 0}
+
+    def flaky_get(url, timeout=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("temporary timeout")
+        return _FakeResponse(200, data)
+
+    monkeypatch.setattr(poi_asset_backend.requests, "get", flaky_get)
     monkeypatch.setattr(poi_asset_backend.time, "sleep", lambda seconds: None)
 
     backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
@@ -185,10 +202,73 @@ def test_poi_asset_supabase_backend_retries_transient_download_error(
     assert backend.fetch_clips("Hotel Maya", str(tmp_path)) == {
         "0001": str(tmp_path / "clip_0001_asset_a1.mp4"),
     }
-    assert client.storage.bucket.calls == 2
+    assert calls["n"] == 2
 
 
-def test_poi_asset_supabase_backend_downloads_only_candidate_assets(tmp_path):
+def _clip_row(**overrides):
+    row = {
+        "source_storage_bucket": "poi-assets",
+        "source_storage_path": "poi_123/clips/asset_a1.mp4",
+        "asset_id": "asset_a1",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_download_clip_blob_fetches_via_public_cdn_get(monkeypatch):
+    from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
+
+    data = b"video-bytes"
+    blobs = {"poi_123/clips/asset_a1.mp4": data}
+    client = _FakeSupabase([], blobs)
+    _install_fake_http(monkeypatch, blobs)
+    backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
+
+    assert backend._download_clip_blob(_clip_row()) == data
+    # Routed through the public-URL path (no authenticated .download()).
+    assert client.storage.buckets == ["poi-assets"]
+    assert client.storage.downloads == ["poi_123/clips/asset_a1.mp4"]
+
+
+def test_download_clip_blob_raises_on_non_200(monkeypatch):
+    from promo.core import poi_asset_backend
+    from promo.core.poi_asset_backend import (
+        PoiAssetBackendError,
+        PoiAssetSupabaseBackend,
+    )
+
+    # Empty blob map -> fake_get returns HTTP 404 with a JSON error body.
+    _install_fake_http(monkeypatch, {})
+    monkeypatch.setattr(poi_asset_backend.time, "sleep", lambda seconds: None)
+    backend = PoiAssetSupabaseBackend(_FakeSupabase([], {}), poi_id="poi_123")
+
+    with pytest.raises(PoiAssetBackendError, match="failed to download") as excinfo:
+        backend._download_clip_blob(_clip_row(source_storage_path="poi_123/clips/missing.mp4"))
+    # The JSON error body is NEVER returned as clip bytes — it fails loud.
+    assert "HTTP 404" in str(excinfo.value.__cause__)
+
+
+def test_download_clip_blob_raises_on_empty_body(monkeypatch):
+    from promo.core import poi_asset_backend
+    from promo.core.poi_asset_backend import (
+        PoiAssetBackendError,
+        PoiAssetSupabaseBackend,
+    )
+
+    monkeypatch.setattr(
+        poi_asset_backend.requests,
+        "get",
+        lambda url, timeout=None: _FakeResponse(200, b""),
+    )
+    monkeypatch.setattr(poi_asset_backend.time, "sleep", lambda seconds: None)
+    backend = PoiAssetSupabaseBackend(_FakeSupabase([], {}), poi_id="poi_123")
+
+    with pytest.raises(PoiAssetBackendError, match="failed to download") as excinfo:
+        backend._download_clip_blob(_clip_row())
+    assert "empty body" in str(excinfo.value.__cause__)
+
+
+def test_poi_asset_supabase_backend_downloads_only_candidate_assets(monkeypatch, tmp_path):
     from promo.core.poi_asset_backend import PoiAssetSupabaseBackend
 
     first = b"clip-one"
@@ -205,6 +285,7 @@ def test_poi_asset_supabase_backend_downloads_only_candidate_assets(tmp_path):
         "poi_123/clips/asset_c3.mp4": third,
     }
     client = _FakeSupabase(rows, blobs)
+    _install_fake_http(monkeypatch, blobs)
     backend = PoiAssetSupabaseBackend(client, poi_id="poi_123")
 
     clip_paths = backend.fetch_candidate_clips(
