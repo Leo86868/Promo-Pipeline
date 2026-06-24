@@ -270,7 +270,8 @@ def generate_narration(
             _back_allocate_timestamps(batch_audios, batches, silence_durations_sec)
         )
 
-        # Sanity: measured concat duration vs cumulative offset.
+        # Sanity: measured concat duration vs cumulative offset. Concat is now
+        # loudnorm'd; single-pass preserves duration (frame rounding << 0.5s tol).
         measured_duration = _ffprobe_duration(audio_path)
         tolerance_sec = 0.5
         drift = abs(measured_duration - cumulative_offset)

@@ -655,7 +655,6 @@ def _assign_clips_packer(
     rank_fn: Any | None = None,
     windows_fetcher: Any | None = None,
     usage_client_factory: Any | None = None,
-    near_dup_threshold: float | None = None,
 ) -> tuple[dict, dict, list[dict], dict]:
     """翻转二 B5 — deterministic assignment: beats → retrieval → packer.
 
@@ -686,11 +685,11 @@ def _assign_clips_packer(
     from promo.core.assign.packer import pack_clips
     from promo.core.assign.usage_windows import fetch_used_windows
 
-    if near_dup_threshold is None:
-        # EXPERIMENTAL render-path knob (default None = OFF). Never reaches
-        # the autopilot registration tail — only changes clip selection.
-        from promo.core import config as _promo_config
-        near_dup_threshold = _promo_config.near_dup_threshold()
+    # EXPERIMENTAL render-path knob (default None = OFF). Read from config
+    # (PROMO_NEAR_DUP_THRESHOLD / compile_promo --near-dup-threshold); never
+    # reaches the autopilot registration tail — only changes clip selection.
+    from promo.core import config as _promo_config
+    near_dup_threshold = _promo_config.near_dup_threshold()
 
     word_timestamps = narration["word_timestamps"]
     clip_to_asset = {
