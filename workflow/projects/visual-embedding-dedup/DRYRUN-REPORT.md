@@ -85,8 +85,9 @@ flag `PROMO_DOWNLOAD_DIVERSITY`（config `download_diversity_enabled()`,**默认
 - **下载数恒 30**(关/开都 30 → 零额外 egress)✅
 - **开 → 0 近重复**(我独立度量 + 函数自报 `residual=0` 双证)✅
 
-**接线时抓到一个真 bug(已修)**:窗口原本取"全部 text-ready 的相关 top-45",但 Huatulco 相关 top 里 23/45 是 visual-**pending** → 只剩 22 个可比 → max-min 没法铺开 → 仍剩 3 对近重复。**修正**:窗口取"**visual-ready** 的相关 top-45"(=dry-run 实际用的池),pending 片 fail-open 仅作相关性兜底回填。修后 Huatulco/Tu Tu Tun 全 0。
-**附带提醒**:armed 偏好 visual-ready 片;visual 覆盖还没满的 POI(AIGC 回填进行中),少数高相关但 visual-pending 的片 armed 时不下载 → 等覆盖补齐自然消失。
+**接线时抓到一个真 bug(已修)**:窗口原本取"全部 text-ready 的相关 top-45",但接线证据没带生产的 1080 分辨率地板 → 把 720p 片也算进来了,Huatulco 相关 top 里 23/45 是这些 sub-1080 的 visual-**pending** 片 → 只剩 22 个可比 → max-min 没法铺开 → 仍剩 3 对近重复。**修正**:窗口取"**visual-ready** 的相关 top-45"(=dry-run 实际用的池),pending 片 fail-open 仅作兜底。修后全 0。
+
+**关键澄清(真库实证)**:9,119 个 visual-pending 片 **100% 是 sub-1080**(width×visual 状态是干净二分:≥1080 全 ready=14,944 / <1080 全 pending=9,119,零交叉)。**1080 池视觉覆盖 = 100%**。生产带 1080 地板 → 取片池全是 1080 → **全有视觉向量** → max-min 在**每个 POI 都满窗运行**,fail-open 兜底实际**永不触发**(只为将来新 onboard 的 1080 片在 AIGC 增量嵌入前的瞬态留的防御)。15-POI dry-run 本就只用 text+visual 双 ready 的片(=1080 集),所以那批 0-dup 15/15 正是生产真实场景。
 
 ## arm 与否 = 等渲染 before/after,Leo 定
 代码默认关、未自动 arm。要 arm 一批做渲染 before/after,设 `PROMO_DOWNLOAD_DIVERSITY=1` 即可。
