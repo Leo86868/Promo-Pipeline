@@ -169,6 +169,112 @@ def test_candidate_asset_ids_for_download_pads_bridge_reserve():
     assert len(set(asset_ids)) == 5
 
 
+# --- 工单② visual-diversity download selection (flag-gated) ----------------
+# Five assets in relevance order a1..a5. Visual vectors: a1≈a2 (twins) and
+# a3≈a4 (twins), a5 distinct. Whitened max-min must keep the 3 distinct
+# clusters (a1, a3, a5) and drop the twins a2/a4.
+def _div_assets():
+    return [_asset(asset_id=f"asset_{i:03d}", clip_id=f"{i:04d}") for i in range(1, 6)]
+
+
+_DIV_REL = {  # relevance: a1 highest .. a5 lowest
+    "asset_001": 0.90, "asset_002": 0.85, "asset_003": 0.80,
+    "asset_004": 0.75, "asset_005": 0.70,
+}
+_DIV_VIS = {
+    "asset_001": [1.0, 0.0, 0.0], "asset_002": [1.0, 0.0, 0.0],   # twin of a1
+    "asset_003": [0.0, 1.0, 0.0], "asset_004": [0.0, 1.0, 0.0],   # twin of a3
+    "asset_005": [0.0, 0.0, 1.0],                                  # distinct
+}
+
+
+def test_download_diversity_off_is_byte_identical():
+    """diversity_window=None ignores visual inputs and reproduces today's pick."""
+    from promo.core.assets.retrieval import (
+        candidate_asset_ids_for_download,
+        retrieve_candidates,
+    )
+
+    assets = _div_assets()
+    candidates = retrieve_candidates(
+        assets=assets, queries=["pool"], query_vectors=[(1.0, 0.0, 0.0)],
+        top_k_per_query=5, max_candidates=5, min_eligible_assets=2,
+    )
+    baseline = candidate_asset_ids_for_download(
+        candidates=candidates, assets=assets, min_candidates=3, max_candidates=5,
+    )
+    # Passing visual/relevance but leaving the window None must change nothing.
+    with_inputs = candidate_asset_ids_for_download(
+        candidates=candidates, assets=assets, min_candidates=3, max_candidates=5,
+        visual_by_asset=_DIV_VIS, relevance_scores=_DIV_REL, diversity_window=None,
+    )
+    assert with_inputs == baseline
+
+
+def test_download_diversity_armed_drops_visual_twins():
+    """Armed max-min keeps the 3 distinct clusters and drops the twins."""
+    from promo.core.assets.retrieval import candidate_asset_ids_for_download
+
+    ids = candidate_asset_ids_for_download(
+        candidates=[], assets=_div_assets(), min_candidates=3, max_candidates=5,
+        visual_by_asset=_DIV_VIS, relevance_scores=_DIV_REL, diversity_window=5,
+    )
+    assert len(ids) == 3                      # count unchanged (== min_candidates)
+    assert set(ids) == {"asset_001", "asset_003", "asset_005"}
+    assert "asset_002" not in ids and "asset_004" not in ids
+
+
+def test_download_diversity_keeps_relevance_seed():
+    """The single most-relevant asset is the seed and is always retained."""
+    from promo.core.assets.retrieval import candidate_asset_ids_for_download
+
+    ids = candidate_asset_ids_for_download(
+        candidates=[], assets=_div_assets(), min_candidates=3, max_candidates=5,
+        visual_by_asset=_DIV_VIS, relevance_scores=_DIV_REL, diversity_window=5,
+    )
+    assert "asset_001" in ids
+
+
+def test_download_diversity_pending_fail_open():
+    """Assets without a visual vector are never blocked — when the visual pool
+    can't reach k, relevance order backfills them (no crash)."""
+    from promo.core.assets.retrieval import candidate_asset_ids_for_download
+
+    visual_only_two = {"asset_001": [1.0, 0.0, 0.0], "asset_002": [0.0, 1.0, 0.0]}
+    ids = candidate_asset_ids_for_download(
+        candidates=[], assets=_div_assets(), min_candidates=3, max_candidates=5,
+        visual_by_asset=visual_only_two, relevance_scores=_DIV_REL, diversity_window=5,
+    )
+    assert len(ids) == 3                       # still fills to k
+    assert {"asset_001", "asset_002"} <= set(ids)   # the visual-ready ones
+    assert "asset_003" in ids                  # pending clip backfilled by relevance
+
+
+def test_relevance_by_asset_is_max_query_cosine():
+    """relevance = max cosine of an asset's text vector to any query."""
+    from promo.core.assets.retrieval import relevance_by_asset
+
+    assets = [
+        _asset(asset_id="asset_001", embedding_vector=(1.0, 0.0, 0.0)),
+        _asset(asset_id="asset_002", embedding_vector=(0.0, 1.0, 0.0)),
+    ]
+    scores = relevance_by_asset(assets, [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)])
+    assert scores["asset_001"] == pytest.approx(1.0)
+    assert scores["asset_002"] == pytest.approx(1.0)
+
+
+def test_download_diversity_enabled_flag(monkeypatch):
+    """Config resolver: default OFF; truthy env arms it."""
+    from promo.core import config
+
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+    assert config.download_diversity_enabled() is False
+    monkeypatch.setenv("PROMO_DOWNLOAD_DIVERSITY", "1")
+    assert config.download_diversity_enabled() is True
+    monkeypatch.setenv("PROMO_DOWNLOAD_DIVERSITY", "off")
+    assert config.download_diversity_enabled() is False
+
+
 def test_build_script_retrieval_queries_uses_segment_text():
     from promo.core.assets.retrieval import build_script_retrieval_queries
 

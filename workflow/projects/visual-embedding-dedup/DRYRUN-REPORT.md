@@ -67,5 +67,26 @@
 `dryrun/vps-window-sweep.py` → `scp` 到 VPS → `cd /home/deploy/promo-pipeline-readiness && python3 vps-window-sweep.py`（用其 `.env`：live OpenRouter + SUPABASE）。只读，无写库，不动 `retrieval.py`。
 （`dryrun/window-sweep.sql` = 早期本地质心代理版，已被本真相关性 VPS 版取代，留档。）
 
-## 下一步（等 Leo 锁窗口）
-Leo 锁窗口（=45）→ 才在 `retrieval.py::candidate_asset_ids_for_download` 写 **flag-gated** 路径：默认关=逐字节同今天 / 开=relevance-seeded max-min（窗口 45、阈值 0.85）/ pending fail-open / 下载数不变 / 测试绿 + 接线证据。
+## STEP-2 — flag-gated 生产路径已写 + 接线证据（窗口 45 已锁）
+
+落点 `retrieval.py::candidate_asset_ids_for_download`（纯函数,向量+相关性在 `pipeline.py` 取好传进来）。
+flag `PROMO_DOWNLOAD_DIVERSITY`（config `download_diversity_enabled()`,**默认关**,未自动 arm）。
+
+**接线证据**(把**真的修改后模块**载到 VPS,对真生产数据跑;`dryrun/vps-wiring-evidence.py`,只读):
+
+| POI | flag关==已部署函数 | #关 | #开 | 今天近重复 | 开后近重复 | 与今天重合 |
+|---|---|---|---|---|---|---|
+| Secrets Huatulco | **True** | 30 | 30 | 1 | **0** | 9/30 |
+| Club Wyndham Bonnet Creek | **True** | 30 | 30 | 5 | **0** | 17/30 |
+| Sandpearl Resort | **True** | 30 | 30 | 4 | **0** | 15/30 |
+| Tu Tu Tun Lodge [小] | **True** | 30 | 30 | 0 | **0** | 6/30 |
+
+- **默认关 = 逐字节同已部署函数**(4/4 `True`,直接比对 VPS 上线代码)✅
+- **下载数恒 30**(关/开都 30 → 零额外 egress)✅
+- **开 → 0 近重复**(我独立度量 + 函数自报 `residual=0` 双证)✅
+
+**接线时抓到一个真 bug(已修)**:窗口原本取"全部 text-ready 的相关 top-45",但 Huatulco 相关 top 里 23/45 是 visual-**pending** → 只剩 22 个可比 → max-min 没法铺开 → 仍剩 3 对近重复。**修正**:窗口取"**visual-ready** 的相关 top-45"(=dry-run 实际用的池),pending 片 fail-open 仅作相关性兜底回填。修后 Huatulco/Tu Tu Tun 全 0。
+**附带提醒**:armed 偏好 visual-ready 片;visual 覆盖还没满的 POI(AIGC 回填进行中),少数高相关但 visual-pending 的片 armed 时不下载 → 等覆盖补齐自然消失。
+
+## arm 与否 = 等渲染 before/after,Leo 定
+代码默认关、未自动 arm。要 arm 一批做渲染 before/after,设 `PROMO_DOWNLOAD_DIVERSITY=1` 即可。

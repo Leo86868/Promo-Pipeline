@@ -334,6 +334,39 @@ class PoiAssetSupabaseBackend:
             source_resolution_policy=self._source_resolution_policy,
         )
 
+    def visual_vectors_for_assets(self, asset_ids: list[str]) -> dict[str, list[float]]:
+        """工单② — read ready DINOv2 visual vectors for the given assets from
+        ``poi_asset_visual_embeddings`` (``status='ready'`` only). Returns
+        ``{asset_id: vector}``; assets without a ready vector are simply
+        absent (the diversity selector fails open for them). Read-only; used
+        only when the download-diversity flag is armed."""
+        from promo.core.assets.retrieval import (
+            VISUAL_EMBEDDING_DIM,
+            parse_embedding_vector,
+        )
+
+        ids = sorted(set(asset_ids))
+        if not ids:
+            return {}
+        vectors: dict[str, list[float]] = {}
+        for start in range(0, len(ids), 200):
+            chunk = ids[start:start + 200]
+            rows = (
+                self._client.table("poi_asset_visual_embeddings")
+                .select("asset_id,embedding_vector,status")
+                .in_("asset_id", chunk)
+                .eq("status", "ready")
+                .execute()
+                .data
+            ) or []
+            for row in rows:
+                vectors[str(row["asset_id"])] = list(
+                    parse_embedding_vector(
+                        row["embedding_vector"], expected_dim=VISUAL_EMBEDDING_DIM,
+                    )
+                )
+        return vectors
+
     def shared_poi_id(self) -> str | None:
         return self._poi_id
 
