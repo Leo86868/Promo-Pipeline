@@ -168,7 +168,9 @@ def render_crf() -> int:
 def near_dup_threshold() -> Optional[float]:
     """EXPERIMENTAL near-dup soft-gate threshold (default None = OFF).
 
-    Render-path only (consumed in the packer step); never touches the
+    VISUAL-modality gate: the packer compares the whitened DINOv2
+    ``visual_embedding`` (not the text embedding). Recommended armed value
+    0.85. Render-path only (consumed in the packer step); never touches the
     autopilot registration tail. Set via ``PROMO_NEAR_DUP_THRESHOLD`` or
     ``compile_promo --near-dup-threshold``. Unset → gate off → packer
     behaviour byte-identical to today.

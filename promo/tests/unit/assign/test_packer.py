@@ -218,18 +218,23 @@ def test_packed_output_passes_production_validator():
     assert len(prov["picks"]) == len(beats)
 
 
-# --- near-dup soft gate (phase 1, insertion point A) ---------------------
-# Embeddings here are tiny hand-built vectors: 0001 and 0002 are IDENTICAL
-# (cosine 1.0 = near-dup), 0003 is orthogonal (cosine 0 = diverse).
-# Distinct categories so rule-4 adjacency never fires and the gate is
-# isolated as the only thing that can change a pick.
+# --- near-dup soft gate (VISUAL modality, insertion point A) -------------
+# The gate keys off the whitened ``visual_embedding`` (NOT text). Vectors
+# here are tiny hand-built: 0001 and 0002 are IDENTICAL (twins → cosine 1.0
+# even after pool mean-centering), 0003 is orthogonal (diverse). Distinct
+# categories so rule-4 adjacency never fires and the gate is isolated as the
+# only thing that can change a pick.
 _EMB_A = [1.0, 0.0, 0.0]
 _EMB_DIVERSE = [0.0, 1.0, 0.0]
 
 
-def _meta_emb(clip_id, emb, category):
+def _meta_emb(clip_id, emb, category, visual=None):
+    """Clip metadata carrying a text ``embedding`` AND a ``visual_embedding``
+    (defaults to the same vector). The gate reads the visual one; pass a
+    distinct ``visual`` to prove text and visual diverge."""
     return {"id": clip_id, "category": category, "scene_description": "x",
-            "dominant_motion_phase": "", "embedding": emb}
+            "dominant_motion_phase": "", "embedding": emb,
+            "visual_embedding": emb if visual is None else visual}
 
 
 _GATE_RANKINGS = [
@@ -273,10 +278,18 @@ def test_gate_on_skips_near_dup_for_diverse_clip():
 
 
 def test_gate_fail_soft_all_near_dup_still_full_video():
-    """A POI of only mutually near-identical clips still yields a full video."""
-    rankings = [[("0001", 0.9)], [("0002", 0.9)]]  # only choice for beat 2 ≈ 0001
-    durations = {"0001": 5.0, "0002": 5.0}
-    meta = [_meta_emb("0001", _EMB_A, "c1"), _meta_emb("0002", _EMB_A, "c2")]
+    """When a beat's only coverable candidate is a visual twin, the gate
+    relaxes (allows the near-dup) rather than failing the video."""
+    rankings = [[("0001", 0.9)], [("0002", 0.9)]]  # beat 2's only choice ≈ 0001
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+    # A diverse 0003 sits in the pool so whitening has signal (an all-identical
+    # pool mean-centers to zero → uncomparable), but it is never offered to
+    # beat 2 — whose sole candidate is the twin 0002.
+    meta = [
+        _meta_emb("0001", _EMB_A, "c1"),
+        _meta_emb("0002", _EMB_A, "c2"),
+        _meta_emb("0003", _EMB_DIVERSE, "c3"),
+    ]
     assignments, prov = pack_clips(
         BEATS, rankings, word_timestamps=WTS,
         clip_durations=durations, clip_metadata=meta,
@@ -286,3 +299,79 @@ def test_gate_fail_soft_all_near_dup_still_full_video():
     assert [a["clip_id"] for a in assignments] == ["0001", "0002"]
     assert prov["diversity_relaxed_beats"] == [1]
     assert prov["unique_clip_count"] == 2
+
+
+def test_gate_keys_off_visual_not_text_embedding():
+    """A clip whose TEXT vector looks diverse but whose VISUAL vector twins an
+    already-chosen clip is skipped — proving the gate judges visual, not text."""
+    rankings = [
+        [("0001", 0.90), ("0002", 0.85), ("0003", 0.70)],
+        [("0001", 0.95), ("0002", 0.90), ("0003", 0.60)],
+    ]
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+    meta = [
+        _meta_emb("0001", _EMB_A, "c1", visual=_EMB_A),
+        # text says "diverse" but the visual vector is identical to 0001
+        _meta_emb("0002", _EMB_DIVERSE, "c2", visual=_EMB_A),
+        _meta_emb("0003", _EMB_A, "c3", visual=_EMB_DIVERSE),
+    ]
+    assignments, prov = pack_clips(
+        BEATS, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        near_dup_threshold=0.9,
+    )
+    # On text the gate would keep 0002 (cos 0 to 0001); on visual 0002 twins
+    # 0001 → skipped for the diverse 0003.
+    assert [a["clip_id"] for a in assignments] == ["0001", "0003"]
+    assert 1 in prov["diversity_skipped_beats"]
+
+
+def test_gate_fail_open_when_clip_lacks_visual_embedding():
+    """A clip with no visual_embedding (pending/failed asset) is never blocked
+    — the gate cannot compare it, so it fails open."""
+    rankings = [[("0001", 0.9)], [("0002", 0.9), ("0003", 0.5)]]
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+    meta = [
+        _meta_emb("0001", _EMB_A, "c1", visual=_EMB_A),
+        # 0002 has NO visual vector (pending) → uncomparable → fail-open,
+        # even though its text vector twins the chosen 0001.
+        {"id": "0002", "category": "c2", "scene_description": "x",
+         "dominant_motion_phase": "", "embedding": _EMB_A},
+        _meta_emb("0003", _EMB_DIVERSE, "c3", visual=_EMB_DIVERSE),
+    ]
+    assignments, prov = pack_clips(
+        BEATS, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        near_dup_threshold=0.9,
+    )
+    # 0002 taken despite ranking first and twinning 0001 — uncomparable.
+    assert [a["clip_id"] for a in assignments] == ["0001", "0002"]
+    assert prov["diversity_skipped_beats"] == []
+
+
+def test_whiten_visual_pool_centers_and_normalizes():
+    """Pool whitening = mean-center over the POI pool, then L2. Twins stay
+    cosine 1.0; an all-identical pool has no signal → omitted (fail-open)."""
+    import math
+
+    from promo.core.assign.packer import (
+        max_cosine_to_chosen,
+        whiten_visual_pool,
+    )
+
+    units = whiten_visual_pool({
+        "0001": {"visual_embedding": [1.0, 0.0, 0.0]},
+        "0002": {"visual_embedding": [1.0, 0.0, 0.0]},
+        "0003": {"visual_embedding": [0.0, 1.0, 0.0]},
+    })
+    # Twins remain cosine 1.0 after centering; each vector is unit-length.
+    assert max_cosine_to_chosen(units["0001"], [units["0002"]]) == pytest.approx(1.0)
+    for u in units.values():
+        assert math.isclose(math.sqrt(sum(x * x for x in u)), 1.0)
+    # Constant pool → every vector centers to zero → uncomparable → empty.
+    assert whiten_visual_pool({
+        "a": {"visual_embedding": [2.0, 2.0]},
+        "b": {"visual_embedding": [2.0, 2.0]},
+    }) == {}
+    # No visual vectors at all → empty.
+    assert whiten_visual_pool({"a": {"embedding": [1.0, 0.0]}}) == {}

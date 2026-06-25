@@ -197,6 +197,115 @@ def test_packer_platform_embedding_fallback(monkeypatch):
     assert prov["usage_ledger"] == "loaded"
 
 
+class _FakeMultiTable:
+    """Supabase chain stub serving BOTH the text and visual embedding tables."""
+
+    def __init__(self, text_rows, visual_rows):
+        self._rows_by_table = {
+            "poi_asset_embeddings": text_rows,
+            "poi_asset_visual_embeddings": visual_rows,
+        }
+        self.tables_seen = []
+        self._cur = None
+
+    def table(self, name):
+        self.tables_seen.append(name)
+        self._cur = self._rows_by_table[name]
+        return self
+
+    def select(self, _cols):
+        return self
+
+    def in_(self, _col, _vals):
+        return self
+
+    def eq(self, _col, _val):
+        return self
+
+    def order(self, _col):
+        return self
+
+    def execute(self):
+        rows = self._cur
+
+        class R:
+            data = rows
+
+        return R()
+
+
+def test_packer_gate_attaches_visual_embeddings(monkeypatch):
+    """Armed near-dup gate reads visual vectors from
+    poi_asset_visual_embeddings (status=ready only) and records the attach
+    count in provenance; a pending asset (no row) fails open."""
+    from promo.core.assign import clip_embedder
+
+    monkeypatch.setenv("PROMO_NEAR_DUP_THRESHOLD", "0.85")
+    script, narration, metadata, durations = _two_segment_fixture()
+    monkeypatch.setattr(
+        clip_embedder, "load_embeddings_for_poi", lambda cache_dir: None,
+    )
+    text_rows = [
+        {"asset_id": f"asset_{cid}", "embedding_vector": [0.1] * 1536,
+         "embedding_model": "text-embedding-3-small", "status": "ready"}
+        for cid in ("0001", "0002", "0003")
+    ]
+    # 0001/0002 carry a ready visual vector; 0003 is pending (no row).
+    visual_rows = [
+        {"asset_id": "asset_0001", "embedding_vector": [1.0] + [0.0] * 767,
+         "status": "ready"},
+        {"asset_id": "asset_0002", "embedding_vector": [0.0, 1.0] + [0.0] * 766,
+         "status": "ready"},
+    ]
+    client = _FakeMultiTable(text_rows, visual_rows)
+    _, _, assignments, prov = _assign_clips_packer(
+        script, narration, metadata, durations,
+        embedding_cache_dir=None,
+        shared_assets=[
+            {"clip_id": cid, "asset_id": f"asset_{cid}"}
+            for cid in ("0001", "0002", "0003")
+        ],
+        rank_fn=_rank_all,
+        windows_fetcher=lambda client, ids: {},
+        usage_client_factory=lambda: client,
+    )
+    assert prov["embedding_source"] == "platform"
+    assert "poi_asset_visual_embeddings" in client.tables_seen
+    # 2 of 3 clips had a ready visual vector; 0003 pending → not attached.
+    assert prov["visual_embeddings_attached"] == 2
+
+
+def test_packer_gate_off_skips_visual_read(monkeypatch):
+    """Gate OFF (default): no visual read, no gate provenance key — the
+    default path stays byte-identical and skips the extra query."""
+    from promo.core.assign import clip_embedder
+
+    monkeypatch.delenv("PROMO_NEAR_DUP_THRESHOLD", raising=False)
+    script, narration, metadata, durations = _two_segment_fixture()
+    monkeypatch.setattr(
+        clip_embedder, "load_embeddings_for_poi", lambda cache_dir: None,
+    )
+    text_rows = [
+        {"asset_id": f"asset_{cid}", "embedding_vector": [0.1] * 1536,
+         "embedding_model": "text-embedding-3-small", "status": "ready"}
+        for cid in ("0001", "0002", "0003")
+    ]
+    client = _FakeMultiTable(text_rows, visual_rows=[])
+    _, _, _, prov = _assign_clips_packer(
+        script, narration, metadata, durations,
+        embedding_cache_dir=None,
+        shared_assets=[
+            {"clip_id": cid, "asset_id": f"asset_{cid}"}
+            for cid in ("0001", "0002", "0003")
+        ],
+        rank_fn=_rank_all,
+        windows_fetcher=lambda client, ids: {},
+        usage_client_factory=lambda: client,
+    )
+    assert "poi_asset_visual_embeddings" not in client.tables_seen
+    assert "visual_embeddings_attached" not in prov
+
+
 def test_packer_prefers_inline_embeddings(monkeypatch):
     """candidate_only_mode may already carry vectors on metadata —
     highest rung of the ladder, no sidecar/platform lookup."""

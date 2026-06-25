@@ -264,10 +264,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--near-dup-threshold", type=float, default=None,
         help="EXPERIMENTAL near-dup soft gate (default None = OFF). When set, "
-             "a candidate whose embedding cosine to an already-chosen clip "
-             ">= threshold is skipped for the next-ranked clip. Render-path "
-             "only; never touches release_candidates/usage. Sets "
-             "PROMO_NEAR_DUP_THRESHOLD for the packer step.",
+             "a candidate whose VISUAL-embedding cosine to an already-chosen "
+             "clip >= threshold is skipped for the next-ranked clip (recommended "
+             "0.85). Render-path only; never touches release_candidates/usage. "
+             "Sets PROMO_NEAR_DUP_THRESHOLD for the packer step.",
     )
 
     return parser
