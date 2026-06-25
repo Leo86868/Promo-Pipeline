@@ -643,6 +643,59 @@ def _attach_platform_embeddings(
     return embedded, dropped
 
 
+# DINOv2 visual-embedding pool (poi_asset_visual_embeddings): one uniform
+# model/dim/recipe today (dinov2-base / 768 / v1-visual-mean), all status=ready.
+_VISUAL_EMBEDDING_DIM = 768
+
+
+def _attach_visual_embeddings(
+    client: Any,
+    clips_metadata: list[dict],
+    clip_to_asset: dict[str, str],
+) -> int:
+    """Attach DINOv2 VISUAL vectors to clips as ``m['visual_embedding']``.
+
+    Source: ``poi_asset_visual_embeddings`` (the table behind the
+    ``poi_asset_valid_clips`` view's ``visual_embedding_status`` column),
+    joined to clips by ``asset_id``, ``status='ready'`` only — a pending/
+    failed asset returns no row, so its clip is left untouched (the near-dup
+    gate then fails open for it; it is never blocked on a vector we don't
+    have). The RAW vector is attached; the consumer (packer) whitens.
+
+    This is a SEPARATE modality from the text ``embedding`` used for
+    retrieval/ranking — the near-dup gate judges VISUAL similarity, never
+    text. Mutates ``clips_metadata`` in place; returns the attach count.
+    """
+    from promo.core.assets.retrieval import parse_embedding_vector
+
+    asset_ids = sorted(set(clip_to_asset.values()))
+    rows = (
+        client.table("poi_asset_visual_embeddings")
+        .select("asset_id,embedding_vector,status")
+        .in_("asset_id", asset_ids)
+        .eq("status", "ready")
+        .order("asset_id")
+        .execute()
+        .data
+    ) or []
+    vector_by_asset = {
+        str(row["asset_id"]): list(
+            parse_embedding_vector(
+                row["embedding_vector"], expected_dim=_VISUAL_EMBEDDING_DIM,
+            )
+        )
+        for row in rows
+    }
+    attached = 0
+    for meta in clips_metadata:
+        asset_id = clip_to_asset.get(str(meta.get("id")).zfill(4))
+        vector = vector_by_asset.get(asset_id) if asset_id else None
+        if vector is not None:
+            meta["visual_embedding"] = vector
+            attached += 1
+    return attached
+
+
 def _assign_clips_packer(
     script: dict,
     narration: dict,
@@ -758,6 +811,22 @@ def _assign_clips_packer(
             len(dropped_clip_ids), dropped_clip_ids,
         )
 
+    # When the near-dup gate is armed, attach DINOv2 visual vectors so the
+    # gate judges VISUAL similarity (text = wrong modality for visual dups).
+    # Skipped when the gate is OFF → default path is byte-identical AND skips
+    # the extra read. Needs the clip→asset mapping (production); a local-clips
+    # run has none → no visual vectors → gate fails open (never blocks).
+    visual_attached: int | None = None
+    if near_dup_threshold is not None and clip_to_asset:
+        visual_attached = _attach_visual_embeddings(
+            _client(), embedded_metadata, clip_to_asset,
+        )
+        logger.info(
+            "packer: attached visual_embedding to %d/%d clips for near-dup "
+            "gate (threshold=%.2f, visual modality)",
+            visual_attached, len(embedded_metadata), near_dup_threshold,
+        )
+
     beats = plan_beats(
         script,  # type: ignore[arg-type]
         word_timestamps,
@@ -812,6 +881,11 @@ def _assign_clips_packer(
         "usage_ledger": ledger_state,
         "packer": pack_provenance,
     })
+    # Gate-only provenance: how many clips the visual near-dup gate could
+    # actually compare (the rest fail open). Added ONLY when armed so the
+    # default sidecar stays byte-identical.
+    if near_dup_threshold is not None:
+        provenance["visual_embeddings_attached"] = visual_attached
     logger.info(
         "packer assigned %d beats (%d unique clips, ledger=%s, "
         "window_exhausted=%d, adjacency_relaxed=%d)",

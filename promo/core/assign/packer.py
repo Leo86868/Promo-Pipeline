@@ -120,6 +120,42 @@ def unit_vector(vec: list[float] | tuple[float, ...] | None) -> list[float] | No
     return [float(x) / norm for x in vec]
 
 
+def whiten_visual_pool(
+    meta_by_id: dict[str, dict],
+) -> dict[str, list[float]]:
+    """Build {clip_id: whitened-unit-vector} from each clip's ``visual_embedding``.
+
+    Consumer-side whitening per the AIGC handoff: mean-center over THIS POI's
+    visual-vector pool, then L2-normalize. The near-dup gate keys off the
+    VISUAL modality only — a clip without a ``visual_embedding`` is omitted
+    here, so the gate fails open for it (cannot block what it cannot compare).
+    The text ``embedding`` is NEVER used as a fallback (wrong modality).
+
+    Mean-centering preserves twins (identical vectors stay identical after
+    centering → cosine 1.0). Empty pool → ``{}``.
+    """
+    pool = {
+        cid: [float(x) for x in m["visual_embedding"]]
+        for cid, m in meta_by_id.items()
+        if m.get("visual_embedding")
+    }
+    if not pool:
+        return {}
+    dim = len(next(iter(pool.values())))
+    mean = [0.0] * dim
+    for vec in pool.values():
+        for j, x in enumerate(vec):
+            mean[j] += x
+    n = len(pool)
+    mean = [s / n for s in mean]
+    units: dict[str, list[float]] = {}
+    for cid, vec in pool.items():
+        u = unit_vector([x - mean[j] for j, x in enumerate(vec)])
+        if u is not None:
+            units[cid] = u
+    return units
+
+
 def max_cosine_to_chosen(
     cand_unit: list[float] | None, chosen_units: list[list[float]],
 ) -> float:
@@ -163,13 +199,15 @@ def pack_clips(
     (local dev) are treated as never shown.
 
     ``near_dup_threshold`` (DEFAULT None = OFF) enables the within-video
-    near-duplicate soft gate: a candidate whose embedding cosine to ANY
-    already-chosen clip is ``>= threshold`` is skipped in favour of the
-    next-ranked clip. SOFT/fail-soft — when a beat's whole ranking is
-    gated out, a final relax pass allows the near-dup rather than failing
-    the video (recorded in provenance ``diversity_relaxed_beats``). When
-    None, behaviour is byte-identical to the pre-gate packer. The gate is
-    fail-open per clip: a candidate without an embedding is never blocked.
+    near-duplicate soft gate: a candidate whose VISUAL-embedding cosine to
+    ANY already-chosen clip is ``>= threshold`` is skipped in favour of the
+    next-ranked clip. The gate compares on the whitened ``visual_embedding``
+    (DINOv2), NOT the text ``embedding`` used for ranking — recommended
+    armed value 0.85 (visual-cosine scale). SOFT/fail-soft — when a beat's
+    whole ranking is gated out, a final relax pass allows the near-dup rather
+    than failing the video (recorded in provenance ``diversity_relaxed_beats``).
+    When None, behaviour is byte-identical to the pre-gate packer. The gate is
+    fail-open per clip: a candidate without a visual embedding is never blocked.
     """
     if len(beats) != len(rankings):
         raise ValueError(
@@ -196,13 +234,15 @@ def pack_clips(
     seen: set[str] = set()
     prev_category: str | None = None
 
-    # Pre-normalize embeddings once per video only when the gate is armed.
+    # Build the gate's comparison vectors once per video, only when armed.
+    # The near-dup gate judges VISUAL similarity: it keys off the separate
+    # ``visual_embedding`` (DINOv2, attached upstream), whitened consumer-side
+    # (pool mean-center + L2). NEVER the text ``embedding`` — text cosine is
+    # blind to visual twins. Clips without a visual vector are absent here →
+    # fail-open (the gate cannot fire for them).
     unit_by_id: dict[str, list[float]] = {}
     if near_dup_threshold is not None:
-        for cid, m in meta_by_id.items():
-            u = unit_vector(m.get("embedding"))
-            if u is not None:
-                unit_by_id[cid] = u
+        unit_by_id = whiten_visual_pool(meta_by_id)
     chosen_units: list[list[float]] = []
 
     for beat_i, (beat, ranking, span) in enumerate(zip(beats, rankings, spans)):

@@ -1826,12 +1826,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Near-dup soft gate (default None = OFF). Skips a candidate clip whose "
-            "embedding cosine to an already-chosen clip >= threshold, picking the "
-            "next-ranked diverse clip; fail-soft (relaxes rather than failing a "
-            "video). Recommended 0.85 (zero starvation, ~flat recall cost). The "
-            "value is passed to each compile_promo render so it is recorded in the "
-            "command and replayed on --resume. Catches description-similar dups "
-            "only (text embedding), not visual-only dups."
+            "VISUAL-embedding cosine to an already-chosen clip >= threshold, picking "
+            "the next-ranked diverse clip; fail-soft (relaxes rather than failing a "
+            "video). Recommended armed value 0.85 (visual-cosine scale). The value "
+            "is passed to each compile_promo render so it is recorded in the command "
+            "and replayed on --resume. Compares on the DINOv2 visual embedding "
+            "(catches visual-similar dups), never the text embedding."
         ),
     )
     parser.add_argument(
