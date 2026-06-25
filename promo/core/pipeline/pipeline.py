@@ -116,6 +116,30 @@ def _clip_durations_from_metadata(clips_metadata: list[dict]) -> dict[str, float
     return durations
 
 
+def _fetch_visual_vectors_if_armed(
+    backend: PromoBackend,
+    ready_assets: list[Any],
+) -> dict[str, Any] | None:
+    """工单② — fetch DINOv2 visual vectors per asset_id, ONLY when the
+    download-diversity flag is armed; otherwise return None (no extra DB read,
+    selection byte-identical). Shared by BOTH retrieval entrypoints — the
+    candidate-only production path and the shared_assets fallback — so the armed
+    visual pool is wired identically regardless of mode. The asset_id space is
+    the same one ``_diverse_download_asset_ids`` filters on (``ReadyAsset.asset_id``)."""
+    from promo.core import config as _cfg
+
+    if not _cfg.download_diversity_enabled():
+        return None
+    reader = getattr(backend, "visual_vectors_for_assets", None)
+    if not callable(reader):
+        logger.warning(
+            "download diversity armed but backend has no "
+            "visual_vectors_for_assets — falling back to relevance selection",
+        )
+        return None
+    return reader([a.asset_id for a in ready_assets])
+
+
 def _retrieve_shared_asset_candidates_from_ready_assets(
     *,
     ready_assets: list[Any],
@@ -239,17 +263,7 @@ def _retrieve_shared_asset_candidates(
 
     # 工单② — only when the diversity flag is armed do we fetch visual vectors
     # (an extra DB read). Flag OFF → no fetch, selection byte-identical.
-    visual_by_asset = None
-    from promo.core import config as _cfg
-    if _cfg.download_diversity_enabled():
-        reader = getattr(backend, "visual_vectors_for_assets", None)
-        if callable(reader):
-            visual_by_asset = reader([a.asset_id for a in ready_assets])
-        else:
-            logger.warning(
-                "download diversity armed but backend has no "
-                "visual_vectors_for_assets — falling back to relevance selection",
-            )
+    visual_by_asset = _fetch_visual_vectors_if_armed(backend, ready_assets)
 
     return _retrieve_shared_asset_candidates_from_ready_assets(
         ready_assets=ready_assets,
@@ -512,6 +526,13 @@ def full_pipeline(
                     _retrieve_shared_asset_candidates_from_ready_assets(
                         ready_assets=shared_asset_ready_pool,
                         scripts=scripts,
+                        # 工单② FIX — production runs candidate_only_mode, which
+                        # called this directly and never fetched visual vectors
+                        # (the fetch lived only in the shared_assets fallback
+                        # branch), so armed ② silently degraded to relevance-only.
+                        visual_by_asset=_fetch_visual_vectors_if_armed(
+                            backend, shared_asset_ready_pool,
+                        ),
                     )
                 )
                 # V2: 显眼项复读 ruler reads which subset the brief showed.
