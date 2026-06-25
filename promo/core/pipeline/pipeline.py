@@ -120,15 +120,24 @@ def _retrieve_shared_asset_candidates_from_ready_assets(
     *,
     ready_assets: list[Any],
     scripts: list[dict],
+    visual_by_asset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run asset-library semantic retrieval after Gemini #1 script generation."""
+    """Run asset-library semantic retrieval after Gemini #1 script generation.
+
+    ``visual_by_asset`` (DEFAULT None) carries DINOv2 visual vectors per
+    asset_id and is only supplied by the backend-aware caller when the 工单②
+    download-diversity flag is armed; otherwise selection is byte-identical.
+    """
+    from promo.core import config as _cfg
     from promo.core.assets.retrieval import (
+        DEFAULT_DIVERSITY_WINDOW,
         DEFAULT_MAX_CANDIDATES,
         DEFAULT_MIN_DOWNLOAD_CANDIDATES,
         DEFAULT_MIN_ELIGIBLE_ASSETS,
         DEFAULT_TOP_K_PER_QUERY,
         build_script_retrieval_queries,
         candidate_asset_ids_for_download,
+        relevance_by_asset,
         retrieve_candidates,
     )
     from promo.core.assign.clip_embedder import embed_texts
@@ -143,14 +152,25 @@ def _retrieve_shared_asset_candidates_from_ready_assets(
         max_candidates=DEFAULT_MAX_CANDIDATES,
         min_eligible_assets=DEFAULT_MIN_ELIGIBLE_ASSETS,
     )
+    # 工单② — flag-gated visual-diversity selection (default OFF → unchanged).
+    diversity_window = (
+        DEFAULT_DIVERSITY_WINDOW if _cfg.download_diversity_enabled() else None
+    )
+    relevance_scores = (
+        relevance_by_asset(ready_assets, query_vectors)
+        if diversity_window is not None else None
+    )
     download_asset_ids = candidate_asset_ids_for_download(
         candidates=candidates,
         assets=ready_assets,
         min_candidates=DEFAULT_MIN_DOWNLOAD_CANDIDATES,
         max_candidates=DEFAULT_MAX_CANDIDATES,
+        visual_by_asset=visual_by_asset,
+        relevance_scores=relevance_scores,
+        diversity_window=diversity_window,
     )
     candidate_asset_ids = [ranked.asset.asset_id for ranked in candidates]
-    return {
+    provenance = {
         "retrieval_active": True,
         "retrieval_contract": "shared_asset_semantic_candidates_v1",
         "fallback_reason": None,
@@ -184,6 +204,15 @@ def _retrieve_shared_asset_candidates_from_ready_assets(
             for ranked in candidates
         ],
     }
+    # Gate-only provenance: added ONLY when armed so the default sidecar stays
+    # byte-identical with the flag off.
+    if diversity_window is not None:
+        provenance["download_selection"] = {
+            "mode": "visual_maxmin",
+            "diversity_window": diversity_window,
+            "visual_vectors_available": len(visual_by_asset or {}),
+        }
+    return provenance
 
 
 def _retrieve_shared_asset_candidates(
@@ -206,9 +235,26 @@ def _retrieve_shared_asset_candidates(
             "candidates": [],
         }
 
+    ready_assets = ready_assets_fn()
+
+    # 工单② — only when the diversity flag is armed do we fetch visual vectors
+    # (an extra DB read). Flag OFF → no fetch, selection byte-identical.
+    visual_by_asset = None
+    from promo.core import config as _cfg
+    if _cfg.download_diversity_enabled():
+        reader = getattr(backend, "visual_vectors_for_assets", None)
+        if callable(reader):
+            visual_by_asset = reader([a.asset_id for a in ready_assets])
+        else:
+            logger.warning(
+                "download diversity armed but backend has no "
+                "visual_vectors_for_assets — falling back to relevance selection",
+            )
+
     return _retrieve_shared_asset_candidates_from_ready_assets(
-        ready_assets=ready_assets_fn(),
+        ready_assets=ready_assets,
         scripts=scripts,
+        visual_by_asset=visual_by_asset,
     )
 
 

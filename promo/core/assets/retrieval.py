@@ -6,6 +6,7 @@ embedding rows and returns candidate asset ids before any video download.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from math import ceil
 from typing import Any
@@ -23,6 +24,8 @@ from promo.core.source_resolution_policy import (
     source_resolution_matches,
 )
 
+logger = logging.getLogger(__name__)
+
 
 # Sourced from the model contacts book (model_adapters/registry) — single source.
 EMBEDDING_MODEL = OPENROUTER_EMBEDDING_MODEL
@@ -32,6 +35,15 @@ DEFAULT_TOP_K_PER_QUERY = 6
 DEFAULT_MAX_CANDIDATES = 35
 DEFAULT_MIN_ELIGIBLE_ASSETS = 50
 DEFAULT_MIN_DOWNLOAD_CANDIDATES = 30
+
+# 工单② — visual-diversity download selection (flag-gated, default OFF).
+# Locked by the STEP-1 dry-run (15/15 real POIs → 0 near-dups + 30/30 clusters
+# at window 45, ~92-97% relevance retained; see workflow/projects/
+# visual-embedding-dedup/DRYRUN-REPORT.md). The download COUNT is unchanged
+# (~30) — only WHICH ~30 changes, so there is no extra egress.
+DEFAULT_DIVERSITY_WINDOW = 45            # top-N by relevance considered for max-min
+DIVERSITY_NEAR_DUP_THRESHOLD = 0.85      # handoff "same-place"; provenance bar only
+VISUAL_EMBEDDING_DIM = 768               # DINOv2 / v1-visual-mean
 
 
 class AssetRetrievalError(RuntimeError):
@@ -243,18 +255,159 @@ def clip_metadata_from_ready_assets(assets: list[ReadyAsset]) -> list[dict[str, 
     ]
 
 
+def _whiten_unit(matrix: np.ndarray) -> np.ndarray:
+    """Consumer-side whitening (handoff): mean-center over the pool, then
+    L2-normalize each row so dot == cosine. DINOv2 is anisotropic; centering
+    on the local pool widens the same/different gap."""
+    centered = matrix - matrix.mean(axis=0, keepdims=True)
+    norms = np.linalg.norm(centered, axis=1, keepdims=True)
+    norms[norms == 0.0] = 1.0
+    return centered / norms
+
+
+def _maxmin_order(sim: np.ndarray, k: int, seed: int) -> list[int]:
+    """Greedy farthest-point (max-min) selection over a whitened cosine matrix.
+
+    Adds, at each step, the row whose similarity to its NEAREST already-chosen
+    row is smallest (the most novel remaining clip). Seeded at ``seed``
+    (relevance #1, so the single most-relevant clip is always kept). Mirrors
+    prototype/select_diverse.py with the PGC relevance-seed adaptation.
+    """
+    n = sim.shape[0]
+    chosen = [seed]
+    chosen_set = {seed}
+    while len(chosen) < k and len(chosen) < n:
+        best_i, best_close = None, None
+        for i in range(n):
+            if i in chosen_set:
+                continue
+            closeness = max(sim[i, c] for c in chosen)
+            if best_close is None or closeness < best_close:
+                best_close, best_i = closeness, i
+        chosen.append(best_i)
+        chosen_set.add(best_i)
+    return chosen
+
+
+def relevance_by_asset(
+    assets: list[ReadyAsset], query_vectors: list[tuple[float, ...]],
+) -> dict[str, float]:
+    """Per-asset relevance = max cosine of the asset's TEXT embedding to any
+    script query (the same signal production ranks on). Returns
+    ``{asset_id: score}``; empty when there are no queries."""
+    if not query_vectors or not assets:
+        return {}
+    stacked = np.vstack([_cosine_scores(q, assets) for q in query_vectors])
+    best = stacked.max(axis=0)
+    return {a.asset_id: float(best[i]) for i, a in enumerate(assets)}
+
+
+def _diverse_download_asset_ids(
+    *,
+    assets: list[ReadyAsset],
+    visual_by_asset: dict[str, Any],
+    relevance_scores: dict[str, float],
+    window: int,
+    k: int,
+    near_dup_threshold: float,
+) -> list[str]:
+    """工单②: pick ~``k`` download assets by relevance-seeded visual max-min.
+
+    Consider the top-``window`` assets by relevance, then greedily pick the
+    most visually-dispersed ``k`` (whitened DINOv2 cosine), seeded at
+    relevance #1. Download COUNT is ``k`` (unchanged ~30 → no extra egress);
+    only WHICH assets change. Pending fail-open: an asset without a visual
+    vector is never blocked — it is simply not max-min-comparable, and the
+    relevance order backfills it if the visual-ready pool can't reach ``k``.
+    """
+    def by_relevance(asset: ReadyAsset) -> tuple[float, str]:
+        return (-relevance_scores.get(asset.asset_id, float("-inf")), asset.asset_id)
+
+    # Consider the most-relevant VISUAL-READY clips (the dry-run pool). A
+    # pending/failed-visual clip is fail-open: never blocked, but it can't be
+    # max-min-compared, so it only enters as relevance backfill below. Ranking
+    # the window over visual-ready clips (not all text-ready ones) is what the
+    # validated sweep measured — otherwise a POI whose relevant top is mostly
+    # visual-pending would leave too few comparable clips to spread.
+    visual_ranked = sorted(
+        (a for a in assets if a.asset_id in visual_by_asset), key=by_relevance,
+    )
+    pool = visual_ranked[:window]
+
+    chosen_idx: list[int] = []
+    residual = 0
+    if len(pool) >= 2:
+        matrix = np.asarray(
+            [list(visual_by_asset[a.asset_id]) for a in pool], dtype=float,
+        )
+        whitened = _whiten_unit(matrix)
+        sim = whitened @ whitened.T
+        chosen_idx = (
+            _maxmin_order(sim, k, seed=0) if len(pool) > k
+            else list(range(len(pool)))    # too few to be selective — take all
+        )
+        residual = sum(
+            1
+            for ai, a in enumerate(chosen_idx)
+            for b in chosen_idx[ai + 1:]
+            if sim[a, b] >= near_dup_threshold
+        )
+    else:
+        chosen_idx = list(range(len(pool)))
+    chosen_ids = [pool[i].asset_id for i in chosen_idx]
+
+    backfilled = 0
+    if len(chosen_ids) < k:  # fail-open / small-pool backfill by relevance
+        have = set(chosen_ids)
+        for a in sorted(assets, key=by_relevance):
+            if a.asset_id not in have:
+                chosen_ids.append(a.asset_id)
+                have.add(a.asset_id)
+                backfilled += 1
+                if len(chosen_ids) >= k:
+                    break
+
+    logger.info(
+        "download diversity: window=%d visual_pool=%d/%d picked=%d backfill=%d "
+        "residual_near_dup_pairs>=%.2f=%d",
+        window, len(pool), len(assets), len(chosen_ids[:k]), backfilled,
+        near_dup_threshold, residual,
+    )
+    return chosen_ids[:k]
+
+
 def candidate_asset_ids_for_download(
     *,
     candidates: list[RankedAsset],
     assets: list[ReadyAsset],
     min_candidates: int = DEFAULT_MIN_DOWNLOAD_CANDIDATES,
     max_candidates: int = DEFAULT_MAX_CANDIDATES,
+    visual_by_asset: dict[str, Any] | None = None,
+    relevance_scores: dict[str, float] | None = None,
+    diversity_window: int | None = None,
+    near_dup_threshold: float = DIVERSITY_NEAR_DUP_THRESHOLD,
 ) -> list[str]:
-    """Return the candidate download pool, padded for assignment/bridge reserve."""
+    """Return the candidate download pool, padded for assignment/bridge reserve.
+
+    ``diversity_window`` (DEFAULT None = OFF) flips selection to 工单②'s
+    relevance-seeded visual max-min (``_diverse_download_asset_ids``); the
+    download count stays ``min_candidates`` so there is no extra egress. When
+    None, behaviour is byte-identical to the pre-工单② relevance-only path.
+    """
     if min_candidates <= 0 or max_candidates <= 0:
         raise AssetRetrievalError("min_candidates and max_candidates must be positive")
     if min_candidates > max_candidates:
         raise AssetRetrievalError("min_candidates must be <= max_candidates")
+
+    if diversity_window is not None:
+        return _diverse_download_asset_ids(
+            assets=assets,
+            visual_by_asset=visual_by_asset or {},
+            relevance_scores=relevance_scores or {},
+            window=diversity_window,
+            k=min_candidates,
+            near_dup_threshold=near_dup_threshold,
+        )
 
     seen: set[str] = set()
     asset_ids: list[str] = []

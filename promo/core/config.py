@@ -190,6 +190,20 @@ def near_dup_threshold() -> Optional[float]:
     return value
 
 
+def download_diversity_enabled() -> bool:
+    """工单② — when True, the ~30-clip download pool is chosen by
+    relevance-seeded visual max-min (window 45, near-dup 0.85) instead of
+    pure top-relevance. Download COUNT is unchanged → no extra egress; only
+    WHICH ~30 changes. Default False = selection byte-identical to today.
+    Set via ``PROMO_DOWNLOAD_DIVERSITY`` (1/true/yes/on). Render-path knob;
+    never touches release_candidates/usage. NOT auto-armed — arming waits on
+    a render before/after.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_DOWNLOAD_DIVERSITY", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 
