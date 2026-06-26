@@ -743,6 +743,7 @@ def _assign_clips_packer(
     # reaches the autopilot registration tail — only changes clip selection.
     from promo.core import config as _promo_config
     near_dup_threshold = _promo_config.near_dup_threshold()
+    global_assignment = _promo_config.global_assignment_enabled()
 
     word_timestamps = narration["word_timestamps"]
     clip_to_asset = {
@@ -862,6 +863,7 @@ def _assign_clips_packer(
         used_windows=used_windows,
         clip_to_asset=clip_to_asset,
         near_dup_threshold=near_dup_threshold,
+        global_assignment=global_assignment,
     )
     assignments = _enforce_hard_constraint_and_enrich(
         raw_assignments,

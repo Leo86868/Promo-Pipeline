@@ -174,6 +174,152 @@ def max_cosine_to_chosen(
     )
 
 
+# Default soft-penalty weights for the global-assignment path (armed only).
+# ADJACENCY 0.05 and NEAR_DUP 0.50 are tuned on the run3x3-equivalent offline
+# sweep (research_global_tune.py): at 0.05 the iterative adjacency penalty cuts
+# same-category-back-to-back ~45% while *raising* median text-cosine and holding
+# dramatic misses at 0. The near-dup weight is on the same cost scale (text
+# cosine ≈ [-0.1, 0.7]); 0.50 is a strong-but-soft push that displaces a visual
+# twin only when an alternative is within ~0.5 cosine — never fails the video.
+GLOBAL_ADJACENCY_PENALTY = 0.05
+GLOBAL_NEAR_DUP_PENALTY = 0.50
+# Coverage-infeasible / forbidden cell cost. Large enough that the solver never
+# prefers an infeasible cell over any real assignment, but finite so a fully
+# infeasible row still yields a (flagged) pick instead of crashing the solve.
+_INFEASIBLE_COST = 1e6
+
+
+def _solve_assignment(
+    cost: "Any", clip_ids: list[str], spans: list[float],
+    durations: list[float],
+) -> list[int]:
+    """One Hungarian solve over ``cost`` [beats × clips]; returns a clip-column
+    index per beat. Rows the solver could only fill with an infeasible cell (or
+    left unfilled, when clips < beats) fall back to the cheapest still-unused
+    coverable column, else the cheapest unused column — deterministic, never
+    crashes. ``scipy.optimize.linear_sum_assignment`` is deterministic: same
+    matrix, same result, forever (preserves the no-LLM/no-randomness contract).
+    """
+    import numpy as np
+    from scipy.optimize import linear_sum_assignment
+
+    nb, nc = cost.shape
+    rows, cols = linear_sum_assignment(cost)
+    assigned = {int(r): int(c) for r, c in zip(rows, cols)}
+    # Reserve every FEASIBLE Hungarian column first, so an infeasible row's
+    # fallback can never steal a column a later feasible row was assigned
+    # (which would force a spurious 1-to-1 violation downstream).
+    used: set[int] = {
+        c for bi, c in assigned.items()
+        if cost[bi, c] < _INFEASIBLE_COST
+    }
+    out: list[int | None] = [None] * nb
+    for bi in range(nb):
+        ci = assigned.get(bi)
+        if ci is not None and cost[bi, ci] < _INFEASIBLE_COST:
+            out[bi] = ci
+    for bi in range(nb):
+        if out[bi] is not None:
+            continue
+        # Infeasible/unfilled row: cheapest unused coverable column, else
+        # cheapest unused column (matches greedy's least-overlap fallback intent).
+        order = list(np.argsort(cost[bi]))
+        pick = next(
+            (c for c in order if c not in used
+             and durations[c] + HARD_CONSTRAINT_TOL_SEC >= spans[bi]),
+            None,
+        )
+        if pick is None:
+            pick = next((c for c in order if c not in used), int(order[0]))
+        out[bi] = int(pick)
+        used.add(int(pick))
+    return [int(c) for c in out]
+
+
+def _global_assign(
+    rankings: list[list[tuple[str, float]]],
+    clip_ids: list[str],
+    spans: list[float],
+    durations: list[float],
+    categories: list[str],
+    *,
+    adjacency_penalty: float,
+    near_dup_penalty: float,
+    near_dup_threshold: float | None,
+    unit_by_id: dict[str, list[float]],
+    rounds: int = 6,
+) -> list[int]:
+    """Global optimal clip↔beat assignment as ONE declarative objective.
+
+    Base cost = ``-text_cosine`` (the ranking score already computed per beat);
+    coverage-infeasible cells = ``_INFEASIBLE_COST``; no-reuse is structural
+    (1-to-1 matching). Adjacency-variety and near-dup are SOFT PENALTY terms
+    folded into the SAME cost matrix and resolved by an iterative re-solve:
+    each round adds ``adjacency_penalty`` to any (beat, clip) whose category
+    equals a neighbour's category from the previous round's assignment, and
+    ``near_dup_penalty`` to any clip whose whitened visual cosine to a
+    neighbour's clip is ``>= near_dup_threshold``. Iterates until the
+    assignment is stable (or ``rounds``). Both penalties are sequencing terms,
+    so the iterative penalty is the clean single-objective form — it re-solves
+    globally rather than bolting a second pairwise-repair heuristic on top
+    (chosen over post-solve local-repair after the offline sweep showed the
+    iterative penalty reaches lower monotony at HIGHER median cosine).
+    """
+    import numpy as np
+
+    nb, nc = len(spans), len(clip_ids)
+    col = {cid: j for j, cid in enumerate(clip_ids)}
+    base = np.full((nb, nc), _INFEASIBLE_COST, dtype=np.float64)
+    for bi, ranking in enumerate(rankings):
+        for clip_id, score in ranking:
+            j = col.get(str(clip_id).zfill(4))
+            if j is None:
+                continue
+            if durations[j] + HARD_CONSTRAINT_TOL_SEC < spans[bi]:
+                continue  # coverage infeasible
+            base[bi, j] = -score if math.isfinite(score) else _INFEASIBLE_COST
+
+    picks = _solve_assignment(base, clip_ids, spans, durations)
+    gate_on = near_dup_threshold is not None and bool(unit_by_id)
+    if adjacency_penalty <= 0 and not gate_on:
+        return picks
+
+    for _ in range(rounds):
+        cost = base.copy()
+        cats = [categories[c] for c in picks]
+        chosen_units = [unit_by_id.get(clip_ids[c]) for c in picks]
+        for bi in range(nb):
+            neigh_cats = set()
+            neigh_units: list[list[float]] = []
+            for nb_i in (bi - 1, bi + 1):
+                if 0 <= nb_i < nb:
+                    if cats[nb_i]:
+                        neigh_cats.add(cats[nb_i])
+                    u = chosen_units[nb_i]
+                    if u is not None:
+                        neigh_units.append(u)
+            if not neigh_cats and not neigh_units:
+                continue
+            for j in range(nc):
+                if cost[bi, j] >= _INFEASIBLE_COST:
+                    continue
+                if adjacency_penalty > 0 and categories[j] in neigh_cats:
+                    cost[bi, j] += adjacency_penalty
+                if (
+                    gate_on
+                    and neigh_units
+                    and max_cosine_to_chosen(
+                        unit_by_id.get(clip_ids[j]), neigh_units,
+                    ) >= near_dup_threshold
+                ):
+                    cost[bi, j] += near_dup_penalty
+        new_picks = _solve_assignment(cost, clip_ids, spans, durations)
+        if new_picks == picks:
+            break
+        picks = new_picks
+    return picks
+
+
 def pack_clips(
     beats: list[dict],
     rankings: list[list[tuple[str, float]]],
@@ -185,6 +331,9 @@ def pack_clips(
     used_windows: dict[str, list[UsedWindow]] | None = None,
     clip_to_asset: dict[str, str] | None = None,
     near_dup_threshold: float | None = None,
+    global_assignment: bool = False,
+    adjacency_penalty: float = GLOBAL_ADJACENCY_PENALTY,
+    near_dup_penalty: float = GLOBAL_NEAR_DUP_PENALTY,
 ) -> tuple[list[dict], dict[str, Any]]:
     """Pick one clip per beat. Returns ``(raw_assignments, provenance)``.
 
@@ -208,6 +357,24 @@ def pack_clips(
     than failing the video (recorded in provenance ``diversity_relaxed_beats``).
     When None, behaviour is byte-identical to the pre-gate packer. The gate is
     fail-open per clip: a candidate without a visual embedding is never blocked.
+
+    ``global_assignment`` (DEFAULT False = OFF → byte-identical greedy path)
+    swaps the greedy first-fit relax-ladder for ONE global optimal clip↔beat
+    assignment: a single ``scipy.optimize.linear_sum_assignment`` over a
+    [beats × clips] cost matrix (base = ``-text_cosine``; coverage-infeasible
+    forbidden; no-reuse structural via 1-to-1 matching). Adjacency-variety and
+    the near-dup gate become SOFT PENALTY terms folded into that one matrix and
+    resolved by an iterative re-solve (see ``_global_assign``) — fixing the
+    greedy stranding where an earlier beat spends a clip a later beat needed
+    more. The armed path SUPERSEDES the entire greedy relax-ladder (the nested
+    ``for enforce_diversity / for enforce_adjacency`` passes + per-pick
+    no-reuse/coverage/adjacency/near-dup checks); window resolution (rule 3/5)
+    and the least-overlap fallback are RELOCATED to run per assigned clip AFTER
+    the solve, unchanged. ``adjacency_penalty`` / ``near_dup_penalty`` weigh the
+    two soft terms (defaults tuned offline). When armed, provenance gains
+    ``global_assignment: True`` and ``displaced_beats`` (any beat whose assigned
+    clip is >0.15 below its best-feasible text-cosine — the silent-displacement
+    gap the greedy packer cannot see).
     """
     if len(beats) != len(rankings):
         raise ValueError(
@@ -244,6 +411,20 @@ def pack_clips(
     if near_dup_threshold is not None:
         unit_by_id = whiten_visual_pool(meta_by_id)
     chosen_units: list[list[float]] = []
+
+    if global_assignment:
+        return _pack_clips_global(
+            beats, rankings, spans,
+            meta_by_id=meta_by_id,
+            clip_durations=clip_durations,
+            used_windows=used_windows,
+            clip_to_asset=clip_to_asset,
+            max_beat_sec=max_beat_sec,
+            near_dup_threshold=near_dup_threshold,
+            adjacency_penalty=adjacency_penalty,
+            near_dup_penalty=near_dup_penalty,
+            unit_by_id=unit_by_id,
+        )
 
     for beat_i, (beat, ranking, span) in enumerate(zip(beats, rankings, spans)):
         chosen: dict[str, Any] | None = None
@@ -375,3 +556,177 @@ def pack_clips(
         if s > max_beat_sec + HARD_CONSTRAINT_TOL_SEC
     ]
     return assignments, provenance
+
+
+def _pack_clips_global(
+    beats: list[dict],
+    rankings: list[list[tuple[str, float]]],
+    spans: list[float],
+    *,
+    meta_by_id: dict[str, dict],
+    clip_durations: dict[str, float],
+    used_windows: dict[str, list[UsedWindow]],
+    clip_to_asset: dict[str, str],
+    max_beat_sec: float,
+    near_dup_threshold: float | None,
+    adjacency_penalty: float,
+    near_dup_penalty: float,
+    unit_by_id: dict[str, list[float]],
+) -> tuple[list[dict], dict[str, Any]]:
+    """Armed path (``global_assignment=True``): ONE global optimal clip↔beat
+    assignment + RELOCATED window resolution.
+
+    Replaces the greedy relax-ladder entirely: the [beats × clips] cost matrix
+    (base ``-text_cosine``, coverage forbidden, no-reuse structural) is solved
+    once by ``_global_assign`` with adjacency + near-dup folded in as soft
+    penalties. Window rotation (rule 3/5) and the least-overlap fallback are the
+    SAME ``free_windows`` / ``_phase_trim`` / ``_least_overlap_trim`` helpers the
+    greedy path uses, just MOVED to run per assigned clip after the solve.
+    """
+    # Pool of coverable clips the solver may draw from (mirrors greedy's
+    # eligibility: present in clip_durations). Order is stable (ranking-major
+    # union) so the Hungarian solve is reproducible.
+    clip_ids: list[str] = []
+    seen_pool: set[str] = set()
+    for ranking in rankings:
+        for clip_id, _ in ranking:
+            norm = str(clip_id).zfill(4)
+            if norm in seen_pool or norm not in clip_durations:
+                continue
+            seen_pool.add(norm)
+            clip_ids.append(norm)
+    durations = [float(clip_durations[c]) for c in clip_ids]
+    categories = [str(meta_by_id.get(c, {}).get("category") or "") for c in clip_ids]
+
+    if len(clip_ids) < len(beats):
+        # Same fail-loud contract as greedy: cannot give every beat a unique
+        # coverable clip. Raise on the first uncoverable beat.
+        for beat_i, (beat, span) in enumerate(zip(beats, spans)):
+            coverable = [
+                c for j, c in enumerate(clip_ids)
+                if durations[j] + HARD_CONSTRAINT_TOL_SEC >= span
+            ]
+            if len(coverable) < 1:
+                raise ClipAssignmentError(
+                    segment_index=int(beat["segment"]),
+                    phrase_index=1 + sum(
+                        1 for b in beats[:beat_i] if b["segment"] == beat["segment"]
+                    ),
+                    required_span=span,
+                    actual_max_usable=0.0,
+                    clip_id="<packer-global: no coverable candidate>",
+                )
+
+    picks = _global_assign(
+        rankings, clip_ids, spans, durations, categories,
+        adjacency_penalty=adjacency_penalty,
+        near_dup_penalty=near_dup_penalty,
+        near_dup_threshold=near_dup_threshold,
+        unit_by_id=unit_by_id,
+    )
+    if len(set(picks)) != len(picks):
+        # 1-to-1 matching guarantees uniqueness; a collision means the fallback
+        # had no unused coverable clip — fail loud rather than ship a reuse.
+        raise ClipAssignmentError(
+            segment_index=int(beats[0]["segment"]),
+            phrase_index=1,
+            required_span=max(spans) if spans else 0.0,
+            actual_max_usable=0.0,
+            clip_id="<packer-global: assignment not 1-to-1 (pool exhausted)>",
+        )
+
+    # Pre-compute per-beat best-feasible cosine for the silent-displacement flag.
+    best_feasible = _best_feasible_cosines(rankings, clip_durations, spans)
+
+    assignments: list[dict] = []
+    provenance: dict[str, Any] = {
+        "assigner": "packer",
+        "window_exhausted_beats": [],
+        "adjacency_relaxed_beats": [],  # N/A under global; kept for shape parity
+        "picks": [],
+        "global_assignment": True,
+        "displaced_beats": [],
+    }
+    if near_dup_threshold is not None:
+        provenance["near_dup_threshold"] = near_dup_threshold
+
+    score_by_beat_clip = [
+        {str(cid).zfill(4): sc for cid, sc in ranking} for ranking in rankings
+    ]
+
+    for beat_i, (beat, span) in enumerate(zip(beats, spans)):
+        norm = clip_ids[picks[beat_i]]
+        meta = meta_by_id.get(norm, {})
+        source = float(clip_durations[norm])
+        used = used_windows.get(clip_to_asset.get(norm, ""), [])
+        # RELOCATED window resolution (rule 3 then rule 5; rule-3 fallback).
+        gaps = free_windows(source, used, min_len_sec=span)
+        if gaps:
+            trim = _phase_trim(
+                gaps[0], span, str(meta.get("dominant_motion_phase") or ""),
+            )
+            exhausted = False
+        else:
+            trim = _least_overlap_trim(source, span, used)
+            exhausted = True
+            provenance["window_exhausted_beats"].append(beat_i)
+            logger.warning(
+                "packer-global: source windows exhausted for beat %d "
+                "(span %.2fs) — least-overlap fallback on clip %s",
+                beat_i, span, norm,
+            )
+
+        score = float(score_by_beat_clip[beat_i].get(norm, float("-inf")))
+        bf = best_feasible[beat_i]
+        if math.isfinite(bf) and math.isfinite(score) and (bf - score) >= 0.15:
+            provenance["displaced_beats"].append({
+                "beat": beat_i,
+                "clip_id": norm,
+                "score": round(score, 4),
+                "best_feasible": round(bf, 4),
+                "gap": round(bf - score, 4),
+            })
+
+        assignments.append({
+            "segment": int(beat["segment"]),
+            "clip_id": norm,
+            "start_word_idx": int(beat["start_word_idx"]),
+            "end_word_idx": int(beat["end_word_idx"]),
+            "trim_start": round(float(trim), 3),
+        })
+        provenance["picks"].append({
+            "beat": beat_i,
+            "clip_id": norm,
+            "score": round(score, 4) if math.isfinite(score) else None,
+            "trim_start": round(float(trim), 3),
+            "window_exhausted": exhausted,
+        })
+
+    provenance["beat_count"] = len(beats)
+    provenance["unique_clip_count"] = len({a["clip_id"] for a in assignments})
+    provenance["overlong_beats"] = [
+        i for i, s in enumerate(spans)
+        if s > max_beat_sec + HARD_CONSTRAINT_TOL_SEC
+    ]
+    return assignments, provenance
+
+
+def _best_feasible_cosines(
+    rankings: list[list[tuple[str, float]]],
+    clip_durations: dict[str, float],
+    spans: list[float],
+) -> list[float]:
+    """Per beat, the highest text-cosine over coverable clips in its ranking —
+    the bar the assigned clip is measured against for silent-displacement."""
+    out: list[float] = []
+    for ranking, span in zip(rankings, spans):
+        best = float("-inf")
+        for clip_id, score in ranking:
+            norm = str(clip_id).zfill(4)
+            dur = clip_durations.get(norm)
+            if dur is None or dur + HARD_CONSTRAINT_TOL_SEC < span:
+                continue
+            if math.isfinite(score) and score > best:
+                best = score
+        out.append(best)
+    return out

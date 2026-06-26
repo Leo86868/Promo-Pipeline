@@ -269,6 +269,15 @@ def _build_parser() -> argparse.ArgumentParser:
              "0.85). Render-path only; never touches release_candidates/usage. "
              "Sets PROMO_NEAR_DUP_THRESHOLD for the packer step.",
     )
+    parser.add_argument(
+        "--global-assignment", action="store_true",
+        help="EXPERIMENTAL packer consolidation (default OFF = greedy, "
+             "byte-identical). When set, the packer solves ONE global optimal "
+             "clip↔beat assignment (Hungarian) with adjacency + near-dup as soft "
+             "penalties instead of the greedy relax-ladder — fixes earlier beats "
+             "stranding clips later beats needed. Render-path only; never touches "
+             "release_candidates/usage. Sets PROMO_GLOBAL_ASSIGNMENT.",
+    )
 
     return parser
 
@@ -283,6 +292,10 @@ def main():
     if args.near_dup_threshold is not None:
         # Render-path only; the packer step reads config.near_dup_threshold().
         os.environ["PROMO_NEAR_DUP_THRESHOLD"] = str(args.near_dup_threshold)
+
+    if args.global_assignment:
+        # Render-path only; packer step reads config.global_assignment_enabled().
+        os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
 
     if args.render_props:
         output = args.output or os.path.join(REMOTION_DIR, "out", "promo_output.mp4")

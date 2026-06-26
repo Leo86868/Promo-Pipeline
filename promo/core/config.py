@@ -204,6 +204,24 @@ def download_diversity_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def global_assignment_enabled() -> bool:
+    """EXPERIMENTAL packer consolidation (default False = OFF → greedy path,
+    byte-identical to today).
+
+    When True, the packer swaps its greedy first-fit relax-ladder for ONE global
+    optimal clip↔beat assignment (Hungarian solve over a [beats × clips] cost
+    matrix; adjacency-variety and near-dup folded in as soft penalties). Fixes
+    the greedy stranding where an earlier beat spends a clip a later beat needed
+    more. Render-path knob (consumed in the packer step); never touches the
+    autopilot registration tail. Set via ``PROMO_GLOBAL_ASSIGNMENT``
+    (1/true/yes/on) or ``compile_promo --global-assignment``. NOT auto-armed —
+    arming waits on a render before/after, same gate as the dedup rollout.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_GLOBAL_ASSIGNMENT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 
