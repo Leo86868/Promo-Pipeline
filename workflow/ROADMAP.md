@@ -50,9 +50,10 @@ blocker: AIGC 下一棒(自动生成);详 `workflow/CROSS-REPO.md` H2
 - ✅ **速度大杠杆落地**:720→1080 flip 砍掉 **71%**(16→5分/条)。render 现成最大头;再提速 = ffmpeg 换引擎 / 加核并行(**deferred**,8核被 ffmpeg ~5 线程地板堵)。详 `docs/research/render-speedup-2026-06.md`。
 - ▶ **输出调优(进行中)**:`feat/arsenal-quality` worker 落「质量轴 vs 雷同轴」两轴总纲 + 调真 input(范文→format/hook→persona 接线),每步同-POI 盲评。事实地基(poi_description)已 live。
 - ▶ **后-flip 残留清理(进行中)**:`chore/post-flip-cleanup` — 文档 de-720 + 死代码 + bucket 孤儿;**不删回滚基础设施**(WaveSpeed 客户端/transition 模式休眠保留)。
-- 🔴 **P0 明日 #1 · 素材近似去重(packer MMR 惩罚)**:2026-06-23 生产批发现成片里素材近似重复(喷泉/水滑梯反复)。packer 只防"同 clip 不复用 + 相邻类别不同",**无近似去重**(即"近似缺口"+ 暂缓的跨视频惩罚)。已只读验证:`poi_asset_embeddings` 的 embedding 余弦能判近似(0.942 对=抽帧同镜头,≥0.85 共 7 片扎堆)。⚠️ embedding 是**文字描述**算的(非像素)→ 堵明显近似、不是终极视觉去重。方案:packer 加 embedding 多样性惩罚,**先 dry-run**(阈值由数据定,起点 ~0.86)→ 先单视频内、跨视频留 phase 2;纯 PGC-side、不改生产默认。关键代码 `packer.py` / `assign/clip_embedder.py` / `assets/retrieval.py`(embedding 已在内存)。
+- ✅ **DONE 2026-06-26 · #1 素材近似去重 — 直接上【视觉版】(leapfrog 了文字兜底)**:不是文字-embedding MMR 兜底,而是直接做 DINOv2 **视觉** 去重并 **armed 进生产**:① packer 视觉近重复软闸(`--near-dup-threshold 0.85`)+ ② 下载选片视觉 max-min(`--download-diversity`,resume安全)。65s 真考题:残留近重复对 Huatulco 1→0 / Bonnet 3→0、~零相关性代价、肉眼+独立dHash双证。旗标烤进 SKILL/runbook(main `9e16f64`)。**唯一余项**:第一批 armed 活体验证 `visual_pool>0`(② 经 run_batch 仅代码层确认 env 继承)。详 memory `project_visual_dedup_armed`。原"文字兜底 / 跨视频 phase-2"路线作废(视觉直接覆盖)。
 - 🅿️ **毛病 A · 清晰度(软-但-1080)**:有些片标 1088 实际清晰度差,**今天无任何字段能判**(宽高同、码率弱代理)。根治 = 跨仓请 AIGC 入库加**视觉指纹 + 清晰度评分**;PGC 只能选片时按它过滤。比 #1 重、优先级低、且不在 PGC 手里。
 - ✅ **本轮全上线 + 部署**:cooldown范式化 / POI软锁 / H1去重 / poi_description桥+护栏 / 720→1080 flip — 全在 main(`281fb2a`)+ 部署 worktree `cooldownlock @ 2c03d9a`。
+- 🅿️ **PGC 部署模型简化(常驻 deploy 替代 per-batch worktree 堆积)** · proposal 2026-06-26:现状每批 `git worktree add origin/main` 切新树跑、留底 → ~20 个 worktree 堆积(维护味)。worktree 的两个卖点(并行隔离 / 铁钉版审计)在 PGC 实际【串行、偶发、手动】用法下基本用不上;music_remix(AIGC)是常驻服务式单部署 = 更简单。**提案**:留一个常驻 deploy 永远跟 `origin/main`(跑前 `git fetch && git reset --hard origin/main`,把 commit 写进 `RUN_RECEIPT` 保留可审计),**只在真跑并行多批时**才另切 worktree。收益:稳定地方 + 去堆积 + 保留钉版审计。纪律:跑批中绝不 fetch(同现模式)。**背景**:worktree 模式是 2 起事故的防御反应(手滑 2 批撞车 [[project_concurrency_poi_lock]] + red-line 旧码写坏 recipe_input),非深思最佳实践。不阻塞当前 arm 量产;先记着,Leo 决定做不做。
 
 ## 触发 / Triggered (parked · revisit only when the condition fires)
 
