@@ -94,7 +94,8 @@ python3 -m promo.cli.run_batch \
   --supabase-music-library --production-autopilot --tail-workers 4 \
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
-  --final-upscale-provider disabled    # 720→1080 flip flags (now standard — see Source Width Policy)
+  --near-dup-threshold 0.85 --download-diversity \
+  --final-upscale-provider disabled    # flip (720→1080) + visual-dedup arm (工单①②) — both now standard
 ```
 
 "health-check the chain, 2 POIs × 3" → the SAME standard command, no extra flag
@@ -331,8 +332,19 @@ python3 -m promo.cli.run_batch \
 ```bash
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
-  --final-upscale-provider disabled
+  --final-upscale-provider disabled \
+  --near-dup-threshold 0.85 --download-diversity
 ```
+
+**Visual dedup arm (2026-06-26 — now STANDARD).** The last two flags above:
+`--near-dup-threshold 0.85` (工单①, packer drops within-video visual near-dup
+twins) + `--download-diversity` (工单②, the ~30-clip download pool is chosen by
+relevance-seeded visual max-min instead of pure top-relevance; download COUNT
+unchanged → no extra egress). Both key off the DINOv2 **visual** embedding, never
+text. `--download-diversity` stamps its armed state on `RUN_RECEIPT.json` so
+`--resume` re-arms it; omit both → byte-identical to pre-2026-06-26. Verified at
+65s: residual visual near-dup pairs 1→0 (Huatulco) / 3→0 (Bonnet) at ~zero
+relevance cost.
 
 `min_width` is a TRUE ≥1080 floor (no upper bound, so native 1440/2160 also pass).
 POIs without enough native ≥1080 clips are fail-loud STRANDED at selection

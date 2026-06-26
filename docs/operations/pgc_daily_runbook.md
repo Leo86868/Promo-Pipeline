@@ -114,11 +114,16 @@ python3 -m promo.cli.run_batch \
   --production-autopilot \
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
+  --near-dup-threshold 0.85 --download-diversity \
   --final-upscale-provider disabled
 ```
-> The last three flags are the 720→1080 flip (now standard — native ≥1080, no
-> upscale; see Source Width Policy). Omitting them reverts to mixed-resolution
-> `best_available` — do not drop them for a standard run.
+> The flip flags (`min_width` / `--source-target-width 1080` /
+> `--final-upscale-provider disabled`) are the 720→1080 flip (now standard —
+> native ≥1080, no upscale; see Source Width Policy). Omitting them reverts to
+> mixed-resolution `best_available` — do not drop them for a standard run.
+> `--near-dup-threshold 0.85` + `--download-diversity` are the visual-dedup arm
+> (工单①②, now standard 2026-06-26 — DINOv2 visual, not text; `--download-diversity`
+> is resume-safe via RUN_RECEIPT). Omitting both → byte-identical to pre-arm.
 > Deploy = `git worktree add <new dated path> origin/main` + `cd promo/remotion && npm install` + copy `.env`. Always point new runs at the newest such worktree; the `main_20260608T000000Z` directory is the shared `.git` root, not a run target.
 
 The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
