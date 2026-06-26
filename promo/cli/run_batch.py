@@ -536,6 +536,20 @@ def _add_quarantined_poi(
     })
 
 
+def _arm_download_diversity_env() -> None:
+    """Arm 工单② (download diversity) for every compile_promo child.
+
+    run_batch spawns each compile via ``subprocess.run`` WITHOUT ``env=``, so
+    children inherit this process's environment. Setting PROMO_DOWNLOAD_DIVERSITY
+    here is what ``config.download_diversity_enabled()`` reads inside each child.
+    The armed state is recorded on the receipt (``download_diversity: true``) so
+    ``--resume`` re-arms BEFORE replaying the recorded compile commands —
+    otherwise a resumed batch would silently drop ② on its remaining videos.
+    Flag absent → env untouched → ② stays off (default, byte-identical to today).
+    """
+    os.environ["PROMO_DOWNLOAD_DIVERSITY"] = "1"
+
+
 def _reject_sticky_replay_env() -> None:
     """Refuse batch work while PROMO_REPLAY_SCRIPT is set (2026-06-11
     review bug ②): the env var is inherited by every compile subprocess,
@@ -1142,6 +1156,7 @@ def run_batch(
     final_upscale_verifier: Callable[..., dict[str, Any]] = verify_final_upscale_output,
     tail_workers: int = 1,
     near_dup_threshold: float | None = None,
+    download_diversity: bool = False,
 ) -> int:
     if jobs != 1:
         raise ValueError("run_batch currently supports --jobs 1 only")
@@ -1228,6 +1243,13 @@ def run_batch(
         source_resolution_policy=resolved_source_policy.to_dict(),
         final_upscale_policy=resolved_final_upscale_policy.to_dict(),
     )
+    # 工单② arm point: set the inherited env BEFORE any compile child is
+    # spawned, and stamp the receipt so --resume can re-arm (see
+    # _arm_download_diversity_env). Receipt field is written only when armed,
+    # so a default-off receipt is byte-identical to today.
+    if download_diversity:
+        _arm_download_diversity_env()
+        receipt["download_diversity"] = True
     write_run_receipt(resolved_receipt_path, receipt)
 
     failures = 0
@@ -1418,6 +1440,12 @@ def resume_batch(
         raise ValueError(f"cannot read receipt {receipt_path}: {exc}") from exc
     if receipt.get("receipt_kind") != "pgc_batch_run_receipt":
         raise ValueError(f"not a PGC batch run receipt: {receipt_path}")
+    # 工单② resume re-arm: the original run recorded its armed state on the
+    # receipt; re-set the inherited env here, BEFORE the resume loop replays any
+    # compile command, so re-rendered videos stay armed. Tail-only videos never
+    # re-download, so this is a no-op for them.
+    if receipt.get("download_diversity"):
+        _arm_download_diversity_env()
     request = receipt.get("request") or {}
     production_autopilot = str(request.get("mode") or "") == "production_autopilot"
     # Derive defaults exactly like the original run did: a receipt whose
@@ -1645,6 +1673,7 @@ def run_selected_batch(
     in_progress_lock: bool = True,
     runs_root: str | None = None,
     near_dup_threshold: float | None = None,
+    download_diversity: bool = False,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -1691,6 +1720,7 @@ def run_selected_batch(
         final_upscale_verifier=final_upscale_verifier,
         tail_workers=tail_workers,
         near_dup_threshold=near_dup_threshold,
+        download_diversity=download_diversity,
     )
 
 
@@ -1835,6 +1865,19 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--download-diversity",
+        action="store_true",
+        help=(
+            "工单② — arm visually-diverse production download selection (default "
+            "OFF). Sets PROMO_DOWNLOAD_DIVERSITY=1, which every compile_promo child "
+            "inherits, so the ~30-clip download pool is chosen by relevance-seeded "
+            "visual max-min instead of pure top-relevance (download COUNT unchanged "
+            "→ no extra egress). The armed state is recorded on RUN_RECEIPT.json so "
+            "--resume re-arms it for the remaining videos. Omit → byte-identical to "
+            "today."
+        ),
+    )
+    parser.add_argument(
         "--no-in-progress-lock",
         action="store_true",
         help=(
@@ -1929,6 +1972,7 @@ def main() -> None:
                 tail_workers=tail_workers,
                 in_progress_lock=not args.no_in_progress_lock,
                 near_dup_threshold=args.near_dup_threshold,
+                download_diversity=args.download_diversity,
             )
         else:
             exit_code = run_batch(
@@ -1949,6 +1993,7 @@ def main() -> None:
                 final_upscale_policy=final_upscale_policy,
                 tail_workers=tail_workers,
                 near_dup_threshold=args.near_dup_threshold,
+                download_diversity=args.download_diversity,
             )
     except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))
