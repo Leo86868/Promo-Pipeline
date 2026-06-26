@@ -2120,3 +2120,209 @@ def test_build_compile_command_omits_poi_description_when_empty(tmp_path):
     )
 
     assert "--poi-description" not in command
+
+
+# ---------------------------------------------------------------------------
+# 工单② --download-diversity arming (env-inherited by compile children) +
+# resume-safety via the RUN_RECEIPT.  See _arm_download_diversity_env.
+# ---------------------------------------------------------------------------
+
+
+def test_run_batch_download_diversity_arms_env_and_records_receipt(tmp_path, monkeypatch):
+    """--download-diversity sets PROMO_DOWNLOAD_DIVERSITY=1 (so each inherited
+    compile child arms ②) and stamps the armed state on RUN_RECEIPT.json."""
+    from promo.cli.run_batch import run_batch
+
+    # Establish a clean baseline; monkeypatch.delenv also restores on teardown,
+    # so the direct os.environ mutation inside run_batch never leaks to siblings.
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    import os
+
+    seen_env = []
+
+    def command_runner(command):
+        # A real compile child inherits this process's env; capture what it
+        # would read at spawn time.
+        seen_env.append(os.environ.get("PROMO_DOWNLOAD_DIVERSITY"))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+        download_diversity=True,
+    )
+
+    assert exit_code == 0
+    assert seen_env == ["1"]
+    assert os.environ.get("PROMO_DOWNLOAD_DIVERSITY") == "1"
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["download_diversity"] is True
+
+
+def test_run_batch_download_diversity_default_off_no_env_no_receipt_field(tmp_path, monkeypatch):
+    """Flag absent → env never set → ② stays off → receipt field absent
+    (default-off is byte-identical to today)."""
+    from promo.cli.run_batch import run_batch
+
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    import os
+
+    seen_env = []
+
+    def command_runner(command):
+        seen_env.append(os.environ.get("PROMO_DOWNLOAD_DIVERSITY"))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+    )
+
+    assert exit_code == 0
+    assert seen_env == [None]
+    assert os.environ.get("PROMO_DOWNLOAD_DIVERSITY") is None
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert "download_diversity" not in receipt
+
+
+def test_resume_rearms_download_diversity_from_receipt(tmp_path, monkeypatch):
+    """A resumed batch re-arms ② for its remaining videos by reading the armed
+    state off the receipt — even in a fresh process where the env was lost."""
+    from promo.cli.run_batch import resume_batch, run_batch
+
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    def first_runner(command):
+        if "video_001" in command[command.index("--output") + 1]:
+            _write_valid_manifest_from_command(command, video_index=1)
+            return 0
+        return 1  # video 2 dies → resume must re-render it
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=first_runner,
+        download_diversity=True,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    assert json.loads(receipt_path.read_text())["download_diversity"] is True
+
+    # Simulate a fresh process: the hand-exported env is gone; only the receipt
+    # remembers ② was armed.
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    import os
+
+    seen_env = []
+
+    def resume_runner(command):
+        seen_env.append(os.environ.get("PROMO_DOWNLOAD_DIVERSITY"))
+        _write_valid_manifest_from_command(command, video_index=2)
+        return 0
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=resume_runner,
+    ) == 0
+    # The re-rendered video saw ② re-armed from the receipt.
+    assert seen_env == ["1"]
+
+
+def test_resume_does_not_arm_download_diversity_when_receipt_off(tmp_path, monkeypatch):
+    """A receipt without the armed field leaves ② off on resume (no leak)."""
+    from promo.cli.run_batch import resume_batch, run_batch
+
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    def first_runner(command):
+        if "video_001" in command[command.index("--output") + 1]:
+            _write_valid_manifest_from_command(command, video_index=1)
+            return 0
+        return 1
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=first_runner,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    assert "download_diversity" not in json.loads(receipt_path.read_text())
+
+    monkeypatch.delenv("PROMO_DOWNLOAD_DIVERSITY", raising=False)
+
+    import os
+
+    seen_env = []
+
+    def resume_runner(command):
+        seen_env.append(os.environ.get("PROMO_DOWNLOAD_DIVERSITY"))
+        _write_valid_manifest_from_command(command, video_index=2)
+        return 0
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=resume_runner,
+    ) == 0
+    assert seen_env == [None]
+    assert os.environ.get("PROMO_DOWNLOAD_DIVERSITY") is None
+
+
+def test_build_parser_download_diversity_default_off():
+    """CLI flag defaults OFF and flips True only when passed."""
+    from promo.cli.run_batch import _build_parser
+
+    parser = _build_parser()
+    off = parser.parse_args(["--batch", "b.json", "--output-dir", "out"])
+    assert off.download_diversity is False
+    on = parser.parse_args(
+        ["--batch", "b.json", "--output-dir", "out", "--download-diversity"]
+    )
+    assert on.download_diversity is True
