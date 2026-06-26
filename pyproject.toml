@@ -16,6 +16,7 @@ dependencies = [
   "supabase>=2.0",
   "PyYAML",
   "numpy",
+  "scipy>=1.10",
   "torch>=2.8",
   "torchaudio>=2.8",
 ]
