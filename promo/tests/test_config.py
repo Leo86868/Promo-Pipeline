@@ -341,3 +341,46 @@ class TestSprint13ResolveGeminiModel:
             assert not reset_thread.is_alive(), "reset_for_tests thread hung"
 
         gemini_client.reset_for_tests()
+
+
+class TestDbFirstAssignmentFlags:
+    """DB-first assignment + bridge-reserve config resolvers (default OFF)."""
+
+    def test_db_first_default_off(self, monkeypatch):
+        from promo.core.config import db_first_assignment_enabled
+
+        monkeypatch.delenv("PROMO_DB_FIRST_ASSIGNMENT", raising=False)
+        assert db_first_assignment_enabled() is False
+
+    def test_db_first_armed_truthy_values(self, monkeypatch):
+        from promo.core.config import db_first_assignment_enabled
+
+        for raw in ("1", "true", "YES", "On"):
+            monkeypatch.setenv("PROMO_DB_FIRST_ASSIGNMENT", raw)
+            assert db_first_assignment_enabled() is True
+
+    def test_bridge_reserve_count_default_none(self, monkeypatch):
+        from promo.core.config import bridge_reserve_count
+
+        monkeypatch.delenv("PROMO_BRIDGE_RESERVE_COUNT", raising=False)
+        assert bridge_reserve_count() is None
+
+    def test_bridge_reserve_count_parses_int(self, monkeypatch):
+        from promo.core.config import bridge_reserve_count
+
+        monkeypatch.setenv("PROMO_BRIDGE_RESERVE_COUNT", "12")
+        assert bridge_reserve_count() == 12
+
+    def test_bridge_reserve_count_rejects_non_int(self, monkeypatch):
+        from promo.core.config import ConfigError, bridge_reserve_count
+
+        monkeypatch.setenv("PROMO_BRIDGE_RESERVE_COUNT", "abc")
+        with pytest.raises(ConfigError, match="must be an integer"):
+            bridge_reserve_count()
+
+    def test_bridge_reserve_count_rejects_negative(self, monkeypatch):
+        from promo.core.config import ConfigError, bridge_reserve_count
+
+        monkeypatch.setenv("PROMO_BRIDGE_RESERVE_COUNT", "-1")
+        with pytest.raises(ConfigError, match="must be >= 0"):
+            bridge_reserve_count()

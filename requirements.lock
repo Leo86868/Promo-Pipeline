@@ -106,6 +106,8 @@ requests==2.33.1
     #   requests-oauthlib
 requests-oauthlib==2.0.0
     # via google-auth-oauthlib
+scipy==1.17.1
+    # via -r requirements.txt
 sympy==1.14.0
     # via torch
 torch==2.11.0

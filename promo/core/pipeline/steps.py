@@ -743,6 +743,11 @@ def _assign_clips_packer(
     # reaches the autopilot registration tail — only changes clip selection.
     from promo.core import config as _promo_config
     near_dup_threshold = _promo_config.near_dup_threshold()
+    db_first = _promo_config.db_first_assignment_enabled()
+    # DB-first IMPLIES global assignment — the whole-library value is only
+    # realized by the global packer (greedy would still strand), and claim-1/2 +
+    # the bridge reserve live on the global path.
+    global_assignment = _promo_config.global_assignment_enabled() or db_first
 
     word_timestamps = narration["word_timestamps"]
     clip_to_asset = {
@@ -837,6 +842,18 @@ def _assign_clips_packer(
     queries = [beat_text(beat, word_timestamps) for beat in beats]
     rankings = (rank_fn or clip_retriever.rank_per_query)(queries, embedded_metadata)
 
+    # DB-first bridge reserve: how many unassigned coverable clips to download
+    # alongside the assigned set so the renderer's freeze-prevention pool is
+    # non-empty (DB-first fetches only assigned ∪ reserve). None on every other
+    # path → pack_clips computes no reserve (provenance shape unchanged).
+    bridge_reserve_count: int | None = None
+    if db_first:
+        override = _promo_config.bridge_reserve_count()
+        bridge_reserve_count = (
+            override if override is not None
+            else max(8, (len(beats) + 1) // 2)  # ceil(0.5 × beats)
+        )
+
     used_windows: dict = {}
     ledger_state = "no_asset_mapping"
     if clip_to_asset:
@@ -862,6 +879,8 @@ def _assign_clips_packer(
         used_windows=used_windows,
         clip_to_asset=clip_to_asset,
         near_dup_threshold=near_dup_threshold,
+        global_assignment=global_assignment,
+        bridge_reserve_count=bridge_reserve_count,
     )
     assignments = _enforce_hard_constraint_and_enrich(
         raw_assignments,

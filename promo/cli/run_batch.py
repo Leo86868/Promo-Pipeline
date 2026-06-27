@@ -550,6 +550,22 @@ def _arm_download_diversity_env() -> None:
     os.environ["PROMO_DOWNLOAD_DIVERSITY"] = "1"
 
 
+def _arm_db_first_assignment_env() -> None:
+    """Arm DB-first assignment for every compile_promo child.
+
+    DB-first IMPLIES global assignment (the whole-library value is realized by
+    the global packer), so this sets BOTH ``PROMO_DB_FIRST_ASSIGNMENT`` and
+    ``PROMO_GLOBAL_ASSIGNMENT``. Like ``_arm_download_diversity_env``, children
+    inherit this process's env (subprocess.run without ``env=``); the armed
+    state is stamped on the receipt (``db_first_assignment: true``) so
+    ``--resume`` re-arms BEFORE replaying the recorded compile commands —
+    otherwise a resumed batch would render half old-strategy, half new. Flag
+    absent → env untouched → byte-identical to today.
+    """
+    os.environ["PROMO_DB_FIRST_ASSIGNMENT"] = "1"
+    os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
+
+
 def _reject_sticky_replay_env() -> None:
     """Refuse batch work while PROMO_REPLAY_SCRIPT is set (2026-06-11
     review bug ②): the env var is inherited by every compile subprocess,
@@ -1157,6 +1173,7 @@ def run_batch(
     tail_workers: int = 1,
     near_dup_threshold: float | None = None,
     download_diversity: bool = False,
+    db_first_assignment: bool = False,
 ) -> int:
     if jobs != 1:
         raise ValueError("run_batch currently supports --jobs 1 only")
@@ -1250,6 +1267,13 @@ def run_batch(
     if download_diversity:
         _arm_download_diversity_env()
         receipt["download_diversity"] = True
+    # DB-first arm point (mirrors ②): set inherited env BEFORE any compile child
+    # is spawned and stamp the receipt so --resume re-arms the SAME strategy for
+    # the remaining videos (a run must not be half-old-half-new). Field written
+    # only when armed → a default-off receipt is byte-identical to today.
+    if db_first_assignment:
+        _arm_db_first_assignment_env()
+        receipt["db_first_assignment"] = True
     write_run_receipt(resolved_receipt_path, receipt)
 
     failures = 0
@@ -1446,6 +1470,12 @@ def resume_batch(
     # re-download, so this is a no-op for them.
     if receipt.get("download_diversity"):
         _arm_download_diversity_env()
+    # DB-first resume re-arm: re-apply the SAME strategy the original run armed
+    # (sets PROMO_DB_FIRST_ASSIGNMENT + PROMO_GLOBAL_ASSIGNMENT) BEFORE the
+    # resume loop replays any compile command, so re-rendered videos stay
+    # DB-first. Tail-only videos never re-render, so this is a no-op for them.
+    if receipt.get("db_first_assignment"):
+        _arm_db_first_assignment_env()
     request = receipt.get("request") or {}
     production_autopilot = str(request.get("mode") or "") == "production_autopilot"
     # Derive defaults exactly like the original run did: a receipt whose
@@ -1674,6 +1704,7 @@ def run_selected_batch(
     runs_root: str | None = None,
     near_dup_threshold: float | None = None,
     download_diversity: bool = False,
+    db_first_assignment: bool = False,
 ) -> int:
     prepared = prepare_selected_batch(
         output_root=output_root,
@@ -1721,6 +1752,7 @@ def run_selected_batch(
         tail_workers=tail_workers,
         near_dup_threshold=near_dup_threshold,
         download_diversity=download_diversity,
+        db_first_assignment=db_first_assignment,
     )
 
 
@@ -1878,6 +1910,20 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--db-first-assignment",
+        action="store_true",
+        help=(
+            "Arm DB-first assignment (default OFF = byte-identical to today). "
+            "Sets PROMO_DB_FIRST_ASSIGNMENT=1 + PROMO_GLOBAL_ASSIGNMENT=1 for "
+            "every compile_promo child: the packer assigns over the WHOLE "
+            "library's DB metadata (removing the top-30 download pool as a hard "
+            "ceiling on which clip a beat can pick), and each variant downloads "
+            "only its assigned ∪ reserve set AFTER matching. The armed state is "
+            "recorded on RUN_RECEIPT.json so --resume re-applies the SAME "
+            "strategy to the remaining videos (a run is never half-old-half-new)."
+        ),
+    )
+    parser.add_argument(
         "--no-in-progress-lock",
         action="store_true",
         help=(
@@ -1973,6 +2019,7 @@ def main() -> None:
                 in_progress_lock=not args.no_in_progress_lock,
                 near_dup_threshold=args.near_dup_threshold,
                 download_diversity=args.download_diversity,
+                db_first_assignment=args.db_first_assignment,
             )
         else:
             exit_code = run_batch(
@@ -1994,6 +2041,7 @@ def main() -> None:
                 tail_workers=tail_workers,
                 near_dup_threshold=args.near_dup_threshold,
                 download_diversity=args.download_diversity,
+                db_first_assignment=args.db_first_assignment,
             )
     except (BatchSelectionError, ValueError) as exc:
         parser.error(str(exc))

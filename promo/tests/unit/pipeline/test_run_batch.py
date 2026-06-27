@@ -2326,3 +2326,142 @@ def test_build_parser_download_diversity_default_off():
         ["--batch", "b.json", "--output-dir", "out", "--download-diversity"]
     )
     assert on.download_diversity is True
+
+
+def test_run_batch_db_first_arms_both_envs_and_records_receipt(tmp_path, monkeypatch):
+    """--db-first-assignment sets PROMO_DB_FIRST_ASSIGNMENT=1 AND
+    PROMO_GLOBAL_ASSIGNMENT=1 (DB-first implies global) for inherited compile
+    children, and stamps the armed state on RUN_RECEIPT.json."""
+    from promo.cli.run_batch import run_batch
+
+    monkeypatch.delenv("PROMO_DB_FIRST_ASSIGNMENT", raising=False)
+    monkeypatch.delenv("PROMO_GLOBAL_ASSIGNMENT", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    import os
+
+    seen_env = []
+
+    def command_runner(command):
+        seen_env.append((
+            os.environ.get("PROMO_DB_FIRST_ASSIGNMENT"),
+            os.environ.get("PROMO_GLOBAL_ASSIGNMENT"),
+        ))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+        db_first_assignment=True,
+    )
+
+    assert exit_code == 0
+    assert seen_env == [("1", "1")]
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert receipt["db_first_assignment"] is True
+
+
+def test_run_batch_db_first_default_off_no_env_no_receipt_field(tmp_path, monkeypatch):
+    """Flag absent → neither env set → receipt field absent (byte-identical)."""
+    from promo.cli.run_batch import run_batch
+
+    monkeypatch.delenv("PROMO_DB_FIRST_ASSIGNMENT", raising=False)
+    monkeypatch.delenv("PROMO_GLOBAL_ASSIGNMENT", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 1,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    import os
+
+    seen_env = []
+
+    def command_runner(command):
+        seen_env.append(os.environ.get("PROMO_DB_FIRST_ASSIGNMENT"))
+        return 0
+
+    exit_code = run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=command_runner,
+    )
+
+    assert exit_code == 0
+    assert seen_env == [None]
+    receipt = json.loads((tmp_path / "out" / "RUN_RECEIPT.json").read_text())
+    assert "db_first_assignment" not in receipt
+
+
+def test_resume_rearms_db_first_from_receipt(tmp_path, monkeypatch):
+    """A resumed batch re-applies the SAME strategy: it re-arms DB-first (both
+    envs) for re-rendered videos by reading the armed state off the receipt, so
+    a run is never half-old-half-new."""
+    from promo.cli.run_batch import resume_batch, run_batch
+
+    monkeypatch.delenv("PROMO_DB_FIRST_ASSIGNMENT", raising=False)
+    monkeypatch.delenv("PROMO_GLOBAL_ASSIGNMENT", raising=False)
+
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(
+        json.dumps({
+            "pois": [{"poi_id": "poi_123", "name": "Terranea Resort"}],
+            "videos_per_poi": 2,
+            "target_duration_sec": 65,
+        }),
+        encoding="utf-8",
+    )
+
+    def first_runner(command):
+        if "video_001" in command[command.index("--output") + 1]:
+            _write_valid_manifest_from_command(command, video_index=1)
+            return 0
+        return 1  # video 2 dies → resume must re-render it
+
+    assert run_batch(
+        batch_path=str(batch_path),
+        output_root=str(tmp_path / "out"),
+        target_duration_sec=65,
+        command_runner=first_runner,
+        db_first_assignment=True,
+    ) == 1
+    receipt_path = tmp_path / "out" / "RUN_RECEIPT.json"
+    assert json.loads(receipt_path.read_text())["db_first_assignment"] is True
+
+    monkeypatch.delenv("PROMO_DB_FIRST_ASSIGNMENT", raising=False)
+    monkeypatch.delenv("PROMO_GLOBAL_ASSIGNMENT", raising=False)
+
+    import os
+
+    seen_env = []
+
+    def resume_runner(command):
+        seen_env.append((
+            os.environ.get("PROMO_DB_FIRST_ASSIGNMENT"),
+            os.environ.get("PROMO_GLOBAL_ASSIGNMENT"),
+        ))
+        _write_valid_manifest_from_command(command, video_index=2)
+        return 0
+
+    assert resume_batch(
+        receipt_path=str(receipt_path),
+        command_runner=resume_runner,
+    ) == 0
+    assert seen_env == [("1", "1")]

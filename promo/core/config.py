@@ -204,6 +204,73 @@ def download_diversity_enabled() -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def global_assignment_enabled() -> bool:
+    """EXPERIMENTAL packer consolidation (default False = OFF → greedy path,
+    byte-identical to today).
+
+    When True, the packer swaps its greedy first-fit relax-ladder for ONE global
+    (HEURISTIC, not "optimal" once the soft penalties are added) clip↔beat
+    assignment (Hungarian solve over a [beats × clips] cost matrix;
+    adjacency-variety and near-dup folded in as soft penalties). Fixes
+    the greedy stranding where an earlier beat spends a clip a later beat needed
+    more. Render-path knob (consumed in the packer step); never touches the
+    autopilot registration tail. Set via ``PROMO_GLOBAL_ASSIGNMENT``
+    (1/true/yes/on) or ``compile_promo --global-assignment``. NOT auto-armed —
+    arming waits on a render before/after, same gate as the dedup rollout.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_GLOBAL_ASSIGNMENT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def db_first_assignment_enabled() -> bool:
+    """EXPERIMENTAL DB-first assignment (default False = OFF → byte-identical
+    to today's download-then-filter-to-30 path).
+
+    When True (candidate-only/shared-asset runs), the packer assigns over the
+    WHOLE-library DB metadata (text embedding inlined, no mp4 needed for the
+    match) and the per-variant download is moved to AFTER assignment — only the
+    chosen ``assigned ∪ reserve`` set is fetched. This removes the top-30/35
+    download pool as a hard ceiling on which clip a beat can pick. DB-first
+    IMPLIES global assignment (the whole-library value is realized by the global
+    packer; greedy would still strand), so the packer step ORs this with
+    ``global_assignment_enabled()``. Render-path knob; never touches the
+    autopilot registration tail. Set via ``PROMO_DB_FIRST_ASSIGNMENT``
+    (1/true/yes/on), ``compile_promo --db-first-assignment``, or
+    ``run_batch --db-first-assignment`` (which re-arms on ``--resume``). NOT
+    auto-armed — arming waits on a render before/after, same gate as the global
+    + dedup rollout.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_DB_FIRST_ASSIGNMENT", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def bridge_reserve_count() -> Optional[int]:
+    """DB-first bridge-reserve override (default None → packer uses
+    ``max(8, ceil(0.5 × beats))``).
+
+    The reserve is the set of unassigned, coverable clips downloaded ALONGSIDE
+    each variant's assigned clips so the renderer's freeze-prevention bridge pool
+    is non-empty (DB-first downloads only ``assigned ∪ reserve``, not a padded
+    top-30, so the bridge pool must be reserved explicitly). Set via
+    ``PROMO_BRIDGE_RESERVE_COUNT``. Unset → formula default.
+    """
+    _ensure_loaded()
+    raw = os.getenv("PROMO_BRIDGE_RESERVE_COUNT", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError(
+            f"PROMO_BRIDGE_RESERVE_COUNT must be an integer, got {raw!r}"
+        ) from exc
+    if value < 0:
+        raise ConfigError("PROMO_BRIDGE_RESERVE_COUNT must be >= 0")
+    return value
+
+
 def clip_model() -> str:
     """MiMo V2 Omni model id for clip analysis via OpenRouter.
 

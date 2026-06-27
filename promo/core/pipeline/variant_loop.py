@@ -53,6 +53,57 @@ def _music_metadata_for_path(backend: PromoBackend, bgm_path: str) -> dict[str, 
     return metadata if isinstance(metadata, dict) else None
 
 
+def backend_shared_assets_now(backend: PromoBackend) -> list[dict] | None:
+    """Current ``backend.shared_assets()`` snapshot, or None if unsupported.
+
+    DB-first calls ``fetch_candidate_clips`` per variant, which sets the
+    backend's ``shared_assets`` to THAT variant's downloaded rows — read here
+    right after a successful render to accumulate the run-level union.
+    """
+    if not callable(getattr(type(backend), "shared_assets", None)):
+        return None
+    rows = backend.shared_assets()  # type: ignore[attr-defined]
+    return rows if isinstance(rows, list) else None
+
+
+def _materialize_assigned_clips(
+    backend: PromoBackend,
+    poi_name: str,
+    variant_tmp_dir: str,
+    variant_assignments: list[dict],
+    reserve_clip_ids: list[str],
+    clip_to_asset: dict[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    """DB-first per-variant download (Step 4.6, only on the DB-first path).
+
+    The packer assigned over the WHOLE library's DB metadata; the mp4s are only
+    needed now, for THIS variant's render + bridge pool. Download exactly
+    ``assigned ∪ reserve`` via the existing ``backend.fetch_candidate_clips`` and
+    return ``({clip_id: local_path}, downloaded_asset_ids)`` for this variant.
+
+    Fails loud (RuntimeError) if any ASSIGNED clip lacks an asset mapping —
+    silently dropping an assigned clip would break the render AND the usage
+    ledger (codex's biggest catch), so it must never degrade quietly.
+    """
+    assigned_clip_ids = {str(a["clip_id"]).zfill(4) for a in variant_assignments}
+    unmapped = sorted(c for c in assigned_clip_ids if c not in clip_to_asset)
+    if unmapped:
+        raise RuntimeError(
+            "DB-first materialization: assigned clip(s) have no asset_id "
+            f"mapping (cannot download/ledger): {unmapped}"
+        )
+    download_clip_ids = assigned_clip_ids | {
+        str(c).zfill(4) for c in reserve_clip_ids
+    }
+    download_asset_ids = sorted({
+        clip_to_asset[c] for c in download_clip_ids if c in clip_to_asset
+    })
+    variant_clip_paths = backend.fetch_candidate_clips(  # type: ignore[attr-defined]
+        poi_name, variant_tmp_dir, download_asset_ids,
+    )
+    return variant_clip_paths, download_asset_ids
+
+
 def _run_variant_loop(
     *,
     scripts: list[dict],
@@ -79,6 +130,8 @@ def _run_variant_loop(
     clip_assignments_entries: list[dict],
     rendered_outputs: list[dict] | None = None,
     asset_visual_brief: dict | None = None,
+    db_first: bool = False,
+    materialized_shared_assets: list[dict] | None = None,
 ) -> tuple[bool, int, dict]:
     """Run the per-variant loop body end-to-end.
 
@@ -112,6 +165,16 @@ def _run_variant_loop(
     """
     all_ok = True
     run_retrieval_provenance = _empty_retrieval_provenance()
+    # DB-first: the packer ranks over whole-library metadata; each clip carries
+    # its asset_id. This mapping turns assigned/reserve clip ids into the
+    # asset_ids to download per variant (Step 4.6) — built once for the run.
+    db_first_clip_to_asset: dict[str, str] = {}
+    if db_first:
+        db_first_clip_to_asset = {
+            str(m.get("id")).zfill(4): str(m["asset_id"])
+            for m in clips_metadata
+            if m.get("id") is not None and m.get("asset_id")
+        }
     # 翻转二 B5 — the packer assigner needs the clip→asset mapping for
     # usage-window rotation; platform backends expose it via
     # shared_assets(), local backends don't (rotation inactive).
@@ -214,6 +277,39 @@ def _run_variant_loop(
             narration, variant_index, variant_voice_key, variant_target_duration,
         )
 
+        # Step 4.6 (DB-first only): the packer assigned over whole-library DB
+        # metadata; download just THIS variant's assigned ∪ reserve now. The
+        # legacy path keeps using the run-level clip_paths (byte-identical).
+        variant_clip_paths = clip_paths
+        variant_download_asset_ids: list[str] = []
+        if db_first:
+            reserve_clip_ids = list(
+                (variant_retrieval.get("packer") or {}).get("reserve_clip_ids", [])
+            )
+            try:
+                variant_clip_paths, variant_download_asset_ids = (
+                    _materialize_assigned_clips(
+                        backend,
+                        poi_name,
+                        variant_tmp_dir,
+                        variant_assignments,
+                        reserve_clip_ids,
+                        db_first_clip_to_asset,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Variant %d aborted: DB-first clip materialization failed: %s",
+                    variant_index, exc,
+                )
+                all_ok = False
+                continue
+            logger.info(
+                "Step 4.6: materialized %d clips for variant %d "
+                "(assigned ∪ reserve)",
+                len(variant_clip_paths), variant_index,
+            )
+
         logger.info("Step 7: Building props.json for variant %d...", variant_index)
         variant_timeline_entries: list[dict] = []
         try:
@@ -225,7 +321,7 @@ def _run_variant_loop(
                 poi_name=poi_name,
                 location=location,
                 script_segments=script["segments"],
-                clip_paths=clip_paths,
+                clip_paths=variant_clip_paths,
                 narration_result=narration,  # type: ignore[arg-type]
                 bgm_path=variant_bgm,
                 assignments=variant_assignments,  # type: ignore[arg-type]
@@ -257,7 +353,7 @@ def _run_variant_loop(
             continue
 
         stage_media(
-            clip_paths=list(clip_paths.values()),
+            clip_paths=list(variant_clip_paths.values()),
             narration_path=narration["audio_path"],
             bgm_path=variant_bgm,
             poi_name=poi_name,
@@ -292,6 +388,26 @@ def _run_variant_loop(
         if not ok:
             all_ok = False
             continue
+
+        # DB-first writeback (codex's biggest catch): render succeeded, so fold
+        # this variant's materialized clip_paths + shared_assets back into the
+        # run-level accumulators. Otherwise the run-level clip_paths stays empty
+        # and the manifest / usage_events / asset_snapshot would drop every
+        # asset_id (clips render, but the production ledger loses them). Success-
+        # gated like the sidecar rows below, so an aborted variant's downloads
+        # never orphan into the manifest.
+        if db_first:
+            clip_paths.update(variant_clip_paths)
+            if materialized_shared_assets is not None:
+                seen_clip_ids = {
+                    str(r.get("clip_id")).zfill(4)
+                    for r in materialized_shared_assets
+                }
+                for row in (backend_shared_assets_now(backend) or []):
+                    cid = str(row.get("clip_id")).zfill(4)
+                    if cid not in seen_clip_ids:
+                        materialized_shared_assets.append(row)
+                        seen_clip_ids.add(cid)
 
         # Sprint 09a M-004: render succeeded — only now commit this
         # variant's observability rows to the sidecar accumulators.

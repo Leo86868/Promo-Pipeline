@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import tempfile
+from dataclasses import dataclass
 from typing import Any
 
 from promo.core import sanitize_poi_name as _safe_poi_dir
@@ -272,6 +273,141 @@ def _retrieve_shared_asset_candidates(
     )
 
 
+@dataclass
+class _CandidateOnlyAssets:
+    """Resolved per-run asset state for a candidate-only (shared-asset) run."""
+
+    clips_metadata: list[dict]
+    clip_durations: dict[str, float]
+    clip_paths: dict[str, str]
+    shared_assets_for_manifest: list[dict[str, Any]] | None
+    shared_asset_retrieval_provenance: dict[str, Any]
+    asset_visual_brief: dict | None
+
+
+def _resolve_candidate_only_assets(
+    *,
+    backend: PromoBackend,
+    shared_asset_ready_pool: list[Any],
+    scripts: list[dict],
+    clips_metadata: list[dict],
+    asset_visual_brief: dict | None,
+    brief_sample_info: dict[str, Any],
+    poi_name: str,
+    tmp_dir: str,
+    db_first: bool,
+) -> _CandidateOnlyAssets | None:
+    """Resolve clips_metadata / clip_durations / clip_paths + retrieval
+    provenance for a candidate-only (shared-asset) run.
+
+    DB-first → assign over the WHOLE library (inline text embedding + usage_count
+    re-projected), NO run-level download or filter-to-30; the variant loop
+    materializes ``assigned ∪ reserve`` per variant. Legacy → download the
+    relevance top-30 (工单② when armed) and filter metadata to it.
+
+    Returns ``None`` on failure (the caller returns False; the error is already
+    logged). Pure extraction of the former inline branches — behavior identical.
+    """
+    from promo.core.assets.retrieval import (
+        brief_assets_from_rows,
+        build_asset_visual_brief,
+        clip_metadata_from_ready_assets,
+    )
+
+    if db_first:
+        # ---- DB-first: whole-library assignment, download AFTER matching ----
+        try:
+            # Re-project the WHOLE library WITH inline text embedding +
+            # usage_count: the per-variant packer ranks over the whole pool
+            # (inline branch → zero extra DB reads) and select_bridge_reserve
+            # gets usage_count. No filter-to-30, no run-level download — the
+            # variant loop materializes assigned ∪ reserve per variant.
+            clips_metadata = clip_metadata_from_ready_assets(
+                shared_asset_ready_pool, with_embedding=True,
+            )
+            clip_durations = _clip_durations_from_metadata(clips_metadata)
+            # Rank-only retrieval provenance for the sidecar; ② is RETIRED on
+            # this path (no visual-diversity download selection — the global
+            # near-dup penalty is now the sole visual-dedup defense).
+            provenance = _retrieve_shared_asset_candidates_from_ready_assets(
+                ready_assets=shared_asset_ready_pool, scripts=scripts,
+            )
+            provenance["brief_sample"] = brief_sample_info
+            provenance["db_first_assignment"] = True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("DB-first whole-library retrieval setup failed: %s", exc)
+            return None
+        logger.info(
+            "DB-first whole-library assignment: %d ready assets, no run-level "
+            "download (assigned ∪ reserve materialized per variant)",
+            provenance["eligible_asset_pool_size"],
+        )
+        return _CandidateOnlyAssets(
+            clips_metadata=clips_metadata,
+            clip_durations=clip_durations,
+            clip_paths={},
+            # shared_assets_for_manifest is accumulated per-variant in the loop
+            # (each fetch_candidate_clips sets backend.shared_assets to ITS
+            # subset); None here, filled from the loop's union after.
+            shared_assets_for_manifest=None,
+            shared_asset_retrieval_provenance=provenance,
+            asset_visual_brief=asset_visual_brief,
+        )
+
+    # ---- Legacy: download the relevance top-30 (② when armed) + filter ----
+    try:
+        provenance = _retrieve_shared_asset_candidates_from_ready_assets(
+            ready_assets=shared_asset_ready_pool,
+            scripts=scripts,
+            # 工单② FIX — production runs candidate_only_mode, which called this
+            # directly and never fetched visual vectors (the fetch lived only in
+            # the shared_assets fallback branch), so armed ② silently degraded
+            # to relevance-only.
+            visual_by_asset=_fetch_visual_vectors_if_armed(
+                backend, shared_asset_ready_pool,
+            ),
+        )
+        # V2: 显眼项复读 ruler reads which subset the brief showed.
+        provenance["brief_sample"] = brief_sample_info
+        download_asset_ids = provenance["download_asset_ids"]
+        clip_paths = backend.fetch_candidate_clips(  # type: ignore[attr-defined]
+            poi_name, tmp_dir, download_asset_ids,
+        )
+        shared_assets = _optional_backend_value(backend, "shared_assets")
+        shared_assets_for_manifest = (
+            shared_assets if isinstance(shared_assets, list) else None
+        )
+        clips_metadata = _filter_candidate_metadata(
+            clips_metadata=clips_metadata,
+            ready_assets=shared_asset_ready_pool,
+            asset_ids=download_asset_ids,
+        )
+        clip_durations = _clip_durations_from_metadata(clips_metadata)
+        validate_shared_asset_id_coverage(
+            clip_paths=clip_paths, shared_assets=shared_assets_for_manifest,
+        )
+        asset_visual_brief = build_asset_visual_brief(
+            brief_assets_from_rows(shared_assets_for_manifest or [])
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Candidate-only shared asset retrieval/download failed: %s", exc)
+        return None
+    logger.info(
+        "Candidate-only download selected %d semantic candidates and "
+        "downloaded %d clips from %d ready assets",
+        provenance["candidate_count"], len(clip_paths),
+        provenance["eligible_asset_pool_size"],
+    )
+    return _CandidateOnlyAssets(
+        clips_metadata=clips_metadata,
+        clip_durations=clip_durations,
+        clip_paths=clip_paths,
+        shared_assets_for_manifest=shared_assets_for_manifest,
+        shared_asset_retrieval_provenance=provenance,
+        asset_visual_brief=asset_visual_brief,
+    )
+
+
 def _build_sampled_brief(
     ready_pool: list[Any],
     hook_seed: int | None,
@@ -300,6 +436,29 @@ def _build_sampled_brief(
     return brief, sample_info
 
 
+def _relabel_db_first_download_provenance(
+    shared_asset_retrieval_provenance: dict[str, Any],
+    materialized_shared_assets: list[dict[str, Any]],
+) -> None:
+    """DB-first observability fix (in place): the run-level ``download_asset_ids``
+    from the relevance ranking is NOT what was downloaded — the variant loop
+    materialized ``assigned ∪ reserve``. Relabel so a field named "download"
+    equals what was actually downloaded (PLAN AC: ``download_asset_ids ⊆
+    assigned∪reserve``): preserve the relevance pool under
+    ``semantic_candidate_asset_ids`` and set ``download_asset_ids`` /
+    ``materialized_asset_ids`` to the real per-variant download union."""
+    materialized_asset_ids = sorted({
+        str(row.get("asset_id"))
+        for row in materialized_shared_assets
+        if row.get("asset_id")
+    })
+    sar = shared_asset_retrieval_provenance
+    sar["semantic_candidate_asset_ids"] = sar.get("download_asset_ids", [])
+    sar["download_asset_ids"] = materialized_asset_ids
+    sar["materialized_asset_ids"] = materialized_asset_ids
+    sar["download_pool_count"] = len(materialized_asset_ids)
+
+
 def _merge_shared_asset_retrieval_provenance(
     run_retrieval_provenance: dict[str, Any],
     shared_asset_retrieval_provenance: dict[str, Any],
@@ -310,9 +469,16 @@ def _merge_shared_asset_retrieval_provenance(
         "embedded_pool_size": shared_asset_retrieval_provenance.get(
             "eligible_asset_pool_size", 0
         ),
-        "reduced_pool_size": shared_asset_retrieval_provenance.get(
-            "download_pool_count",
-            shared_asset_retrieval_provenance.get("candidate_count", 0),
+        # DB-first assigns over the WHOLE library (no reduction), so the
+        # "reduced pool the packer chose from" IS the whole library — not the
+        # legacy download-pool count. Legacy path unchanged (byte-identical).
+        "reduced_pool_size": (
+            shared_asset_retrieval_provenance.get("eligible_asset_pool_size", 0)
+            if shared_asset_retrieval_provenance.get("db_first_assignment")
+            else shared_asset_retrieval_provenance.get(
+                "download_pool_count",
+                shared_asset_retrieval_provenance.get("candidate_count", 0),
+            )
         ),
         "fallback_reason": shared_asset_retrieval_provenance.get("fallback_reason"),
         "retrieval_contract": shared_asset_retrieval_provenance.get(
@@ -519,64 +685,32 @@ def full_pipeline(
             logger.error("Variant-pack generation failed: %s", exc)
             return False
 
+        from promo.core import config as _cfg
+        # DB-first only applies to candidate-only/shared-asset runs (the only
+        # mode with a whole-library DB pool to assign over before downloading).
+        db_first = candidate_only_mode and _cfg.db_first_assignment_enabled()
+
         shared_asset_retrieval_provenance: dict[str, Any] | None = None
         if candidate_only_mode and shared_asset_ready_pool is not None:
-            try:
-                shared_asset_retrieval_provenance = (
-                    _retrieve_shared_asset_candidates_from_ready_assets(
-                        ready_assets=shared_asset_ready_pool,
-                        scripts=scripts,
-                        # 工单② FIX — production runs candidate_only_mode, which
-                        # called this directly and never fetched visual vectors
-                        # (the fetch lived only in the shared_assets fallback
-                        # branch), so armed ② silently degraded to relevance-only.
-                        visual_by_asset=_fetch_visual_vectors_if_armed(
-                            backend, shared_asset_ready_pool,
-                        ),
-                    )
-                )
-                # V2: 显眼项复读 ruler reads which subset the brief showed.
-                shared_asset_retrieval_provenance["brief_sample"] = brief_sample_info
-                download_asset_ids = shared_asset_retrieval_provenance[
-                    "download_asset_ids"
-                ]
-                clip_paths = backend.fetch_candidate_clips(  # type: ignore[attr-defined]
-                    poi_name,
-                    tmp_dir,
-                    download_asset_ids,
-                )
-                shared_assets = _optional_backend_value(backend, "shared_assets")
-                shared_assets_for_manifest = (
-                    shared_assets if isinstance(shared_assets, list) else None
-                )
-                clips_metadata = _filter_candidate_metadata(
-                    clips_metadata=clips_metadata,
-                    ready_assets=shared_asset_ready_pool,
-                    asset_ids=download_asset_ids,
-                )
-                clip_durations = _clip_durations_from_metadata(clips_metadata)
-                validate_shared_asset_id_coverage(
-                    clip_paths=clip_paths,
-                    shared_assets=shared_assets_for_manifest,
-                )
-                from promo.core.assets.retrieval import (
-                    brief_assets_from_rows,
-                    build_asset_visual_brief,
-                )
-
-                asset_visual_brief = build_asset_visual_brief(
-                    brief_assets_from_rows(shared_assets_for_manifest or [])
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Candidate-only shared asset retrieval/download failed: %s", exc)
-                return False
-            logger.info(
-                "Candidate-only download selected %d semantic candidates and "
-                "downloaded %d clips from %d ready assets",
-                shared_asset_retrieval_provenance["candidate_count"],
-                len(clip_paths),
-                shared_asset_retrieval_provenance["eligible_asset_pool_size"],
+            resolved = _resolve_candidate_only_assets(
+                backend=backend,
+                shared_asset_ready_pool=shared_asset_ready_pool,
+                scripts=scripts,
+                clips_metadata=clips_metadata,
+                asset_visual_brief=asset_visual_brief,
+                brief_sample_info=brief_sample_info,
+                poi_name=poi_name,
+                tmp_dir=tmp_dir,
+                db_first=db_first,
             )
+            if resolved is None:
+                return False
+            clips_metadata = resolved.clips_metadata
+            clip_durations = resolved.clip_durations
+            clip_paths = resolved.clip_paths
+            shared_assets_for_manifest = resolved.shared_assets_for_manifest
+            shared_asset_retrieval_provenance = resolved.shared_asset_retrieval_provenance
+            asset_visual_brief = resolved.asset_visual_brief
         elif shared_assets_for_manifest:
             try:
                 shared_asset_retrieval_provenance = _retrieve_shared_asset_candidates(
@@ -630,6 +764,11 @@ def full_pipeline(
         match_quality_entries: list[dict] = []
         clip_assignments_entries: list[dict] = []  # Sprint 10 C3 — F1 sidecar accumulator
         rendered_outputs: list[dict] = []
+        # DB-first: the variant loop downloads assigned ∪ reserve per variant and
+        # folds the union back here (clip_paths mutated in place; shared rows
+        # accumulated) so the manifest / usage writeback carries every downloaded
+        # asset_id. Empty + unused on every other path.
+        materialized_shared_assets: list[dict] = []
         # Sprint 13 AC19: last-variant-wins run-level provenance is owned by
         # ``_run_variant_loop`` and surfaced through its return tuple.
         # Sprint 4 post-audit L-001/D-001 removed the caller-side init + kwarg
@@ -662,7 +801,18 @@ def full_pipeline(
             match_quality_entries=match_quality_entries,
             clip_assignments_entries=clip_assignments_entries,
             rendered_outputs=rendered_outputs,
+            db_first=db_first,
+            materialized_shared_assets=materialized_shared_assets,
         )
+        # DB-first: the manifest's shared rows come from the per-variant download
+        # union (clip_paths was mutated in place to that union too), so the
+        # manifest asset_id set == the actually-downloaded assigned ∪ reserve.
+        if db_first and materialized_shared_assets:
+            shared_assets_for_manifest = materialized_shared_assets
+        if db_first and shared_asset_retrieval_provenance is not None:
+            _relabel_db_first_download_provenance(
+                shared_asset_retrieval_provenance, materialized_shared_assets,
+            )
         if shared_asset_retrieval_provenance is not None:
             run_retrieval_provenance = _merge_shared_asset_retrieval_provenance(
                 run_retrieval_provenance,
