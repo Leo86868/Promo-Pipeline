@@ -171,17 +171,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bgm-dir", type=str, default=None,
                         help="Directory of .mp3 files for per-variant BGM rotation")
     parser.add_argument(
-        "--supabase-music-library",
-        action="store_true",
-        help=(
-            "Fetch BGM from public.music_library using duration_sec >= "
-            "--target-duration-sec"
-        ),
+        "--supabase-music-library", action="store_true",
+        help="Fetch BGM from public.music_library using duration_sec >= "
+             "--target-duration-sec",
     )
     parser.add_argument(
-        "--supabase-music-id",
-        type=str,
-        default=None,
+        "--supabase-music-id", type=str, default=None,
         help="Fetch one exact public.music_library row by id and validate duration_sec",
     )
     parser.add_argument("--skip-analysis", action="store_true",
@@ -189,32 +184,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--render-props", type=str, default=None,
                         help="Render from existing props.json (skips all pipeline stages)")
     parser.add_argument(
-        "--target-duration-sec",
-        type=float,
-        default=config.default_duration_sec(),
+        "--target-duration-sec", type=float, default=config.default_duration_sec(),
         help="Target promo duration in seconds (default from PROMO_DEFAULT_DURATION_SEC or 30)",
     )
     parser.add_argument(
-        "--n-variants",
-        type=int,
-        default=config.default_variants(),
+        "--n-variants", type=int, default=config.default_variants(),
         help="Number of promo variants to render (default from PROMO_DEFAULT_VARIANTS or 1)",
     )
     parser.add_argument(
-        "--script-candidates",
-        type=int,
-        default=config.default_script_candidates(),
+        "--script-candidates", type=int, default=config.default_script_candidates(),
         help="Accepted script attempts per variant (default from PROMO_DEFAULT_SCRIPT_CANDIDATES or 1)",
     )
     parser.add_argument(
-        "--tts-speed",
-        type=float,
-        default=0.95,
-        help=(
-            "ElevenLabs voice_settings.speed override (default 0.95). "
-            "Drop to 0.90-0.92 when the pause budget is tail-constrained "
-            "and the pipeline suggests it in the warning log."
-        ),
+        "--tts-speed", type=float, default=0.95,
+        help="ElevenLabs voice_settings.speed override (default 0.95). Drop to "
+             "0.90-0.92 when the pause budget is tail-constrained and the "
+             "pipeline suggests it in the warning log.",
     )
 
     # Standalone local-first flags
@@ -247,46 +232,36 @@ def _build_parser() -> argparse.ArgumentParser:
     # refactor) so that the parallel N3 zone (the lines 1290-1306 group)
     # stays semantically untouched; this arg is orthogonal to those.
     parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help=(
-            "Integer seed for the Sprint 16 per-variant FormatSelector / "
-            "PersonaSelector. None (default) lets the selectors draw from "
-            "OS entropy; pin a seed for reproducible variant mixes."
-        ),
+        "--seed", type=int, default=None,
+        help="Seed for the Sprint 16 per-variant Format/PersonaSelector "
+             "(reproducible variant mixes); None = OS entropy.",
     )
     parser.add_argument(
         "--hook-seed", type=int, default=None,
         help="Per-video hook-rotation offset (P2 step 5): run_batch passes "
              "(base seed or 0) + canonical ordinal; unset = legacy rotation.",
     )
+    # EXPERIMENTAL render-path knobs (default OFF = byte-identical; never touch
+    # release_candidates/usage). Each sets the matching PROMO_* env the packer
+    # step reads — see promo.core.config docstrings for the full semantics.
     parser.add_argument(
         "--near-dup-threshold", type=float, default=None,
-        help="EXPERIMENTAL near-dup soft gate (default None = OFF). When set, "
-             "a candidate whose VISUAL-embedding cosine to an already-chosen "
-             "clip >= threshold is skipped for the next-ranked clip (recommended "
-             "0.85). Render-path only; never touches release_candidates/usage. "
-             "Sets PROMO_NEAR_DUP_THRESHOLD for the packer step.",
+        help="Near-dup soft gate: skip a candidate whose VISUAL cosine to a "
+             "chosen clip >= threshold (recommended 0.85). Sets "
+             "PROMO_NEAR_DUP_THRESHOLD.",
     )
     parser.add_argument(
         "--global-assignment", action="store_true",
-        help="EXPERIMENTAL packer consolidation (default OFF = greedy, "
-             "byte-identical). When set, the packer solves ONE global (heuristic) "
-             "clip↔beat assignment (Hungarian) with adjacency + near-dup as soft "
-             "penalties instead of the greedy relax-ladder — fixes earlier beats "
-             "stranding clips later beats needed. Render-path only; never touches "
-             "release_candidates/usage. Sets PROMO_GLOBAL_ASSIGNMENT.",
+        help="Global (heuristic) Hungarian clip↔beat assignment with adjacency "
+             "+ near-dup soft penalties instead of greedy. Sets "
+             "PROMO_GLOBAL_ASSIGNMENT.",
     )
     parser.add_argument(
         "--db-first-assignment", action="store_true",
-        help="EXPERIMENTAL DB-first assignment (default OFF = byte-identical). "
-             "Shared-asset runs only: the packer assigns over the WHOLE library's "
-             "DB metadata (no top-30 download ceiling) and each variant downloads "
-             "only its assigned ∪ reserve set AFTER matching. IMPLIES "
+        help="Shared-asset runs: assign over the WHOLE library (no top-30 "
+             "ceiling), download assigned ∪ reserve AFTER matching. IMPLIES "
              "--global-assignment. Sets PROMO_DB_FIRST_ASSIGNMENT + "
-             "PROMO_GLOBAL_ASSIGNMENT. Render-path only; never touches "
-             "release_candidates/usage.",
+             "PROMO_GLOBAL_ASSIGNMENT.",
     )
 
     return parser
@@ -299,20 +274,15 @@ def main():
     parser = _build_parser()
     args = parser.parse_args()
 
+    # Render-path env knobs (read by promo.core.config in the packer step).
+    # DB-first implies global assignment (whole-library value needs the global
+    # packer; packer also ORs db_first into global as a belt-and-braces).
     if args.near_dup_threshold is not None:
-        # Render-path only; the packer step reads config.near_dup_threshold().
         os.environ["PROMO_NEAR_DUP_THRESHOLD"] = str(args.near_dup_threshold)
-
-    if args.global_assignment:
-        # Render-path only; packer step reads config.global_assignment_enabled().
+    if args.global_assignment or args.db_first_assignment:
         os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
-
     if args.db_first_assignment:
-        # DB-first implies global assignment (whole-library value is realized by
-        # the global packer). Pipeline reads config.db_first_assignment_enabled();
-        # packer ORs db_first into global_assignment.
         os.environ["PROMO_DB_FIRST_ASSIGNMENT"] = "1"
-        os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
 
     if args.render_props:
         output = args.output or os.path.join(REMOTION_DIR, "out", "promo_output.mp4")
