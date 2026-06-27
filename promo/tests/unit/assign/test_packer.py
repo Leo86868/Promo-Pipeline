@@ -603,3 +603,191 @@ def test_global_flags_displaced_beat():
     assert d["best_feasible"] == 0.85 and d["score"] == 0.20
     assert d["gap"] == pytest.approx(0.65)
     assert set(d) == {"beat", "clip_id", "score", "best_feasible", "gap"}
+
+
+# --- DB-first: claim-1 / claim-2 / claim-3 + bridge reserve ----------------
+# These pin the DB-first additions to the global path: claim-1 (window-
+# freshness soft cost), claim-2 (too-short fail-loud), claim-3 (near-dup is
+# all-prior, not neighbour-only), and select_bridge_reserve determinism.
+
+from promo.core.assign.packer import (  # noqa: E402
+    GLOBAL_STALE_WINDOW_PENALTY,
+    select_bridge_reserve,
+)
+
+
+def _meta_emb_asset(clip_id, emb, category, asset_id, visual=None, usage=0):
+    """Like _meta_emb but carries asset_id + usage_count (DB-first metadata)."""
+    return {
+        "id": clip_id, "category": category, "scene_description": "x",
+        "dominant_motion_phase": "", "embedding": emb,
+        "visual_embedding": emb if visual is None else visual,
+        "asset_id": asset_id, "usage_count": usage,
+    }
+
+
+def test_claim1_window_freshness_breaks_equal_cosine_tie():
+    """claim-1: with two equal-cosine coverable clips, the one whose source is
+    fully shown (no free window) pays GLOBAL_STALE_WINDOW_PENALTY, so the solver
+    prefers the fresher clip. Beat 1 ties 0001 vs 0002 at 0.50; 0001's source is
+    fully shown (used [0,5]); the stale penalty flips the pick to fresh 0002."""
+    beats = _beats_one_segment((0, 4), (5, 9))  # two 2.0s spans
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+    meta = [_meta("0001", "a"), _meta("0002", "b"), _meta("0003", "c")]
+    # Beat 0 must take 0003 (only it scores high there). Beat 1 ties 0001/0002.
+    rankings = [
+        [("0003", 0.90), ("0001", 0.10), ("0002", 0.10)],
+        [("0001", 0.50), ("0002", 0.50), ("0003", 0.05)],
+    ]
+    # 0001 fully shown → stale for beat 1; 0002 fresh.
+    used_windows = {"asset_1": [UsedWindow(0.0, 5.0)]}
+    clip_to_asset = {"0001": "asset_1"}
+    assignments, _ = pack_clips(
+        beats, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True,
+        used_windows=used_windows, clip_to_asset=clip_to_asset,
+    )
+    assert assignments[0]["clip_id"] == "0003"
+    assert assignments[1]["clip_id"] == "0002"  # fresher clip won the tie
+
+
+def test_claim1_penalty_is_soft_not_blocking():
+    """claim-1 stays SOFT: when the ONLY coverable clip for a beat is fully
+    shown, it is still assigned (penalised, never forbidden) — window
+    exhaustion is the soft contract, not an eligibility rule."""
+    beats = _beats_one_segment((0, 4), (5, 9))
+    durations = {"0001": 5.0, "0002": 5.0}
+    meta = [_meta("0001", "a"), _meta("0002", "b")]
+    rankings = [[("0001", 0.9), ("0002", 0.1)], [("0002", 0.9), ("0001", 0.1)]]
+    used_windows = {"asset_1": [UsedWindow(0.0, 5.0)]}  # 0001 fully shown
+    assignments, prov = pack_clips(
+        beats, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True,
+        used_windows=used_windows, clip_to_asset={"0001": "asset_1"},
+    )
+    # 0001 still assigned to beat 0 (soft penalty did not flip a forced pick).
+    assert assignments[0]["clip_id"] == "0001"
+    assert prov["window_exhausted_beats"] == [0]
+    assert GLOBAL_STALE_WINDOW_PENALTY > 0
+
+
+def test_claim2_too_short_pick_fails_loud():
+    """claim-2: when 1-to-1 contention forces a beat onto a clip too short to
+    cover its span, the packer raises instead of shipping a too-short clip (no
+    silent truncation, no false window_exhausted)."""
+    beats = _beats_one_segment((0, 4), (5, 9))  # two 2.0s spans
+    # Two clips, two beats — pre-check (clips < beats) does NOT fire — but 0002
+    # is 0.5s (cannot cover 2.0s). One beat is forced onto it → must raise.
+    durations = {"0001": 5.0, "0002": 0.5}
+    meta = [_meta("0001", "a"), _meta("0002", "b")]
+    rankings = [
+        [("0001", 0.80), ("0002", 0.10)],
+        [("0001", 0.70), ("0002", 0.10)],
+    ]
+    with pytest.raises(ClipAssignmentError):
+        pack_clips(
+            beats, rankings, word_timestamps=WTS,
+            clip_durations=durations, clip_metadata=meta,
+            global_assignment=True,
+        )
+
+
+def test_claim3_near_dup_is_all_prior_not_neighbour_only():
+    """claim-3: the global near-dup penalty compares against ALL other assigned
+    clips (greedy's all-prior), not just the immediate neighbour — so a visual
+    twin "one shot apart" is still displaced.
+
+    Three distinct visual families so the ONLY near-dup pair is 0001↔0002:
+    0001=A, 0002=A (twin), 0003=B (unique), 0004=C (unique). Beat 0←0001 (A),
+    beat 1←0004 (C, diverse), beat 2 prefers 0002 (A-twin of 0001, TWO beats
+    away) over diverse 0003 (B). Neighbour-only near-dup would miss the
+    non-adjacent 0001↔0002 twin; all-prior catches it and flips beat 2 to 0003
+    (which creates no twin pair, so the penalty math favours it)."""
+    emb_c = [0.0, 0.0, 1.0]
+    beats = _beats_one_segment((0, 3), (4, 6), (7, 9))
+    wts = _words(10)
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0, "0004": 5.0}
+    meta = [
+        _meta_emb("0001", _EMB_A, "c1", visual=_EMB_A),
+        _meta_emb("0002", _EMB_A, "c2", visual=_EMB_A),         # twin of 0001
+        _meta_emb("0003", _EMB_DIVERSE, "c3", visual=_EMB_DIVERSE),  # unique B
+        _meta_emb("0004", emb_c, "c4", visual=emb_c),           # unique C
+    ]
+    rankings = [
+        [("0001", 0.95), ("0002", 0.20), ("0003", 0.10), ("0004", 0.05)],
+        [("0004", 0.95), ("0003", 0.20), ("0002", 0.10), ("0001", 0.05)],
+        [("0002", 0.50), ("0003", 0.45), ("0001", 0.20), ("0004", 0.10)],
+    ]
+    no_gate, _ = pack_clips(
+        beats, rankings, word_timestamps=wts,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True, near_dup_threshold=None,
+    )
+    assert [a["clip_id"] for a in no_gate] == ["0001", "0004", "0002"]  # twin kept
+
+    gated, _ = pack_clips(
+        beats, rankings, word_timestamps=wts,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True, near_dup_threshold=0.9, near_dup_penalty=0.50,
+    )
+    ids = [a["clip_id"] for a in gated]
+    assert ids[0] == "0001" and ids[1] == "0004"
+    # beat 2 displaced off the non-adjacent twin 0002 onto diverse 0003.
+    assert ids[2] == "0003"
+
+
+def test_select_bridge_reserve_orders_by_usage_then_duration():
+    """Reserve picks unassigned coverable clips, lowest usage_count → longest
+    duration → clip_id, deterministic, excluding the assigned set."""
+    clip_metadata = [
+        {"id": "0001", "asset_id": "a1", "usage_count": 5},
+        {"id": "0002", "asset_id": "a2", "usage_count": 0},
+        {"id": "0003", "asset_id": "a3", "usage_count": 0},
+        {"id": "0004", "asset_id": "a4", "usage_count": 2},
+        {"id": "0005", "asset_id": "a5", "usage_count": 0},  # assigned → excluded
+    ]
+    clip_durations = {"0001": 4.0, "0002": 6.0, "0003": 8.0, "0004": 7.0, "0005": 9.0}
+    reserve = select_bridge_reserve(
+        clip_metadata, clip_durations,
+        assigned_clip_ids=["0005"], used_windows={}, count=3,
+    )
+    # usage 0 first (0003 dur8 > 0002 dur6), then usage 2 (0004); 0001 usage5 cut.
+    assert reserve == ["0003", "0002", "0004"]
+
+
+def test_select_bridge_reserve_skips_zero_duration_and_respects_count():
+    clip_metadata = [
+        {"id": "0001", "asset_id": "a1", "usage_count": 0},
+        {"id": "0002", "asset_id": "a2", "usage_count": 0},  # zero duration → skip
+        {"id": "0003", "asset_id": "a3", "usage_count": 1},
+    ]
+    clip_durations = {"0001": 5.0, "0002": 0.0, "0003": 6.0}
+    reserve = select_bridge_reserve(
+        clip_metadata, clip_durations,
+        assigned_clip_ids=[], used_windows={}, count=10,
+    )
+    assert reserve == ["0001", "0003"]  # 0002 (0s) excluded; count caps gracefully
+
+
+def test_global_provenance_has_no_reserve_without_count():
+    """The legacy global path (no bridge_reserve_count) keeps its provenance
+    shape — reserve_clip_ids is added ONLY when DB-first requests a count."""
+    # 3 clips, 2 beats → exactly one clip is unassigned and available to reserve.
+    rankings = [[("0001", 0.9), ("0002", 0.1)], [("0002", 0.9), ("0001", 0.1)]]
+    durations = {"0001": 5.0, "0002": 5.0, "0003": 5.0}
+    meta = [_meta("0001", "a"), _meta("0002", "b"), _meta("0003", "c")]
+    _, prov = pack_clips(
+        BEATS, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True,
+    )
+    assert "reserve_clip_ids" not in prov
+    _, prov2 = pack_clips(
+        BEATS, rankings, word_timestamps=WTS,
+        clip_durations=durations, clip_metadata=meta,
+        global_assignment=True, bridge_reserve_count=5,
+    )
+    # 0001/0002 are assigned; 0003 is the only unassigned coverable clip.
+    assert prov2["reserve_clip_ids"] == ["0003"]

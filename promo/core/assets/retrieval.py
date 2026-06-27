@@ -236,10 +236,23 @@ def fetch_ready_assets(
     return sorted(ready_assets, key=lambda asset: asset.clip_id)
 
 
-def clip_metadata_from_ready_assets(assets: list[ReadyAsset]) -> list[dict[str, Any]]:
-    """Project ready shared assets into the clip metadata shape used downstream."""
-    return [
-        {
+def clip_metadata_from_ready_assets(
+    assets: list[ReadyAsset], *, with_embedding: bool = False,
+) -> list[dict[str, Any]]:
+    """Project ready shared assets into the clip metadata shape used downstream.
+
+    ``with_embedding`` (DEFAULT False = byte-identical projection) is the
+    DB-first enrichment: it inlines the asset's TEXT ``embedding`` (already in
+    memory on ``ReadyAsset.embedding_vector``) AND its ``usage_count`` onto each
+    clip. Inlining the embedding lets ``_assign_clips_packer`` hit its inline
+    branch and rank over the WHOLE library with zero extra DB reads; the
+    usage_count feeds ``packer.select_bridge_reserve`` (lowest-usage → longest
+    duration). Only the DB-first path passes True, so the legacy candidate-only
+    metadata (which flows into Gemini #1) stays byte-identical.
+    """
+    rows: list[dict[str, Any]] = []
+    for asset in sorted(assets, key=lambda item: item.clip_id):
+        row: dict[str, Any] = {
             "id": asset.clip_id,
             "asset_id": asset.asset_id,
             "category": asset.category,
@@ -251,8 +264,11 @@ def clip_metadata_from_ready_assets(assets: list[ReadyAsset]) -> list[dict[str, 
             "width": asset.width,
             "height": asset.height,
         }
-        for asset in sorted(assets, key=lambda item: item.clip_id)
-    ]
+        if with_embedding:
+            row["embedding"] = list(asset.embedding_vector)
+            row["usage_count"] = asset.usage_count
+        rows.append(row)
+    return rows
 
 
 def _whiten_unit(matrix: np.ndarray) -> np.ndarray:
@@ -302,7 +318,7 @@ def relevance_by_asset(
     return {a.asset_id: float(best[i]) for i, a in enumerate(assets)}
 
 
-def _diverse_download_asset_ids(
+def _diverse_download_asset_ids(  # RETIRE with download-first (DB-first retires ②)
     *,
     assets: list[ReadyAsset],
     visual_by_asset: dict[str, Any],
@@ -312,6 +328,12 @@ def _diverse_download_asset_ids(
     near_dup_threshold: float,
 ) -> list[str]:
     """工单②: pick ~``k`` download assets by relevance-seeded visual max-min.
+
+    NOTE: ``# RETIRE with download-first`` — the DB-first assignment path skips
+    ② entirely (it downloads ``assigned ∪ reserve`` after whole-library
+    matching, so there is no top-30 download pool to diversify). This stays
+    live + flag-gated for the legacy download-then-filter path; remove once
+    DB-first is the default.
 
     Consider the top-``window`` assets by relevance, then greedily pick the
     most visually-dispersed ``k`` (whitened DINOv2 cosine), seeded at

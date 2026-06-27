@@ -394,3 +394,28 @@ class TestBriefSampler:
         m3 = [m["phrase"] for m in b3["categories"][0]["coverage_motifs"]]
         assert len(m0) == len(m3) == 4
         assert m0 != m3
+
+
+def test_clip_metadata_from_ready_assets_default_omits_embedding():
+    """Parity: the default projection (Gemini #1 metadata) carries NO embedding
+    or usage_count — byte-identical to the pre-DB-first shape."""
+    from promo.core.assets.retrieval import clip_metadata_from_ready_assets
+
+    rows = clip_metadata_from_ready_assets([_asset()])
+    assert "embedding" not in rows[0]
+    assert "usage_count" not in rows[0]
+    assert rows[0]["asset_id"] == "asset_001"
+
+
+def test_clip_metadata_from_ready_assets_with_embedding_inlines_vector_and_usage():
+    """DB-first projection inlines the text embedding (so the packer hits its
+    inline branch) AND usage_count (for select_bridge_reserve)."""
+    from promo.core.assets.retrieval import clip_metadata_from_ready_assets
+
+    rows = clip_metadata_from_ready_assets(
+        [_asset(embedding_vector=(0.1, 0.2, 0.3), usage_count=4)],
+        with_embedding=True,
+    )
+    assert rows[0]["embedding"] == [0.1, 0.2, 0.3]
+    assert rows[0]["usage_count"] == 4
+    assert rows[0]["asset_id"] == "asset_001"

@@ -272,11 +272,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--global-assignment", action="store_true",
         help="EXPERIMENTAL packer consolidation (default OFF = greedy, "
-             "byte-identical). When set, the packer solves ONE global optimal "
+             "byte-identical). When set, the packer solves ONE global (heuristic) "
              "clip↔beat assignment (Hungarian) with adjacency + near-dup as soft "
              "penalties instead of the greedy relax-ladder — fixes earlier beats "
              "stranding clips later beats needed. Render-path only; never touches "
              "release_candidates/usage. Sets PROMO_GLOBAL_ASSIGNMENT.",
+    )
+    parser.add_argument(
+        "--db-first-assignment", action="store_true",
+        help="EXPERIMENTAL DB-first assignment (default OFF = byte-identical). "
+             "Shared-asset runs only: the packer assigns over the WHOLE library's "
+             "DB metadata (no top-30 download ceiling) and each variant downloads "
+             "only its assigned ∪ reserve set AFTER matching. IMPLIES "
+             "--global-assignment. Sets PROMO_DB_FIRST_ASSIGNMENT + "
+             "PROMO_GLOBAL_ASSIGNMENT. Render-path only; never touches "
+             "release_candidates/usage.",
     )
 
     return parser
@@ -295,6 +305,13 @@ def main():
 
     if args.global_assignment:
         # Render-path only; packer step reads config.global_assignment_enabled().
+        os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
+
+    if args.db_first_assignment:
+        # DB-first implies global assignment (whole-library value is realized by
+        # the global packer). Pipeline reads config.db_first_assignment_enabled();
+        # packer ORs db_first into global_assignment.
+        os.environ["PROMO_DB_FIRST_ASSIGNMENT"] = "1"
         os.environ["PROMO_GLOBAL_ASSIGNMENT"] = "1"
 
     if args.render_props:

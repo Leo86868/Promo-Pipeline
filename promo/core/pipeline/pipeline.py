@@ -519,8 +519,53 @@ def full_pipeline(
             logger.error("Variant-pack generation failed: %s", exc)
             return False
 
+        from promo.core import config as _cfg
+        # DB-first only applies to candidate-only/shared-asset runs (the only
+        # mode with a whole-library DB pool to assign over before downloading).
+        db_first = candidate_only_mode and _cfg.db_first_assignment_enabled()
+
         shared_asset_retrieval_provenance: dict[str, Any] | None = None
-        if candidate_only_mode and shared_asset_ready_pool is not None:
+        if candidate_only_mode and shared_asset_ready_pool is not None and db_first:
+            # ---- DB-first: whole-library assignment, download AFTER matching ----
+            try:
+                from promo.core.assets.retrieval import (
+                    clip_metadata_from_ready_assets,
+                )
+
+                # Re-project the WHOLE library WITH inline text embedding +
+                # usage_count: the per-variant packer ranks over the whole pool
+                # (inline branch → zero extra DB reads) and select_bridge_reserve
+                # gets usage_count. No filter-to-30, no run-level download — the
+                # variant loop materializes assigned ∪ reserve per variant.
+                clips_metadata = clip_metadata_from_ready_assets(
+                    shared_asset_ready_pool, with_embedding=True,
+                )
+                clip_durations = _clip_durations_from_metadata(clips_metadata)
+                clip_paths = {}
+                # Rank-only retrieval provenance for the sidecar; ② is RETIRED on
+                # this path (no visual-diversity download selection — the global
+                # near-dup penalty is now the sole visual-dedup defense).
+                shared_asset_retrieval_provenance = (
+                    _retrieve_shared_asset_candidates_from_ready_assets(
+                        ready_assets=shared_asset_ready_pool,
+                        scripts=scripts,
+                    )
+                )
+                shared_asset_retrieval_provenance["brief_sample"] = brief_sample_info
+                shared_asset_retrieval_provenance["db_first_assignment"] = True
+                # shared_assets_for_manifest is accumulated per-variant in the
+                # loop (each fetch_candidate_clips sets backend.shared_assets to
+                # ITS subset); left None here, filled from the loop's union after.
+                shared_assets_for_manifest = None
+            except Exception as exc:  # noqa: BLE001
+                logger.error("DB-first whole-library retrieval setup failed: %s", exc)
+                return False
+            logger.info(
+                "DB-first whole-library assignment: %d ready assets, no run-level "
+                "download (assigned ∪ reserve materialized per variant)",
+                shared_asset_retrieval_provenance["eligible_asset_pool_size"],
+            )
+        elif candidate_only_mode and shared_asset_ready_pool is not None:
             try:
                 shared_asset_retrieval_provenance = (
                     _retrieve_shared_asset_candidates_from_ready_assets(
@@ -630,6 +675,11 @@ def full_pipeline(
         match_quality_entries: list[dict] = []
         clip_assignments_entries: list[dict] = []  # Sprint 10 C3 — F1 sidecar accumulator
         rendered_outputs: list[dict] = []
+        # DB-first: the variant loop downloads assigned ∪ reserve per variant and
+        # folds the union back here (clip_paths mutated in place; shared rows
+        # accumulated) so the manifest / usage writeback carries every downloaded
+        # asset_id. Empty + unused on every other path.
+        materialized_shared_assets: list[dict] = []
         # Sprint 13 AC19: last-variant-wins run-level provenance is owned by
         # ``_run_variant_loop`` and surfaced through its return tuple.
         # Sprint 4 post-audit L-001/D-001 removed the caller-side init + kwarg
@@ -662,7 +712,14 @@ def full_pipeline(
             match_quality_entries=match_quality_entries,
             clip_assignments_entries=clip_assignments_entries,
             rendered_outputs=rendered_outputs,
+            db_first=db_first,
+            materialized_shared_assets=materialized_shared_assets,
         )
+        # DB-first: the manifest's shared rows come from the per-variant download
+        # union (clip_paths was mutated in place to that union too), so the
+        # manifest asset_id set == the actually-downloaded assigned ∪ reserve.
+        if db_first and materialized_shared_assets:
+            shared_assets_for_manifest = materialized_shared_assets
         if shared_asset_retrieval_provenance is not None:
             run_retrieval_provenance = _merge_shared_asset_retrieval_provenance(
                 run_retrieval_provenance,
