@@ -94,9 +94,23 @@ python3 -m promo.cli.run_batch \
   --supabase-music-library --production-autopilot --tail-workers 4 \
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
-  --near-dup-threshold 0.85 --download-diversity \
-  --final-upscale-provider disabled    # flip (720→1080) + visual-dedup arm (工单①②) — both now standard
+  --near-dup-threshold 0.85 --download-diversity --db-first-assignment \
+  --final-upscale-provider disabled    # flip + visual-dedup + DB-first whole-library assignment — all now standard
 ```
+
+**DB-first assignment (2026-06-27 — now STANDARD).** `--db-first-assignment` ranks +
+assigns every beat over the WHOLE POI library (DB metadata) instead of a pre-downloaded
+top-30, then downloads only `assigned ∪ reserve` per variant — the download pool no
+longer caps which clips the packer can pick (verified: 13/13/12 clips per variant came
+from outside the legacy top-30). It arms `PROMO_DB_FIRST_ASSIGNMENT` + `PROMO_GLOBAL_ASSIGNMENT`,
+is resume-safe (stamped on RUN_RECEIPT, re-armed on `--resume`), and **supersedes ②
+`--download-diversity`** (the diversity max-min is now done inside the whole-library
+assignment; ② is a no-op under DB-first, kept only for the flag-off legacy path).
+Omit `--db-first-assignment` → instant revert to the download-30 path, byte-identical.
+🔴 **First armed batch = watched rollout:** DB-first turns "silently use a too-short
+clip" into a fail-loud `ClipAssignmentError` (claim-2). A POI with a real source-coverage
+gap that used to ship a slightly-short clip will now REFUSE that video (correct, but new)
+— watch batch 1 for hard-fails and decide per-POI.
 
 "health-check the chain, 2 POIs × 3" → the SAME standard command, no extra flag
 (the flip flags above already disable upscale), then the mandatory full-cleanup revert
@@ -333,7 +347,7 @@ python3 -m promo.cli.run_batch \
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
   --final-upscale-provider disabled \
-  --near-dup-threshold 0.85 --download-diversity
+  --near-dup-threshold 0.85 --download-diversity --db-first-assignment
 ```
 
 **Visual dedup arm (2026-06-26 — now STANDARD).** The last two flags above:

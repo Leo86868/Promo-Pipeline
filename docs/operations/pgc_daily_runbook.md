@@ -114,7 +114,7 @@ python3 -m promo.cli.run_batch \
   --production-autopilot \
   --source-resolution-policy-mode min_width \
   --source-target-width 1080 \
-  --near-dup-threshold 0.85 --download-diversity \
+  --near-dup-threshold 0.85 --download-diversity --db-first-assignment \
   --final-upscale-provider disabled
 ```
 > The flip flags (`min_width` / `--source-target-width 1080` /
@@ -122,8 +122,12 @@ python3 -m promo.cli.run_batch \
 > native ≥1080, no upscale; see Source Width Policy). Omitting them reverts to
 > mixed-resolution `best_available` — do not drop them for a standard run.
 > `--near-dup-threshold 0.85` + `--download-diversity` are the visual-dedup arm
-> (工单①②, now standard 2026-06-26 — DINOv2 visual, not text; `--download-diversity`
-> is resume-safe via RUN_RECEIPT). Omitting both → byte-identical to pre-arm.
+> (工单①②, now standard 2026-06-26 — DINOv2 visual, not text; resume-safe via RUN_RECEIPT).
+> `--db-first-assignment` (now standard 2026-06-27) ranks+assigns over the WHOLE library
+> then downloads only assigned∪reserve — removes the top-30 ceiling; supersedes
+> `--download-diversity` (no-op under DB-first, kept for flag-off). Resume-safe.
+> 🔴 First DB-first batch = watched: it fail-louds (claim-2) on a real coverage gap a
+> POI that used to ship a too-short clip will now refuse — watch batch 1. Omitting all → byte-identical to pre-arm.
 > Deploy = `git worktree add <new dated path> origin/main` + `cd promo/remotion && npm install` + copy `.env`. Always point new runs at the newest such worktree; the `main_20260608T000000Z` directory is the shared `.git` root, not a run target.
 
 The skill translates "15 POIs, 3 each" into flags like `--poi-count 15` and
