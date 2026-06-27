@@ -200,7 +200,10 @@ def test_db_first_pipeline_assigns_whole_library_no_run_level_download(
         kwargs["clip_assignments_entries"].append({"variant_index": 1})
         return True, 0, {"retrieval_contract": "soft_hint"}
 
+    captured_sidecar = {}
+
     def fake_emit_sidecars(**kwargs):
+        captured_sidecar.update(kwargs["run_retrieval_provenance"])
         return SimpleNamespace(
             ok=True, paths={"clip_assignments": str(tmp_path / "ca.json")},
             sidecar_dir=str(tmp_path),
@@ -249,6 +252,18 @@ def test_db_first_pipeline_assigns_whole_library_no_run_level_download(
     }
     assert "asset_0040" in timeline_asset_ids
     assert all(e["asset_id"] for e in captured_manifest["timeline_entries"])
+    # (4) sidecar observability: under DB-first a field named "download" MUST
+    # equal what was actually downloaded (not the legacy relevance pool).
+    sar = captured_sidecar["shared_asset_retrieval"]
+    materialized = ["asset_0002", "asset_0004", "asset_0007", "asset_0040"]
+    assert sar["download_asset_ids"] == materialized
+    assert sar["materialized_asset_ids"] == materialized
+    assert sar["download_pool_count"] == 4
+    # the legacy relevance pool is preserved under a clearly-named field …
+    assert "semantic_candidate_asset_ids" in sar
+    assert set(sar["download_asset_ids"]).issubset(set(materialized))  # ⊆ assigned∪reserve
+    # … and reduced_pool_size reflects the WHOLE-library packer pool (no 30/35).
+    assert captured_sidecar["reduced_pool_size"] == 51
 
 
 def test_db_first_off_is_byte_identical_filters_to_30(monkeypatch, tmp_path):

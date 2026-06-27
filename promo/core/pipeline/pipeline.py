@@ -436,6 +436,29 @@ def _build_sampled_brief(
     return brief, sample_info
 
 
+def _relabel_db_first_download_provenance(
+    shared_asset_retrieval_provenance: dict[str, Any],
+    materialized_shared_assets: list[dict[str, Any]],
+) -> None:
+    """DB-first observability fix (in place): the run-level ``download_asset_ids``
+    from the relevance ranking is NOT what was downloaded — the variant loop
+    materialized ``assigned ∪ reserve``. Relabel so a field named "download"
+    equals what was actually downloaded (PLAN AC: ``download_asset_ids ⊆
+    assigned∪reserve``): preserve the relevance pool under
+    ``semantic_candidate_asset_ids`` and set ``download_asset_ids`` /
+    ``materialized_asset_ids`` to the real per-variant download union."""
+    materialized_asset_ids = sorted({
+        str(row.get("asset_id"))
+        for row in materialized_shared_assets
+        if row.get("asset_id")
+    })
+    sar = shared_asset_retrieval_provenance
+    sar["semantic_candidate_asset_ids"] = sar.get("download_asset_ids", [])
+    sar["download_asset_ids"] = materialized_asset_ids
+    sar["materialized_asset_ids"] = materialized_asset_ids
+    sar["download_pool_count"] = len(materialized_asset_ids)
+
+
 def _merge_shared_asset_retrieval_provenance(
     run_retrieval_provenance: dict[str, Any],
     shared_asset_retrieval_provenance: dict[str, Any],
@@ -446,9 +469,16 @@ def _merge_shared_asset_retrieval_provenance(
         "embedded_pool_size": shared_asset_retrieval_provenance.get(
             "eligible_asset_pool_size", 0
         ),
-        "reduced_pool_size": shared_asset_retrieval_provenance.get(
-            "download_pool_count",
-            shared_asset_retrieval_provenance.get("candidate_count", 0),
+        # DB-first assigns over the WHOLE library (no reduction), so the
+        # "reduced pool the packer chose from" IS the whole library — not the
+        # legacy download-pool count. Legacy path unchanged (byte-identical).
+        "reduced_pool_size": (
+            shared_asset_retrieval_provenance.get("eligible_asset_pool_size", 0)
+            if shared_asset_retrieval_provenance.get("db_first_assignment")
+            else shared_asset_retrieval_provenance.get(
+                "download_pool_count",
+                shared_asset_retrieval_provenance.get("candidate_count", 0),
+            )
         ),
         "fallback_reason": shared_asset_retrieval_provenance.get("fallback_reason"),
         "retrieval_contract": shared_asset_retrieval_provenance.get(
@@ -779,6 +809,10 @@ def full_pipeline(
         # manifest asset_id set == the actually-downloaded assigned ∪ reserve.
         if db_first and materialized_shared_assets:
             shared_assets_for_manifest = materialized_shared_assets
+        if db_first and shared_asset_retrieval_provenance is not None:
+            _relabel_db_first_download_provenance(
+                shared_asset_retrieval_provenance, materialized_shared_assets,
+            )
         if shared_asset_retrieval_provenance is not None:
             run_retrieval_provenance = _merge_shared_asset_retrieval_provenance(
                 run_retrieval_provenance,
