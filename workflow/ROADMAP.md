@@ -11,7 +11,7 @@ Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`;
 
 ## One-line feed (fastest morning re-orient)
 
-引擎全面成熟、所有大杠杆落地。**720→1080 切换 live**(min_width@1080,**71% 提速落地**,16→5分/条)+ **poi_description 事实地基 live**(A/B 证「事实正确性刹车」)+ cooldown范式化 / POI软锁 / H1去重(P1e)全上线实证。**新常态 = 1080 生产、~5分/条**;代价 = 能产店暂时变少(102存活 / 27搁浅),随上游补 1080 自愈。**当前在干(2026-07-01 晚更新):① 检索分诊已回+已 cross-check——84% 假警报(度量假象:碎拍子+营销抽象句),后-flip 真实中位 0.376、<0.20 仅 7.6%,「检索70%大工程」证据不支持,待 regroup 裁决;② watched 闸口已过(06-27/28 五批事实履行);③ 跑着 skill 无人值守探针批(fresh-context 操作员+决策 journal);④ 硬化线接下来 = wrapper+视觉覆盖率地板+死代码清扫**。真瓶颈仍在上游素材供给,**不在 PGC 手里**。
+引擎全面成熟、所有大杠杆落地。**720→1080 切换 live**(min_width@1080,**71% 提速落地**,16→5分/条)+ **poi_description 事实地基 live**(A/B 证「事实正确性刹车」)+ cooldown范式化 / POI软锁 / H1去重(P1e)全上线实证。**新常态 = 1080 生产、~5分/条**;代价 = 能产店暂时变少(102存活 / 27搁浅),随上游补 1080 自愈。**⛔ 生产停摆(2026-07-01 夜):Gemini 的 GCP 项目 `528687056989` 被 Google 欠费停用 → 新批全死在写稿;等 Leo 修 billing(或换 funded key),然后 `--resume` 探针批即恢复。** **当前在干(2026-07-01 晚更新):① 检索分诊已回+已 cross-check——84% 假警报(度量假象:碎拍子+营销抽象句),后-flip 真实中位 0.376、<0.20 仅 7.6%,「检索70%大工程」证据不支持,待 regroup 裁决;② watched 闸口已过(06-27/28 五批事实履行);③ 跑着 skill 无人值守探针批(fresh-context 操作员+决策 journal);④ 硬化线接下来 = wrapper+视觉覆盖率地板+死代码清扫**。真瓶颈仍在上游素材供给,**不在 PGC 手里**。
 
 ## Where the system is (journey arc)
 

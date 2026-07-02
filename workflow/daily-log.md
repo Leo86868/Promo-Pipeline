@@ -54,6 +54,10 @@ points there for the heavy narrative.
 - **大账纠错(ground truth 推翻两小时前的本账)**:VPS `/home/deploy/pgc_runs/` 存在 **06-27/28 五个 armed 生产批**(batch3x3/gold1x3/batch5x3/gold_top7/gold_make5),receipt 逐一核:**63/63 complete、0 quarantine、db_first 全 true**;闸门真喂料(`visual_embeddings_attached` 82–117/条,那个 `visual_vectors_available 0` 是已退役工单② 的装饰字段=虚惊)。→ 两个 watched 义务**已事实闭环**;「首批 armed 未跑」为过时账面(本 roadmap 自己的宣称被沿袭)。⚠️ 待对:这五批是谁跑的(哪个 session)、为何未记账。
 - **skill 探针批照常在跑**(fresh-context 操作员,journal 模式)——watched 义务虽已闭环,它的另一半价值(无人值守可跑性探针)不受影响。
 
+### Later same day (23:0x — 探针批回收:0/12,外部计费停摆;探针本身大丰收)
+- **批次**:`stock_4x3_20260702T053230Z`(worktree `main_20260701T_stock4x3 @ aca1f7a`)——preflight GREEN 后 108 秒全灭:**Gemini 的 GCP 项目 `528687056989` 被 Google 欠费停用**(`403 dunning deny`,不可重试),12 slot 各烧完 5 次代码内重试。**零副作用**(独立复核 receipt:usage/RC/Drive 全 0、0 quarantine、cooldown 未烧)。恢复=修 billing 后一条 `--resume`(选好的 4 店不作废)。⛔ **修好前 PGC 无法开新批**(06-27/28 还能跑 → 停用发生在 06-28~07-01 间)。
+- **探针判决:skill 近乎无人值守级**——fresh agent 全程零即兴:命令拼得 byte-identical(含历史杀手旗标)、30s 陷阱自查代码关闭、.env 扫了 REPLAY/CLIP_ASSIGNER 地雷、正确判"不能 resume"(外部因盲重跑=0信息)。两个真缺口:①**preflight 盲区复发**——只验 Drive/Supabase/upscale,**不活体验 Gemini 脚本 key**,GREEN 后批 100% 死 = 2026-06-15 WaveSpeed 事故同型异种;修=`_autopilot_preflight`(run_batch.py:776)加 script-LLM 探活 + SKILL 盲区段补写。②**SKILL 文档缝**:deploy 段写"run the autopilot preflight"但无独立 preflight CLI(内建于 run_batch),agent 靠读码解惑;修=SKILL 一句话说清。两件都进硬化收官包。
+
 ---
 
 ## 2026-06-18  (reviewer + 多 worker session)
