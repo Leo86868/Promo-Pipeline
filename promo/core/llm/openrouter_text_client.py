@@ -18,7 +18,9 @@ Retries are NOT taken here: the single call is wrapped by
 ``retry_with_backoff`` in the caller (``script_gemini_caller.generate_one``),
 whose default ``give_up`` (``retry.is_non_retryable_client_error``) already
 classifies the ``requests.HTTPError`` this module raises — 429/5xx/timeouts
-retry, 400/401/402/403 fail fast.
+retry, 400/401/402/403 fail fast *within one ``generate_one`` call*; the
+outer per-variant budget loop in ``script_generator`` still retries on the
+resulting ``None`` returns (same behaviour as the Gemini SDK path).
 """
 
 from __future__ import annotations
@@ -135,7 +137,7 @@ def generate_text(
         raise RuntimeError(
             f"OpenRouter chat completion returned no choices: {response!r}"
         )
-    content = choices[0].get("message", {}).get("content")
+    content = (choices[0].get("message") or {}).get("content")
     if not content:
         raise RuntimeError(
             "OpenRouter chat completion returned empty message content"

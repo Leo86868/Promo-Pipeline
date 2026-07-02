@@ -18,14 +18,14 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from promo.core.model_adapters.gemini import GeminiModel, generate_content_text
+from promo.core.model_adapters.gemini import generate_content_text
 from promo.core.llm.retry import retry_with_backoff
 from promo.core.llm.json_response import parse_json_response
 
 logger = logging.getLogger(__name__)
 
 
-def generate_one(prompt: str, model: GeminiModel) -> Optional[dict]:
+def generate_one(prompt: str, model: object) -> Optional[dict]:
     """Generate a single script candidate. Returns parsed dict or None."""
     def _call():
         text = generate_content_text(

@@ -41,6 +41,11 @@ def post_chat_completion(
     """
     payload: dict[str, Any] = {"model": model, "messages": messages}
     if extra_body:
+        reserved = {"model", "messages"} & extra_body.keys()
+        if reserved:
+            raise ValueError(
+                f"extra_body must not override reserved payload keys: {sorted(reserved)}"
+            )
         payload.update(extra_body)
     response = requests.post(
         OPENROUTER_CHAT_COMPLETIONS_API_URL,
