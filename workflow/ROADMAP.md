@@ -3,7 +3,7 @@
 **Protocol: see the `roadmap-discipline` skill** (3-layer division · single-writer · done-migrate-out · event-triggered update · milestones-not-PRs).
 Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`; history → `workflow/daily-log.md`; **deep detail / design contracts / full execution log → `docs/ROADMAP.md`** (the heavy doc — this points to it).
 **Visual rule:** arrows + stable → Mermaid; status / path (churns daily) → text; real grid → table.
-**Last verified:** 2026-06-23 (reviewer checked vs code/Supabase/live batch; 720→1080 flip live-verified, main `281fb2a`).
+**Last verified:** 2026-07-01 21:04(hardening 会四路侦察对 code/git 核准,main `dce6792`;⚠️ DB-first + 工单② 已 armed 但**首批 armed 活体批未跑**——两个 watched 义务的活体证据仍欠)。
 
 > Mermaid color note: status is in the node LABEL (✅/▶/⚰️) + a STROKE accent only — no hard `fill:` hex (stays readable on light AND dark themes).
 
@@ -11,13 +11,13 @@ Position layer; PR detail → `gh pr list`; operating red-lines → `CLAUDE.md`;
 
 ## One-line feed (fastest morning re-orient)
 
-引擎全面成熟、所有大杠杆落地。**720→1080 切换 live**(min_width@1080,**71% 提速落地**,16→5分/条)+ **poi_description 事实地基 live**(A/B 证「事实正确性刹车」)+ cooldown范式化 / POI软锁 / H1去重(P1e)全上线实证。**新常态 = 1080 生产、~5分/条**;代价 = 能产店暂时变少(102存活 / 27搁浅),随上游补 1080 自愈。**当前在干:① 输出调优(arsenal 两轴总纲 + 调真 input)② 后-flip 残留清理**。真瓶颈仍在上游素材供给,**不在 PGC 手里**。
+引擎全面成熟、所有大杠杆落地。**720→1080 切换 live**(min_width@1080,**71% 提速落地**,16→5分/条)+ **poi_description 事实地基 live**(A/B 证「事实正确性刹车」)+ cooldown范式化 / POI软锁 / H1去重(P1e)全上线实证。**新常态 = 1080 生产、~5分/条**;代价 = 能产店暂时变少(102存活 / 27搁浅),随上游补 1080 自愈。**当前在干(2026-07-01 定位 = 两线一闸):① 质量线=检索排序分诊(用已有 sidecar,不等 CPU)② 硬化线=账面✅→启动 wrapper→死代码清扫;闸口=首批 armed 活体批(等 VPS CPU 空,一批验三样:DB-first watched / visual_pool>0 / 分诊底料)**。真瓶颈仍在上游素材供给,**不在 PGC 手里**。
 
 ## Where the system is (journey arc)
 
 ```mermaid
 flowchart LR
-  E["翻转二·packer 引擎 ✅"] --> A["P3/P3.5b 架构 ✅"] --> T["P4 测试健康 ✅"] --> F["720→1080 flip ✅<br/>71% 提速落地"] --> NOW["▶ now<br/>输出调优(arsenal)<br/>+ 后flip 清理"] --> G["等上游/决策"]
+  E["翻转二·packer 引擎 ✅"] --> A["P3/P3.5b 架构 ✅"] --> T["P4 测试健康 ✅"] --> F["720→1080 flip ✅<br/>71% 提速落地"] --> D2["视觉去重+DB-first ✅<br/>armed(活体待验)"] --> NOW["▶ now<br/>检索分诊+硬化<br/>闸口:首批armed批"] --> G["等上游/决策"]
   classDef done stroke:#3fb950,stroke-width:2px
   classDef now stroke:#d29922,stroke-width:3px
   class E,A,T,F done
@@ -48,8 +48,8 @@ blocker: AIGC 下一棒(自动生成);详 `workflow/CROSS-REPO.md` H2
 ## 排队 / Queued (might do · not scheduled)
 
 - ✅ **速度大杠杆落地**:720→1080 flip 砍掉 **71%**(16→5分/条)。render 现成最大头;再提速 = ffmpeg 换引擎 / 加核并行(**deferred**,8核被 ffmpeg ~5 线程地板堵)。详 `docs/research/render-speedup-2026-06.md`。
-- ▶ **输出调优(进行中)**:`feat/arsenal-quality` worker 落「质量轴 vs 雷同轴」两轴总纲 + 调真 input(范文→format/hook→persona 接线),每步同-POI 盲评。事实地基(poi_description)已 live。
-- ▶ **后-flip 残留清理(进行中)**:`chore/post-flip-cleanup` — 文档 de-720 + 死代码 + bucket 孤儿;**不删回滚基础设施**(WaveSpeed 客户端/transition 模式休眠保留)。
+- ⚠️ **输出调优(停滞,待 Leo 定去留)**:`feat/arsenal-quality` 实况 = 1 ahead / 48 behind main,最后动静 06-22,实质产出仅「质量轴 vs 雷同轴」两轴总纲 doc(`1361fba`)。建议摘 doc 进 main 后归档分支;方向等检索分诊结果再定。事实地基(poi_description)已 live。
+- ▶ **后-flip 残留清理(并入 2026-07-01 硬化线)**:原记的 `chore/post-flip-cleanup` 分支**不存在**(账面误记,未开工)。实清单已由 07-01 死代码侦察落实:6 个根目录 `research_*.py` 草稿 + `promo/cli/retrieval_dry_run.py` + ~10 已合并分支/worktree;`clip_assignment_sidecar.py` 不删(测试 replay 在用);**不删回滚基础设施**(WaveSpeed 客户端/transition 模式休眠保留)。
 - ✅ **DONE 2026-06-26 · #1 素材近似去重 — 直接上【视觉版】(leapfrog 了文字兜底)**:不是文字-embedding MMR 兜底,而是直接做 DINOv2 **视觉** 去重并 **armed 进生产**:① packer 视觉近重复软闸(`--near-dup-threshold 0.85`)+ ② 下载选片视觉 max-min(`--download-diversity`,resume安全)。65s 真考题:残留近重复对 Huatulco 1→0 / Bonnet 3→0、~零相关性代价、肉眼+独立dHash双证。旗标烤进 SKILL/runbook(main `9e16f64`)。**唯一余项**:第一批 armed 活体验证 `visual_pool>0`(② 经 run_batch 仅代码层确认 env 继承)。详 memory `project_visual_dedup_armed`。原"文字兜底 / 跨视频 phase-2"路线作废(视觉直接覆盖)。
 - ▶ **P0 · 片↔旁白 relevance — 分配(25%)✅DONE,检索(70%)仍开口** · 2026-06-27:**分配** = 全局指派(贪心→Hungarian,扎眼错配9→0/5→0)+ **DB-first**(全库选片、download-after,拿掉top-30上限,13/13/12片来自旧池外)**已 armed 进生产标准**(main d627ecc,SKILL/runbook;默认关代码=急停旗标;三方验816绿/多变体证据链/resume安全)。⚠️ 首批 watched:claim-2 fail-loud 会拒绝覆盖缺口POI(旧法硬凑略残片)。详 `workflow/projects/db-first-assignment/PLAN.md` + memory `project_visual_dedup_armed`。**仍开口 = 检索(70%,最大杠杆)**:选中片对旁白文字余弦中位仅0.305、18%beat<0.20 = text-embedding天花板 + 脚本不绑片;要richer描述/query改写(Medium)或CLIP视觉-文字联合空间(Large)。下一个真该投的方向。
   ↳ **swarm 调查底料(2026-06-26,16 agent 对抗验证 run3x3 185 beat;留给"检索"那条接手)**:arm 的视觉去重实测**仅占痛感 ~5%**(0 对 ≥0.85、源池 2.7× 够、整批就 2 对在 0.70-0.84)。真问题 = **配的片跟旁白只是勉强相关**(选中片文字余弦中位 0.305、18% beat <0.20)。**⚠️ 但绝对余弦低 ≠ Mimo 描述差(Leo 质疑成立)**:0.3 可能是"营销腔旁白 vs 场景描述"两种文风短句的【正常值】;关键看【排序能否把对的片排第一】——swarm 冲浪例子里 3 张真冲浪片排名 0/1/2(排序 work),那处**败在分配**不是匹配。**待办先做【排序质量测试】分清三种病**:(a) 匹配方法弱/文字模态(描述 vs 旁白文字,非像素)(b) 分配吃片(greedy+no-reuse 无回溯:对的片被前面 beat 用掉)(c) 真覆盖缺口。**ROI**:全局分配/稀缺片预留(Medium,不用视觉模型,救最扎眼错配)> 检索质量(richer 描述/query 改写 Medium ~ CLIP 视觉-文字联合空间 Large)> 近似阈值(Quick,~5%)。**确认指标**:选中片余弦中位 + <0.20 占比(只动 packer 不动这俩 = 治错病)。详 task 输出 `waz1ixy48`。

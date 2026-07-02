@@ -12,12 +12,41 @@ points there for the heavy narrative.
 
 ## Milestones (the spine — big closes, newest first)
 
+- **2026-07-01** — **hardening 会(全仓摸底)**:四路侦察(架构+死代码 / skill 无人值守缺口 / 6月commit史 / AIGC Main 参照)。关键判定:①单视频引擎已是无人值守级,人卡在边缘(拼命令/盯stall/薄池拍板)→ build list = 启动wrapper+看批watchdog;②查实 **AIGC Main 自己也无无人值守编排**(可借积木=receipt软锁/finalize真DB校验/退出码契约/cron三态wrapper,详 memory `aigc-unattended-reality`);③死代码仅三小堆(6个 research_*.py 草稿 + retrieval_dry_run + ~10 已合并分支),架构主体干净;④账面漂移回填(本文件 06-25/27 脊柱线补记 + db-first PLAN.md 入库 + roadmap 校准)。定位:**两线一闸** — 质量线(检索分诊,用已有 sidecar 数据)+ 硬化线(账面→wrapper→清扫);闸口=首批 armed 活体批(CPU 被占,等空)。
+- **2026-06-27** — **DB-first 全库配片 armed 进生产标准**(main `d627ecc`):全局 Hungarian 指派(06-26 `6b02e17`)+ 全库选片拿掉 top-30 下载上限、download-after(`d85d321`);816 测试绿、三方独立评审、resume 安全、默认关=急停旗标。⚠️ **首批 watched 未跑**(claim-2 fail-loud 会拒覆盖缺口 POI,新行为待活体看)。前夜(06-26)swarm 16-agent 判定:近似去重仅占痛感 ~5%,**真开口 = 检索 relevance(70%)**(选中片余弦中位 0.305、18% beat <0.20;但低余弦≠病,待排序质量分诊)。
+- **2026-06-25** — **视觉去重 armed 进生产标准**(main `9e16f64`):工单① packer DINOv2 视觉近重复软闸(`--near-dup-threshold 0.85`)+ 工单② 下载选片视觉 max-min(`--download-diversity`,resume 安全,含 candidate_only 接线修复 `2c55e88`);65s A/B:残留近重复对 1→0 / 3→0,~零相关性代价。余项=首批 armed 活体验 `visual_pool>0`。同期顺手:cdn-egress 换公链下载(`5ff48ff`)+ 旁白 EBU R128 loudnorm(`fff5a24`)。
 - **2026-06-23** — **720→1080 切换 live + 实证**(main `2c03d9a`):min_width ≥1080 下限 + 完整-predicate 搁浅(102存活/27搁浅)+ resume 守卫 + L-001 默认安全 + footgun 堵 + SKILL 翻;live smoke(Club Wyndham 1×2)ffprobe 真1080/零WaveSpeed/render 5–6分 vs 16 → **71% 提速杠杆落地**。多轮 panel(3-agent ×2 + 跨仓对齐)拦掉裸切泄漏/指纹污染/静默烧钱。poi_description 桥 + A/B(事实正确性刹车)同期上线。首个 1080 生产批 `stock_1x2_…002353Z`(Club Wyndham,2/2 入库)顺手发现成片素材**近似重复** → 只读实验证 embedding 余弦能判近似(0.942=同镜头)→ **挂 P0 明日 #1**(packer MMR 去重,dry-run 先;详 ROADMAP)。另记毛病 A 清晰度(软-但-1080,无字段可判,跨仓 AIGC 活)。
 - **2026-06-18** — cooldown 范式各算自己**上线**(branch,595 绿)+ arsenal 操作手册成文 + 渲染提速调研收口(只白嫖 swangle/concurrency,GPU 没用、渲小再升否)+ POI 软锁**建好 reviewed**(739 绿,加原子写中)+ POI 档案(hotel_description)跨仓对齐(一列,与 AIGC reviewer 双向 sync)。
 - **2026-06-17** — roadmap-discipline 按更新版 skill 重建(Mermaid 版 workflow/ROADMAP.md)+ backlog 剪枝;cooldown 设计拍板=**改成范式各算自己**(待落地);reviewer 交接。
 - **2026-06-16** — 跨范式去重 recipe_input/H1 上线(056 开,end-to-end 通)+ 运营硬化四分支合入 `73eb804` + roadmap 补到今天 + roadmap-discipline skill 装上(跨仓 board)。
 - **2026-06-15** — P3.5b 架构校准 + P4 测试健康完工;库存批 401 仗(换独立 key)。
 - **2026-06-11** — 翻转二 cutover(packer 唯一引擎,Gemini #2 退役)+ P2 type 卡片化。
+
+---
+
+## 2026-07-01  (reviewer/orchestrator session — hardening 会)
+
+### What happened
+- **四路并行侦察收齐**(架构+死代码 / skill 无人值守缺口 / commit 史 / AIGC Main 参照),结论见脊柱线。另放一个对抗式审计(6月各合并"宣称 vs 代码")在跑。
+- **账面回填**(本 commit):06-25 / 06-27 两条脊柱线补记;`workflow/projects/db-first-assignment/PLAN.md` 从 untracked 入库(roadmap 指向它但一直没提交=丢失风险);roadmap 校准(Last-verified 重盖、两条"进行中"降级为实况)。
+- 首批 armed 活体批(watched)**因 VPS CPU 被占推迟** — 设计已定:fresh-context agent 只拿自然语言订单+skill 跑标准随机路径 stockpile 4×3,边跑边写决策 journal(= skill 漏洞探针),一批验三样(DB-first watched / visual_pool>0 / 检索分诊底料)。第二批才做定向 `--batch` 实验(避开第一批 POI;此路径绕过 cooldown 且默认 30s,必须显式 `--target-duration-sec 65`)。
+
+### Decisions (with the why)
+- **分两批(标准随机批 → 定向实验批)** — why:一批一个变量,agent 卡壳时才分得清是 skill 漏洞还是点名路径怪癖;点名路径绕过 cooldown、有 30s 默认坑,不配当首批。
+- **无人值守 build list 只先做 ①启动 wrapper ②看批 watchdog** — why:③负载感知 timeout ④薄池预声明策略等真遇到再说(简单优先);wrapper 与 roadmap 已挂的"常驻 deploy 简化"提案是同一件事,合并做。
+- **检索 70% 大工程先不动,先做排序质量分诊** — why:低余弦(0.305 中位)可能是文风差的正常值(Leo 质疑成立);swarm 冲浪案例里排序把对的片排 0/1/2,败在旧贪心分配——而分配已被 Hungarian 修掉。分诊分清 (a)匹配弱 (b)分配吃片(已修) (c)真缺口,若 (b) 占大头则大工程直接降级。用 VPS 已有 `clip_assignments_*.json` 即可,不等 CPU。
+- **聊天里禁用 mermaid** — Leo 终端只见源码;回复用 ASCII 字符画,mermaid 仅进 .md 文件。
+
+### Next
+- 硬化线:① wrapper(合并"常驻 deploy"提案)② 死代码清扫(6 research 草稿 + retrieval_dry_run + 已合并分支;sidecar 模块不动)。
+- 质量线:检索排序分诊(VPS 轻活,不等 CPU)。
+- 闸口:CPU 空 → 放 fresh-context agent 跑首批 armed 活体批。
+- 待 Leo:`feat/arsenal-quality` 去留(1 ahead / 48 behind,最后动静 06-22;建议摘 doc 归档)。
+
+### Don't do (yet)
+- 检索大工程(richer 描述/CLIP 联合空间)— 分诊没出结果前不动。
+- 第二批定向实验 — 首批没跑完不动。
+- 别删 `clip_assignment_sidecar.py`(测试 replay 在用)。
 
 ---
 
