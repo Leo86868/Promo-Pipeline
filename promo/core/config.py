@@ -358,6 +358,30 @@ def promo_format_selector() -> str:
     return value
 
 
+_ALLOWED_SCRIPT_LLM_PROVIDERS = ("gemini", "openrouter")
+
+
+def script_llm_provider() -> str:
+    """Return the provider backing Gemini #1 script generation.
+
+    Default ``"gemini"`` = the Google GenAI SDK path on ``GEMINI_API_KEY``
+    (byte-identical to the historic behaviour — absent env changes nothing).
+    ``"openrouter"`` routes the same ``gemini-2.5-pro`` model through
+    OpenRouter's OpenAI-compatible chat/completions endpoint on
+    ``OPENROUTER_API_KEY`` — the billing-failover lane for when the GCP
+    project is suspended. Resolved at the adapter layer
+    (``model_adapters.gemini.resolve_gemini_model``) so script code stays
+    provider-agnostic. Unknown values raise :class:`ConfigError`.
+    """
+    value = os.getenv("PROMO_SCRIPT_LLM_PROVIDER", "gemini").strip().lower()
+    if value not in _ALLOWED_SCRIPT_LLM_PROVIDERS:
+        raise ConfigError(
+            f"PROMO_SCRIPT_LLM_PROVIDER must be one of "
+            f"{_ALLOWED_SCRIPT_LLM_PROVIDERS}; got {value!r}."
+        )
+    return value
+
+
 def replay_script_path() -> Optional[str]:
     """Path to a recorded script for replay (翻转二 B6 same-script A/B).
 

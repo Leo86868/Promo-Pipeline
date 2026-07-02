@@ -343,6 +343,37 @@ class TestSprint13ResolveGeminiModel:
         gemini_client.reset_for_tests()
 
 
+class TestScriptLlmProvider:
+    """PROMO_SCRIPT_LLM_PROVIDER resolver — default gemini, switch to
+    openrouter, fail-loud on unknown (billing-failover lane)."""
+
+    def test_default_is_gemini(self, monkeypatch):
+        from promo.core.config import script_llm_provider
+
+        monkeypatch.delenv("PROMO_SCRIPT_LLM_PROVIDER", raising=False)
+        assert script_llm_provider() == "gemini"
+
+    def test_openrouter_selected(self, monkeypatch):
+        from promo.core.config import script_llm_provider
+
+        for raw in ("openrouter", "OpenRouter", "  OPENROUTER  "):
+            monkeypatch.setenv("PROMO_SCRIPT_LLM_PROVIDER", raw)
+            assert script_llm_provider() == "openrouter"
+
+    def test_gemini_selected_explicitly(self, monkeypatch):
+        from promo.core.config import script_llm_provider
+
+        monkeypatch.setenv("PROMO_SCRIPT_LLM_PROVIDER", "gemini")
+        assert script_llm_provider() == "gemini"
+
+    def test_unknown_provider_raises(self, monkeypatch):
+        from promo.core.config import ConfigError, script_llm_provider
+
+        monkeypatch.setenv("PROMO_SCRIPT_LLM_PROVIDER", "anthropic")
+        with pytest.raises(ConfigError, match="PROMO_SCRIPT_LLM_PROVIDER must be one of"):
+            script_llm_provider()
+
+
 class TestDbFirstAssignmentFlags:
     """DB-first assignment + bridge-reserve config resolvers (default OFF)."""
 

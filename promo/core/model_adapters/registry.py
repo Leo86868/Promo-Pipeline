@@ -19,6 +19,14 @@ OPENROUTER_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENROUTER_EMBEDDING_MODEL_API_ID = "openai/text-embedding-3-small"
 OPENROUTER_EMBEDDING_DIM = 1536
 OPENROUTER_EMBEDDING_API_URL = f"{OPENROUTER_BASE_URL}/embeddings"
+OPENROUTER_CHAT_COMPLETIONS_API_URL = f"{OPENROUTER_BASE_URL}/chat/completions"
+
+# OpenRouter — Gemini #1 script generation (billing-failover provider).
+# Same underlying model as GEMINI_TEXT_MODEL below, reached via OpenRouter's
+# OpenAI-compatible chat/completions endpoint on OPENROUTER_API_KEY instead of
+# the Google GenAI SDK on GEMINI_API_KEY. Selected via
+# PROMO_SCRIPT_LLM_PROVIDER=openrouter (config.script_llm_provider).
+OPENROUTER_SCRIPT_MODEL_API_ID = "google/gemini-2.5-pro"
 
 # Gemini text — script generation (Gemini #1)
 GEMINI_TEXT_MODEL = "gemini-2.5-pro"
