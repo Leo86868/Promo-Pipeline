@@ -48,6 +48,12 @@ points there for the heavy narrative.
 - 第二批定向实验 — 首批没跑完不动。
 - 别删 `clip_assignment_sidecar.py`(测试 replay 在用)。
 
+### Later same day (22:44 — 分诊回收 + 三项 cross-check + 大账纠错)
+- **对抗审计回收(6月合并宣称 vs 代码)**:零推翻,192 测试现场重跑全绿。两个真发现:①视觉去重闸门 fail-open 无覆盖率地板——armed 下上游指纹作业滞后会**静默解除且 receipt 仍显 armed**,DB-first 后它是唯一去重防线 → 修=覆盖率 <0.9 告警(小活,进硬化线);②POI 软锁只扫同 runs-root——per-batch worktree 布局下跨树互不可见 → 常驻 deploy 提案顺手治好(+1票)。次要:cdn-egress 空说明=虚惊(分支 commit 有全文+sha256 兜底);claim-2 爆炸半径=单条视频非整批。
+- **检索分诊回收 + 本席 cross-check(判例卡数字+语义双核、receipt 逐一验)**:49 个弱 beat 分类 → **84% (d)假警报**(度量假象:1-2 词碎拍子中位 0.240 vs 10+词 0.438,r=0.438;营销抽象句无视觉指代物)/ ~9% (a)真排序失误(仅 1 例清晰:白天片配"天黑了"旁白,时间属性丢失)/ ~5% (b)且零旧-greedy 型(Hungarian 后没有饿死案例,只剩"一句拆两拍+素材只有一条"的结构性)/ 2% (c)缺口。后-flip 真实中位 **0.376**(swarm 的 0.305 已过时)、<0.20 仅 **7.6%**(vs 18%)。**判决:「检索 70% 大工程」证据不支持**;便宜替代=①修度量(碎拍子不计 KPI)②packer 允许 ≤2 词碎拍继承上一拍片(治 Card6/7 型)③时间/天气属性小探针④下架 off-brand 素材(no-trespassing 围栏那种)。待 regroup 裁决。
+- **大账纠错(ground truth 推翻两小时前的本账)**:VPS `/home/deploy/pgc_runs/` 存在 **06-27/28 五个 armed 生产批**(batch3x3/gold1x3/batch5x3/gold_top7/gold_make5),receipt 逐一核:**63/63 complete、0 quarantine、db_first 全 true**;闸门真喂料(`visual_embeddings_attached` 82–117/条,那个 `visual_vectors_available 0` 是已退役工单② 的装饰字段=虚惊)。→ 两个 watched 义务**已事实闭环**;「首批 armed 未跑」为过时账面(本 roadmap 自己的宣称被沿袭)。⚠️ 待对:这五批是谁跑的(哪个 session)、为何未记账。
+- **skill 探针批照常在跑**(fresh-context 操作员,journal 模式)——watched 义务虽已闭环,它的另一半价值(无人值守可跑性探针)不受影响。
+
 ---
 
 ## 2026-06-18  (reviewer + 多 worker session)
